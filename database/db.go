@@ -39,6 +39,20 @@ func Init() {
 	sqlDB.SetMaxIdleConns(10)  // 最大空闲连接
 	sqlDB.SetMaxOpenConns(100) // 最大打开连接
 	log.Println("数据库连接成功")
+
+	// 自动迁移数据库表
+	autoMigrate()
+}
+
+func autoMigrate() {
+	err := DB.AutoMigrate(
+	// 在此处添加需要自动迁移的模型
+	// 例如：&moder.User{},
+	)
+	if err != nil {
+		log.Fatalf("数据库自动迁移失败：%v", err)
+	}
+	log.Println("数据库自动迁移成功")
 }
 
 // GetDB 获取DB实例（方便其他模块调用）
