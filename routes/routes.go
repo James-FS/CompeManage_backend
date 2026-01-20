@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"CompeManage_backend/controllers"
 	"CompeManage_backend/utils"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +13,9 @@ func SetupRoutes(r *gin.Engine) {
 	r.GET("/health", func(c *gin.Context) {
 		utils.Success(c, gin.H{"status": "ok"})
 	})
-
+	apiGroup := r.Group("/api")
+	{
+		apiGroup.POST("/login", controllers.Login)
+	}
 	// 其他业务路由可按此方式扩展
 }
