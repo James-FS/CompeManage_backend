@@ -4,6 +4,7 @@ import (
 	"CompeManage_backend/config"
 	"CompeManage_backend/database"
 	"CompeManage_backend/middleware"
+	"CompeManage_backend/models"
 	"CompeManage_backend/routes"
 	"log"
 
@@ -22,7 +23,12 @@ func main() {
 
 	// 连接数据库
 	database.Init()
-
+	database.DB.AutoMigrate(
+		&models.User{},
+		&models.Role{},
+		&models.Permission{},
+	)
+	database.InitData()
 	// 创建Gin引擎（开发环境用gin.Default，生产可改为gin.ReleaseMode）
 	r := gin.Default()
 
