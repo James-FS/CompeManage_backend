@@ -2,6 +2,7 @@ package database
 
 import (
 	"CompeManage_backend/config"
+	"CompeManage_backend/models"
 	"fmt"
 	"log"
 
@@ -46,8 +47,11 @@ func Init() {
 
 func autoMigrate() {
 	err := DB.AutoMigrate(
-	// 在此处添加需要自动迁移的模型
-	// 例如：&moder.User{},
+		// 在此处添加需要自动迁移的模型
+		// 例如：&moder.User{},
+		&models.User{},
+		&models.Role{},
+		&models.Permission{},
 	)
 	if err != nil {
 		log.Fatalf("数据库自动迁移失败：%v", err)
