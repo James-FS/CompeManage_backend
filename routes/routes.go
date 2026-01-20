@@ -16,6 +16,9 @@ func SetupRoutes(r *gin.Engine) {
 	apiGroup := r.Group("/api")
 	{
 		apiGroup.POST("/login", controllers.Login)
+		apiGroup.GET("/permission/list", controllers.GetAllPermissions)
+		apiGroup.GET("/role/list", controllers.GetAllRoles)
+		apiGroup.POST("/role/assign_perm", controllers.AssignPermissions)
 	}
 	// 其他业务路由可按此方式扩展
 }
