@@ -3,6 +3,8 @@ package database
 import (
 	"CompeManage_backend/models"
 	"log"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // InitData 初始化测试数据
@@ -24,7 +26,7 @@ func InitData() {
 		// 管理员权限
 		{Name: "用户管理", Code: "sys:user:list", Type: 1, Description: "查看用户列表"},
 		{Name: "角色管理", Code: "sys:role:list", Type: 1, Description: "查看角色列表"},
-		// 教师权限
+		// 赛事负责人权限
 		{Name: "发布竞赛", Code: "comp:add", Type: 2, Description: "发布新的学科竞赛"},
 		{Name: "审核报名", Code: "comp:audit", Type: 2, Description: "审核学生报名信息"},
 		// 学生权限
@@ -38,25 +40,33 @@ func InitData() {
 	// ==========================================
 	// 2. 初始化角色 (Role)
 	// ==========================================
-	adminRole := models.Role{RoleName: "超级管理员", RoleCode: "admin", Description: "系统最高权限"}
-	teacherRole := models.Role{RoleName: "指导教师", RoleCode: "teacher", Description: "负责发布和审核"}
+	schoolAdminRole := models.Role{RoleName: "校级管理员", RoleCode: "school_admin", Description: "校级系统管理员"}
+	collegeAdminRole := models.Role{RoleName: "院级管理员", RoleCode: "college_admin", Description: "学院管理员"}
+	competitionManagerRole := models.Role{RoleName: "赛事负责人", RoleCode: "competition_manager", Description: "负责发布和审核竞赛"}
 	studentRole := models.Role{RoleName: "学生", RoleCode: "student", Description: "参与竞赛"}
+	expertRole := models.Role{RoleName: "专家", RoleCode: "expert", Description: "评审竞赛"}
 
-	DB.Create(&adminRole)
-	DB.Create(&teacherRole)
+	DB.Create(&schoolAdminRole)
+	DB.Create(&collegeAdminRole)
+	DB.Create(&competitionManagerRole)
 	DB.Create(&studentRole)
+	DB.Create(&expertRole)
 
 	// ==========================================
 	// 3. 关联角色与权限 (Role-Permission)
 	// ==========================================
-	// 给管理员：所有权限
-	DB.Model(&adminRole).Association("Permissions").Append(&perms)
+	// 给校级管理员：所有权限
+	DB.Model(&schoolAdminRole).Association("Permissions").Append(&perms)
 
-	// 给教师：发布 + 审核
-	// 我们需要从切片里挑出对应的权限
-	var teacherPerms []models.Permission
-	DB.Where("code IN ?", []string{"comp:add", "comp:audit"}).Find(&teacherPerms)
-	DB.Model(&teacherRole).Association("Permissions").Append(&teacherPerms)
+	// 给院级管理员：管理和审核权限
+	var collegePerms []models.Permission
+	DB.Where("code IN ?", []string{"sys:user:list", "comp:audit"}).Find(&collegePerms)
+	DB.Model(&collegeAdminRole).Association("Permissions").Append(&collegePerms)
+
+	// 给赛事负责人：发布 + 审核
+	var competitionPerms []models.Permission
+	DB.Where("code IN ?", []string{"comp:add", "comp:audit"}).Find(&competitionPerms)
+	DB.Model(&competitionManagerRole).Association("Permissions").Append(&competitionPerms)
 
 	// 给学生：报名
 	var studentPerms []models.Permission
@@ -64,19 +74,36 @@ func InitData() {
 	DB.Model(&studentRole).Association("Permissions").Append(&studentPerms)
 
 	// ==========================================
-	// 4. 初始化用户 (User)
+	// 4. 初始化用户 (User) - 对应前端模拟数据
 	// ==========================================
-	// 统一密码：123456 (必须加密!)
-	password := ("123456")
+	// 密码统一为 "123"，使用 bcrypt 加密
+	hashPassword := func(password string) string {
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			log.Printf("密码加密失败: %v", err)
+			return password
+		}
+		return string(hashedPassword)
+	}
 
 	users := []models.User{
-		{Username: "admin", Realname: "系统管理员", Password: password},
-		{Username: "1001", Realname: "王老师", Password: password},     // 模拟工号
-		{Username: "2023001", Realname: "张三同学", Password: password}, // 模拟学号
+		{Username: "admin", Realname: "校级管理员", Password: hashPassword("123")},
+		{Username: "yuan", Realname: "计算机学院管理员", Password: hashPassword("123")},
+		{Username: "teacher", Realname: "张老师(赛事负责人)", Password: hashPassword("123")},
+		{Username: "student", Realname: "李同学", Password: hashPassword("123")},
+		{Username: "expert", Realname: "王专家", Password: hashPassword("123")},
+	}
+
+	// 定义用户和角色的映射关系
+	userRoleMap := map[string]*models.Role{
+		"admin":   &schoolAdminRole,
+		"yuan":    &collegeAdminRole,
+		"teacher": &competitionManagerRole,
+		"student": &studentRole,
+		"expert":  &expertRole,
 	}
 
 	// 创建用户并分配角色
-	// 注意：这里我们演示 Many2Many 的分配方式
 	for _, u := range users {
 		// 先创建用户
 		if err := DB.Create(&u).Error; err != nil {
@@ -85,26 +112,20 @@ func InitData() {
 		}
 
 		// 根据用户名分配对应的角色
-		var targetRole models.Role
-		if u.Username == "admin" {
-			targetRole = adminRole
-		} else if u.Username == "1001" {
-			targetRole = teacherRole
-		} else {
-			targetRole = studentRole
-		}
-
-		// 写入 user_roles 中间表
-		err := DB.Model(&u).Association("Roles").Append(&targetRole)
-		if err != nil {
-			log.Printf("分配角色失败: %v", err)
+		if role, ok := userRoleMap[u.Username]; ok {
+			err := DB.Model(&u).Association("Roles").Append(role)
+			if err != nil {
+				log.Printf("为用户 %s 分配角色失败: %v", u.Username, err)
+			}
 		}
 	}
 
 	log.Println("🎉 模拟数据初始化完成！")
 	log.Println("--------------------------------")
-	log.Println("管理员账号: admin   密码: 123456")
-	log.Println("教师账号:   1001    密码: 123456")
-	log.Println("学生账号:   2023001 密码: 123456")
+	log.Println("校级管理员: admin    密码: 123")
+	log.Println("院级管理员: yuan     密码: 123")
+	log.Println("赛事负责人: teacher  密码: 123")
+	log.Println("学生:     student   密码: 123")
+	log.Println("专家:     expert    密码: 123")
 	log.Println("--------------------------------")
 }
