@@ -22,7 +22,7 @@ func main() {
 
 	// 连接数据库
 	database.Init()
-	//database.InitData()
+	database.InitData()
 	// 创建Gin引擎（开发环境用gin.Default，生产可改为gin.ReleaseMode）
 	r := gin.Default()
 
