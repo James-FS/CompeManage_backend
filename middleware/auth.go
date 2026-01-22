@@ -55,13 +55,13 @@ func RequirePermission(permCode string) gin.HandlerFunc {
 		// 2. 核心逻辑：去数据库查一下，这个 Role 到底有没有 permCode 这个权限？
 		// (为了性能，这一步通常走 Redis 缓存，但直接查库也能用)
 		var count int64
-		err := database.DB.Table("user_roles").
+		result := database.DB.Table("user_roles").
 			Joins("JOIN role_permissions ON role_permissions.role_id = user_roles.role_id").
 			Joins("JOIN permissions ON permissions.id = role_permissions.permission_id").
 			Where("user_roles.user_id= ? AND permissions.code = ?", userID, permCode).
 			Count(&count)
 
-		if err != nil {
+		if result.Error != nil {
 			// 数据库查询出错
 			c.AbortWithStatusJSON(500, gin.H{"code": 500, "msg": "权限验证服务异常"})
 			return
