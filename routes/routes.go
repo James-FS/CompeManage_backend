@@ -22,8 +22,18 @@ func SetupRoutes(r *gin.Engine) {
 		apiGroup.POST("/role/assign_perm", controllers.AssignPermissions)
 	}
 
-	comp := r.Group("/comp", middleware.AuthRequired())
+	comp := r.Group("/api/comp", middleware.AuthRequired())
 	{
 		comp.GET("/list", controllers.GetCompetitionList)
 	} // 其他业务路由可按此方式扩展
+
+	reg := r.Group("/api/reg", middleware.AuthRequired())
+	{
+		reg.POST("/config",
+			middleware.RequirePermission("reg:config:edit"),
+			controllers.SaveRegConfig)
+		reg.GET("config/get",
+			middleware.RequirePermission("reg:config:view"),
+			controllers.GetRegConfig)
+	}
 }

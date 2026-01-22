@@ -16,8 +16,8 @@ type CompDetail struct {
 	MinTeamMember      int       `gorm:"column:min_team_member;default:1;comment:团队最低人数"`
 	GradeRequirement   string    `gorm:"column:grade_requirement;type:varchar(255);comment:年级要求(如:2022,2023)"`
 	RegistrationMethod string    `gorm:"column:registration_method;type:longtext;comment:报名方式/参赛流程说明"`
-	NeedAttachment     int       `gorm:"column:need_attachment;default:0;comment:是否需要上传附件"`
-	NeedAdvisor        int       `gorm:"column:need_advisor;default:0;comment:是否需要指导老师"`
+	NeedAttachment     int       `gorm:"column:need_attachment;default:0;comment:是否需要上传附件,0:无需 1:可选 2:必须"`
+	NeedAdvisor        int       `gorm:"column:need_advisor;default:0;comment:是否需要指导老师,0:无需 1:可选 2:必须"`
 	AttachmentTemplate string    `gorm:"column:attachment_template;type:varchar(255);comment:附件模板地址"`
 	BaseModel
 }

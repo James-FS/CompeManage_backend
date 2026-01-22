@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // CompListReq 定义列表查询参数结构体
@@ -61,6 +62,9 @@ func GetCompetitionList(c *gin.Context) {
 		userID, exists := c.Get("user_id")
 		if exists {
 			query = query.Where("manager_id = ?", userID)
+			query = query.Preload("Detail", func(db *gorm.DB) *gorm.DB {
+				return db.Select("comp_id", "reg_start_time", "reg_end_time", "participant_type")
+			})
 		}
 	}
 
