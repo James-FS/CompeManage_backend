@@ -62,7 +62,7 @@ go mod download
 #### 方式一：复制 .env.example（推荐）
 
 ```bash
-cp .env.example .env
+cp .env .env
 ```
 
 然后编辑 `.env` 文件，配置相应的环境变量。
