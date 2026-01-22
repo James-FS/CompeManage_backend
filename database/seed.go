@@ -3,6 +3,7 @@ package database
 import (
 	"CompeManage_backend/models"
 	"log"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -37,9 +38,9 @@ func InitData() {
 	compRoot := models.Permission{Name: "竞赛业务", Code: "comp:root", Type: 1, ParentID: 0, Description: "竞赛核心业务目录"}
 	stuRoot := models.Permission{Name: "学生中心", Code: "stu:root", Type: 1, ParentID: 0, Description: "学生个人中心目录"}
 
-	DB.Create(&sysRoot)  // 插入后 sysRoot.ID 会有值
-	DB.Create(&compRoot) // 插入后 compRoot.ID 会有值
-	DB.Create(&stuRoot)  // 插入后 stuRoot.ID 会有值
+	DB.Create(&sysRoot)
+	DB.Create(&compRoot)
+	DB.Create(&stuRoot)
 
 	// --- Level 2: 菜单页面 (Type=2, ParentID=Root.ID) ---
 
@@ -82,10 +83,8 @@ func InitData() {
 	}
 	DB.Create(&perms)
 
-	log.Println(">>> 权限树初始化完成")
-
 	// ==========================================
-	// 2. 初始化角色 (Role) - 保持不变
+	// 2. 初始化角色 (Role)
 	// ==========================================
 	schoolAdminRole := models.Role{RoleName: "校级管理员", RoleCode: "school_admin", Description: "校级系统管理员，拥有所有权限"}
 	collegeAdminRole := models.Role{RoleName: "院级管理员", RoleCode: "college_admin", Description: "学院管理员，负责用户和审核"}
@@ -105,15 +104,14 @@ func InitData() {
 
 	// --- A. 校级管理员：给所有权限 ---
 	var allPerms []models.Permission
-	DB.Find(&allPerms) // 查询刚才插入的所有权限
+	DB.Find(&allPerms)
 	DB.Model(&schoolAdminRole).Association("Permissions").Append(&allPerms)
 
 	// --- B. 院级管理员：系统管理(部分) + 竞赛审核 ---
-	// 需要给父节点(目录/菜单)权限，否则前端菜单出不来
 	var collegePerms []models.Permission
 	DB.Where("code IN ?", []string{
-		"sys:root", "sys:user", "sys:user:list", // 系统->用户->查看
-		"comp:root", "comp:audit_page", "comp:audit", // 竞赛->审核->操作
+		"sys:root", "sys:user", "sys:user:list",
+		"comp:root", "comp:audit_page", "comp:audit",
 	}).Find(&collegePerms)
 	DB.Model(&collegeAdminRole).Association("Permissions").Append(&collegePerms)
 
@@ -121,20 +119,20 @@ func InitData() {
 	var managerPerms []models.Permission
 	DB.Where("code IN ?", []string{
 		"comp:root",
-		"comp:list", "comp:add", "comp:edit", // 竞赛->列表->发布/编辑
-		"comp:audit_page", "comp:audit", // 竞赛->审核->操作
+		"comp:list", "comp:add", "comp:edit",
+		"comp:audit_page", "comp:audit",
 	}).Find(&managerPerms)
 	DB.Model(&competitionManagerRole).Association("Permissions").Append(&managerPerms)
 
 	// --- D. 学生：学生中心 ---
 	var studentPerms []models.Permission
 	DB.Where("code IN ?", []string{
-		"stu:root", "stu:comp", "comp:register", // 学生->我的竞赛->报名
+		"stu:root", "stu:comp", "comp:register",
 	}).Find(&studentPerms)
 	DB.Model(&studentRole).Association("Permissions").Append(&studentPerms)
 
 	// ==========================================
-	// 4. 初始化用户 (User) - 保持不变
+	// 4. 初始化用户 (User)
 	// ==========================================
 	hashPassword := func(password string) string {
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -171,5 +169,105 @@ func InitData() {
 		}
 	}
 
-	log.Println("🎉 树形权限数据初始化完成！")
+	// ==========================================
+	// 5. 初始化竞赛目录与详情 (NEW: 新增部分)
+	// ==========================================
+
+	// 5.1 获取“张老师”的ID，作为负责人
+	var teacherUser models.User
+	DB.Where("username = ?", "teacher").First(&teacherUser)
+
+	// 5.2 定义时间辅助变量
+	now := time.Now()
+	oneMonthLater := now.AddDate(0, 1, 0)
+	twoMonthsLater := now.AddDate(0, 2, 0)
+
+	// 5.3 创建竞赛数据
+	// 注意：这里同时创建 CompDirectory 和 CompDetail
+	// GORM 会自动将 CompDirectory 的 ID 填入 CompDetail 的 CompID 中
+	competitions := []models.CompDirectory{
+		{
+			CompCode:   "NCD-2026",
+			CompName:   "2026年全国大学生计算机设计大赛",
+			CompType:   "A类",
+			CompLevel:  "国家级",
+			Organizer:  "教育部计算机相关教指委",
+			Undertaker: "厦门大学",
+			CollegeID:  1, // 假设计算机学院ID为1
+			Year:       2026,
+			ManagerID:  teacherUser.ID,
+			Status:     1, // 状态: 发布
+			CreatedBy:  teacherUser.ID,
+			Detail: models.CompDetail{
+				RegStartTime:       now,
+				RegEndTime:         oneMonthLater,
+				CompStartTime:      oneMonthLater,
+				CompEndTime:        twoMonthsLater,
+				ParticipantType:    2, // 团队
+				MaxTeamMember:      3,
+				MinTeamMember:      1,
+				GradeRequirement:   "2023,2024,2025",
+				RegistrationMethod: "请各参赛队登录国赛官网报名，并在此系统提交校内审核材料。",
+				NeedAttachment:     1, // 需要附件
+				NeedAdvisor:        1, // 需要指导老师
+			},
+		},
+		{
+			CompCode:   "LQB-2026",
+			CompName:   "第十七届蓝桥杯全国软件和信息技术专业人才大赛",
+			CompType:   "B类",
+			CompLevel:  "省级",
+			Organizer:  "工信部人才交流中心",
+			Undertaker: "本校教务处",
+			CollegeID:  1,
+			Year:       2026,
+			ManagerID:  teacherUser.ID,
+			Status:     1, // 状态: 发布
+			CreatedBy:  teacherUser.ID,
+			Detail: models.CompDetail{
+				RegStartTime:       now.AddDate(0, 0, -10), // 10天前开始
+				RegEndTime:         now.AddDate(0, 0, 20),
+				CompStartTime:      oneMonthLater,
+				CompEndTime:        oneMonthLater,
+				ParticipantType:    1, // 个人
+				MaxTeamMember:      1,
+				MinTeamMember:      1,
+				GradeRequirement:   "不限",
+				RegistrationMethod: "个人赛，C/C++或Java组，直接在线报名。",
+				NeedAttachment:     0, // 不需要附件
+				NeedAdvisor:        0, // 不需要指导老师
+			},
+		},
+		{
+			CompCode:   "ICPC-SCHOOL-2026",
+			CompName:   "2026校内程序设计天梯赛（草稿）",
+			CompType:   "C类",
+			CompLevel:  "校级",
+			Organizer:  "计算机学院",
+			Undertaker: "ACM俱乐部",
+			CollegeID:  1,
+			Year:       2026,
+			ManagerID:  teacherUser.ID,
+			Status:     0, // 状态: 草稿
+			CreatedBy:  teacherUser.ID,
+			Detail: models.CompDetail{
+				RegStartTime: now,
+				RegEndTime:   oneMonthLater,
+
+				// ✨✨ 修复点：必须加上这两个字段，防止出现 0000-00-00 错误 ✨✨
+				CompStartTime: oneMonthLater, // 暂定一个月后
+				CompEndTime:   oneMonthLater, // 暂定一个月后
+
+				ParticipantType:    1,
+				RegistrationMethod: "待定...",
+			},
+		},
+	}
+
+	// 批量创建竞赛 (GORM 会自动处理 Detail 的关联插入)
+	if err := DB.Create(&competitions).Error; err != nil {
+		log.Printf("创建竞赛数据失败: %v", err)
+	}
+
+	log.Println("🎉 树形权限与竞赛测试数据初始化完成！")
 }

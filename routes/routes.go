@@ -2,6 +2,7 @@ package routes
 
 import (
 	"CompeManage_backend/controllers"
+	"CompeManage_backend/middleware"
 	"CompeManage_backend/utils"
 
 	"github.com/gin-gonic/gin"
@@ -20,5 +21,9 @@ func SetupRoutes(r *gin.Engine) {
 		apiGroup.GET("/role/list", controllers.GetAllRoles)
 		apiGroup.POST("/role/assign_perm", controllers.AssignPermissions)
 	}
-	// 其他业务路由可按此方式扩展
+
+	comp := r.Group("/comp", middleware.AuthRequired())
+	{
+		comp.GET("/list", controllers.GetCompetitionList)
+	} // 其他业务路由可按此方式扩展
 }
