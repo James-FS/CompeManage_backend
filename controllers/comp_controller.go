@@ -53,9 +53,9 @@ func GetCompetitionList(c *gin.Context) {
 		query = query.Where("comp_level = ?", req.CompLevel)
 	}
 
-	// 按学院名称筛选
+	// 按学院名称筛选（通过关联 College 表）
 	if req.College != "" {
-		query = query.Where("college = ?", req.College)
+		query = query.Joins("LEFT JOIN colleges ON comp_directories.college_id = colleges.id").Where("colleges.name = ?", req.College)
 	}
 
 	// 按年份筛选
