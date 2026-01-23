@@ -27,12 +27,13 @@ func SetupRoutes(r *gin.Engine) {
 		apiGroup.GET("/permission/list", controllers.GetAllPermissions)
 		apiGroup.GET("/role/list", controllers.GetAllRoles)
 		apiGroup.POST("/role/assign_perm", controllers.AssignPermissions)
+		apiGroup.GET("/college/list", controllers.GetCollegeList)
 	}
 
 	comp := r.Group("/api/comp", middleware.AuthRequired())
 	{
 		comp.GET("/list", controllers.GetCompetitionList)
-	} // 其他业务路由可按此方式扩展
+	}
 
 	reg := r.Group("/api/reg", middleware.AuthRequired())
 	{
