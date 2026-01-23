@@ -55,6 +55,8 @@ func autoMigrate() {
 		&models.CompDirectory{},
 		&models.CompDetail{},
 		&models.College{},
+		&models.Register{},
+		&models.RegMember{},
 	)
 	if err != nil {
 		log.Fatalf("数据库自动迁移失败：%v", err)
