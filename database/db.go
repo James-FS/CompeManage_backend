@@ -52,6 +52,11 @@ func autoMigrate() {
 		&models.User{},
 		&models.Role{},
 		&models.Permission{},
+		&models.CompDirectory{},
+		&models.CompDetail{},
+		&models.College{},
+		&models.Register{},
+		&models.RegMember{},
 		&models.Notice{},
 	)
 	if err != nil {
