@@ -4,7 +4,11 @@ import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/models"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,7 +28,39 @@ type ConfigReq struct {
 	NeedAttachment   int        `json:"need_attachment"`
 }
 
-// SaveCompConfig 保存逻辑
+// ApplicationReq 学生提交的报名数据
+type ApplicationReq struct {
+	CompID        uint        `json:"comp_id" binding:"required"`
+	TeamName      string      `json:"team_name"`      // 队伍名称
+	Members       []MemberReq `json:"members"`        // 队员列表 (不包含队长)
+	AttachmentUrl string      `json:"attachment_url"` // 附件地址
+}
+
+// MemberReq 队员信息子结构
+type MemberReq struct {
+	Name  string `json:"name" binding:"required"`
+	StuID string `json:"stu_id" binding:"required"` // 学号
+	Phone string `json:"phone"`
+}
+
+// removeUploadedFile 根据前端传来的 URL 删除本地文件
+// 例如 url: "/static/reg_attachments/xxx.pdf" -> 删除 "./static/reg_attachments/xxx.pdf"
+func removeUploadedFile(fileUrl string) {
+	if fileUrl == "" {
+		return
+	}
+	// 去掉 URL 开头的 "/" (变为相对路径 static/...)
+	relativePath := strings.TrimPrefix(fileUrl, "/")
+	// 适配操作系统路径分隔符 (Windows用 \, Linux用 /)
+	nativePath := filepath.FromSlash(relativePath)
+	if err := os.Remove(nativePath); err != nil {
+		fmt.Println("清理垃圾文件失败:", err)
+	} else {
+		fmt.Println("已清理垃圾文件:", nativePath)
+	}
+}
+
+// SaveRegConfig 保存逻辑
 func SaveRegConfig(c *gin.Context) {
 	var req ConfigReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -107,24 +143,31 @@ func GetRegConfig(c *gin.Context) {
 	}
 
 	// 2. 查询数据库
-	var detail models.CompDetail
-	// 使用 First 查询，如果没找到会报错
-	if err := database.DB.Where("comp_id = ?", compID).First(&detail).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			// ✨ 没查到是正常的（说明还没设置过），返回空数据结构，让前端显示默认表单
-			c.JSON(http.StatusOK, gin.H{
-				"code": 200,
-				"msg":  "暂无配置",
-				"data": nil, // 返回 nil，前端会处理
-			})
-			return
-		}
-		// 其他数据库错误
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询配置失败"})
+	var comp models.CompDirectory
+
+	// 1. 查询赛事主表，同时预加载 Detail
+	if err := database.DB.Preload("Detail").First(&comp, compID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"code": 404, "msg": "赛事不存在"})
 		return
 	}
 
-	// 3. 数据处理：年级 JSON 字符串 -> int 数组
+	// 检查 Detail 是否存在 (即是否已经保存过配置)
+	// 如果 Detail.ID 为 0，说明还没配置过 (数据库里没这条记录)
+	if comp.Detail.ID == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"code": 200,
+			"msg":  "暂无配置",
+			"data": gin.H{
+				"comp_name": comp.CompName,
+				// 其他字段让前端显示默认值即可，或者给 null
+			},
+		})
+		return
+	}
+
+	detail := comp.Detail // 取出预加载好的 Detail
+
+	// 年级 JSON 字符串 -> int 数组
 	var grades []int
 	if detail.GradeRequirement != "" {
 		// 忽略错误，如果解析失败就给空数组
@@ -146,6 +189,7 @@ func GetRegConfig(c *gin.Context) {
 		"code": 200,
 		"msg":  "获取成功",
 		"data": gin.H{
+			"comp_name":         comp.CompName,
 			"participant_type":  detail.ParticipantType,
 			"min_team_member":   detail.MinTeamMember,
 			"max_team_member":   detail.MaxTeamMember,
@@ -156,4 +200,81 @@ func GetRegConfig(c *gin.Context) {
 			"reg_end_time":      endTime,
 		},
 	})
+}
+
+// SubmitRegistration 学生提交报名 (简化版：不查赛事规则，只存数据)
+func SubmitRegistration(c *gin.Context) {
+	// 1. 绑定参数
+	var req ApplicationReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "参数格式错误", "error": err.Error()})
+		return
+	}
+
+	// 2. 获取当前登录用户 (队长/本人)
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "未登录"})
+		return
+	}
+	uid := userID.(uint)
+
+	var comp models.CompDirectory
+	if err := database.DB.Preload("Detail").First(&comp, req.CompID).Error; err != nil {
+		c.JSON(404, gin.H{"code": 404, "msg": "赛事不存在"})
+		fmt.Println("截止时间:", comp.Detail.RegEndTime)
+		return
+	}
+
+	now := time.Now() // 获取服务器当前时间
+
+	// 校验 A: 还没开始
+	if now.Before(comp.Detail.RegStartTime) {
+		removeUploadedFile(req.AttachmentUrl)
+		c.JSON(403, gin.H{"code": 403, "msg": "非法请求：报名尚未开始"})
+		return
+	}
+
+	// 校验 B: 已经结束
+	if now.After(comp.Detail.RegEndTime) {
+		removeUploadedFile(req.AttachmentUrl)
+		c.JSON(403, gin.H{"code": 403, "msg": "非法请求：报名已截止"})
+		return
+	}
+
+	//  防重复报名校验
+	var count int64
+	database.DB.Model(&models.Register{}).Where("comp_id = ? AND leader_id = ?", req.CompID, uid).Count(&count)
+	if count > 0 {
+		removeUploadedFile(req.AttachmentUrl)
+		c.JSON(http.StatusConflict, gin.H{"code": 409, "msg": "您已报名过该赛事，请勿重复提交"})
+		return
+	}
+
+	register := models.Register{
+		CompID:        req.CompID,
+		LeaderID:      uid,
+		TeamName:      req.TeamName,
+		AttachmentUrl: req.AttachmentUrl,
+		Status:        0, // 默认 0:待审核
+		Members:       make([]models.RegMember, 0),
+	}
+
+	// 转换队员列表
+	for _, m := range req.Members {
+		register.Members = append(register.Members, models.RegMember{
+			Name:      m.Name,
+			StudentID: m.StuID,
+			Phone:     m.Phone,
+			IsLeader:  false,
+		})
+	}
+
+	// 5. 写入数据库 (GORM 会自动在一个事务里插入 Register 和 RegisterMembers)
+	if err := database.DB.Create(&register).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "报名失败", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"code": 200, "msg": "报名提交成功"})
 }
