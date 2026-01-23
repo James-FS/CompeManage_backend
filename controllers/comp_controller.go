@@ -19,6 +19,7 @@ type CompListReq struct {
 	CompType  string `form:"type"`                               // 筛选：类别 (A类/B类)
 	CollegeID uint   `form:"college_id"`                         // 筛选：所属学院
 	IsMy      bool   `form:"is_my"`                              // 筛选：仅看我发布的 (用于管理员/老师后台)
+	IsReg     bool   `form:"is_reg"`
 }
 
 // GetCompetitionList 获取竞赛目录列表
@@ -66,6 +67,10 @@ func GetCompetitionList(c *gin.Context) {
 				return db.Select("comp_id", "reg_start_time", "reg_end_time", "participant_type")
 			})
 		}
+	}
+
+	if req.IsReg {
+		query = query.Preload("Detail")
 	}
 
 	// 计算总数 (用于分页)

@@ -14,6 +14,13 @@ func SetupRoutes(r *gin.Engine) {
 	r.GET("/health", func(c *gin.Context) {
 		utils.Success(c, gin.H{"status": "ok"})
 	})
+
+	r.Static("/static", "./static")
+	upload := r.Group("/api/upload", middleware.AuthRequired())
+	{
+		upload.POST("", controllers.UploadFile)
+	}
+
 	apiGroup := r.Group("/api")
 	{
 		apiGroup.POST("/login", controllers.Login)
@@ -32,8 +39,10 @@ func SetupRoutes(r *gin.Engine) {
 		reg.POST("/config",
 			middleware.RequirePermission("reg:config:edit"),
 			controllers.SaveRegConfig)
-		reg.GET("config/get",
+		reg.GET("/config/get",
 			middleware.RequirePermission("reg:config:view"),
 			controllers.GetRegConfig)
+		reg.POST("/submit",
+			controllers.SubmitRegistration)
 	}
 }
