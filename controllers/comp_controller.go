@@ -13,11 +13,12 @@ import (
 type CompListReq struct {
 	Page      int    `form:"page" binding:"required,min=1"`      // 页码
 	PageSize  int    `form:"page_size" binding:"required,min=1"` // 每页数量
-	Name      string `form:"name"`                               // 模糊搜索：竞赛名称
-	Status    *int8  `form:"status"`                             // 筛选：状态 (使用指针是为了区分前端是否传了0)
-	CompLevel string `form:"level"`                              // 筛选：级别 (国家级/省级)
-	CompType  string `form:"type"`                               // 筛选：类别 (A类/B类)
-	CollegeID uint   `form:"college_id"`                         // 筛选：所属学院
+	CompName  string `form:"comp_name"`                          // 模糊搜索：竞赛名称
+	Manager   string `form:"manager"`                            // 模糊搜索：负责人名称
+	Status    string `form:"status"`                             // 筛选：状态 (未开始/进行中/已结束)
+	CompLevel string `form:"comp_level"`                         // 筛选：级别 (校级/省级/国家级)
+	College   string `form:"college"`                            // 筛选：所属学院名称
+	Year      string `form:"year"`                               // 筛选：举办年份
 	IsMy      bool   `form:"is_my"`                              // 筛选：仅看我发布的 (用于管理员/老师后台)
 }
 
@@ -32,29 +33,33 @@ func GetCompetitionList(c *gin.Context) {
 	query := database.DB.Model(&models.CompDirectory{})
 
 	// 按名称模糊搜索
-	if req.Name != "" {
-		query = query.Where("comp_name LIKE ?", "%"+req.Name+"%")
+	if req.CompName != "" {
+		query = query.Where("comp_name LIKE ?", "%"+req.CompName+"%")
 	}
 
-	// 按状态筛选 (0:草稿 1:发布 2:结束)
-	// 注意：这里使用指针判断，否则无法筛选 status=0 的草稿
-	if req.Status != nil {
-		query = query.Where("status = ?", *req.Status)
+	// 按负责人模糊搜索
+	if req.Manager != "" {
+		query = query.Where("manager LIKE ?", "%"+req.Manager+"%")
 	}
 
-	// 按级别筛选
+	// 按状态筛选 (未开始/进行中/已结束)
+	if req.Status != "" {
+		query = query.Where("status = ?", req.Status)
+	}
+
+	// 按级别筛选 (校级/省级/国家级)
 	if req.CompLevel != "" {
 		query = query.Where("comp_level = ?", req.CompLevel)
 	}
 
-	// 按类别筛选
-	if req.CompType != "" {
-		query = query.Where("comp_type = ?", req.CompType)
+	// 按学院名称筛选
+	if req.College != "" {
+		query = query.Where("college = ?", req.College)
 	}
 
-	// 按学院筛选
-	if req.CollegeID > 0 {
-		query = query.Where("college_id = ?", req.CollegeID)
+	// 按年份筛选
+	if req.Year != "" {
+		query = query.Where("YEAR(create_time) = ?", req.Year)
 	}
 
 	// 仅查看"我负责的" (从 Token 获取当前用户ID)
@@ -80,8 +85,8 @@ func GetCompetitionList(c *gin.Context) {
 	offset := (req.Page - 1) * req.PageSize
 
 	// 按创建时间倒序排列 (最新的在前面)
-	// 同时也查出关联的 Detail 信息
-	if err := query.Order("create_time desc").Offset(offset).Limit(req.PageSize).Find(&list).Error; err != nil {
+	// 同时也查出关联的 Detail 信息、Manager 信息、College 信息
+	if err := query.Preload("Detail").Preload("Manager").Preload("CollegeInfo").Order("create_time desc").Offset(offset).Limit(req.PageSize).Find(&list).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询数据失败"})
 		return
 	}
