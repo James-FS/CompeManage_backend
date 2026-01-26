@@ -43,6 +43,16 @@ func SetupRoutes(r *gin.Engine) {
 			middleware.RequirePermission("reg:config:view"),
 			controllers.GetRegConfig)
 		reg.POST("/submit",
+			middleware.RequirePermission("reg:config:submit"),
 			controllers.SubmitRegistration)
+		reg.GET("/list",
+			middleware.RequirePermission("reg:audit:list"),
+			controllers.GetRegList)
+		reg.GET("/detail",
+			middleware.RequirePermission("reg:audit:detail"),
+			controllers.GetRegDetail)
+		reg.PUT("/audit",
+			middleware.RequirePermission("reg:audit:update"),
+			controllers.AuditRegister)
 	}
 }
