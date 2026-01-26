@@ -21,6 +21,25 @@ func InitData() {
 	log.Println("正在初始化模拟数据...")
 
 	// ==========================================
+	// 0. 初始化学院 (College)
+	// ==========================================
+	colleges := []models.College{
+		{Name: "计算机科学与网络工程学院", Code: "CS"},
+		{Name: "电子信息工程学院", Code: "EE"},
+		{Name: "机械与能源工程学院", Code: "ME"},
+		{Name: "建筑与城市规划学院", Code: "ACP"},
+		{Name: "数学与信息科学学院", Code: "MATH"},
+		{Name: "物理与材料科学学院", Code: "PHYSICS"},
+		{Name: "化学化工学院", Code: "CHEMISTRY"},
+		{Name: "生命科学学院", Code: "LIFE"},
+		{Name: "环境科学与工程学院", Code: "ENV"},
+		{Name: "经济管理学院", Code: "BIZ"},
+	}
+	if err := DB.Create(&colleges).Error; err != nil {
+		log.Printf("创建学院数据失败: %v", err)
+	}
+
+	// ==========================================
 	// 1. 初始化权限 (Permission) - 构建树形结构
 	// ==========================================
 	// 结构设计：
