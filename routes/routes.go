@@ -29,6 +29,7 @@ func SetupRoutes(r *gin.Engine) {
 		apiGroup.POST("/role/assign_perm", controllers.AssignPermissions)
 		apiGroup.GET("/notice/list", controllers.GetNoticeList)  // 通知列表+筛选
 		apiGroup.GET("/notice/:id", controllers.GetNoticeDetail) // 单个通知查看
+		apiGroup.POST("/notice/create", controllers.CreateNotice)
 		apiGroup.GET("/college/list", controllers.GetCollegeList)
 	}
 
