@@ -4,6 +4,7 @@ import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"strconv"
@@ -153,5 +154,51 @@ func CreateNotice(c *gin.Context) {
 	}
 
 	// 5. 返回发布结果（包含附件URL）
+	utils.Success(c, gin.H{"notice": notice})
+}
+
+func CreateCompNotice(c *gin.Context) {
+	// 1. 解析参数（compID强制必填）
+	title := c.PostForm("title")
+	publishTime := c.PostForm("publish_time")
+	content := c.PostForm("content")
+	compIDStr := c.PostForm("compID") // 赛事页面必须传当前赛事ID
+	attachmentURL := c.PostForm("attachment")
+
+	// 2. 基础校验（title/publishTime/compID均必填）
+	if title == "" {
+		utils.BadRequest(c, "通知标题不能为空")
+		return
+	}
+	if publishTime == "" {
+		utils.BadRequest(c, "发布时间不能为空")
+		return
+	}
+	if compIDStr == "" {
+		utils.BadRequest(c, "必须关联具体赛事，请传入compID")
+		return
+	}
+
+	// 3. compID格式校验（必传+必须是数字）
+	compIDUint64, err := strconv.ParseUint(compIDStr, 10, 32)
+	if err != nil {
+		utils.BadRequest(c, "compID格式错误，必须是数字")
+		return
+	}
+	compID := uint(compIDUint64)
+
+	// 4. 保存数据库（强制关联赛事ID）
+	notice := models.Notice{
+		Title:               title,
+		PublishTime:         publishTime,
+		Content:             content,
+		CompetitionDetailID: compID, // 必传，关联当前赛事
+		Attachment:          attachmentURL,
+	}
+	if err := database.DB.Create(&notice).Error; err != nil {
+		fmt.Printf("数据库写入失败: %v\n", err)
+		utils.InternalServerError(c, "发布赛事通知失败", err)
+		return
+	}
 	utils.Success(c, gin.H{"notice": notice})
 }
