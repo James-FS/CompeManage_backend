@@ -34,7 +34,8 @@ type ApplicationReq struct {
 	CompID        uint        `json:"comp_id" binding:"required"`
 	TeamName      string      `json:"team_name"` // 队伍名称
 	Leader        MemberReq   `json:"leader"`
-	Members       []MemberReq `json:"members"`        // 队员列表 (不包含队长)
+	Members       []MemberReq `json:"members"` // 队员列表 (不包含队长)
+	AdvisorID     *uint       `json:"advisor_id"`
 	AttachmentUrl string      `json:"attachment_url"` // 附件地址
 }
 
@@ -309,7 +310,7 @@ func SubmitRegistration(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 200, "msg": "报名提交成功"})
 }
 
-// checkUserIsAdmin 高性能版：直接通过 SQL 判断是否存在 admin 关联
+// checkUserIsAdmin 通过 SQL 判断是否存在 admin 关联
 func checkUserIsAdmin(userID uint) bool {
 	var count int64
 
@@ -328,7 +329,7 @@ func checkUserIsAdmin(userID uint) bool {
 	return count > 0
 }
 
-// GetRegList 获取报名审核列表 (重构版)
+// GetRegList 获取报名审核列表
 // 支持：赛事名模糊搜索、邮箱筛选、动态权限过滤
 func GetRegList(c *gin.Context) {
 	// 1. 获取参数
@@ -440,13 +441,13 @@ func GetRegList(c *gin.Context) {
 		stuID := ""
 		leaderEmail := "" // 最终显示的邮箱
 		leaderPhone := "" // 最终显示的电话
-		if item.Leader.ID != 0 {
-			leaderName = item.Leader.Realname
-			if leaderName == "" {
-				leaderName = item.Leader.Username
-			}
-			stuID = item.Leader.Username
-		}
+		//if item.Leader.ID != 0 {
+		//	leaderName = item.Leader.Realname
+		//	if leaderName == "" {
+		//		leaderName = item.Leader.Username
+		//	}
+		//	stuID = item.Leader.Username
+		//}
 
 		for _, m := range item.Members {
 			if m.IsLeader {
@@ -454,11 +455,9 @@ func GetRegList(c *gin.Context) {
 				leaderEmail = m.Email
 				leaderPhone = m.Phone
 
-				// 如果 User 表里没名字，用填表的名字兜底
 				if leaderName == "未知" || leaderName == "" {
 					leaderName = m.Name
 				}
-				// 找到了就直接跳出内层循环，不用再看队员了
 				break
 			}
 		}
@@ -567,6 +566,7 @@ func GetRegDetail(c *gin.Context) {
 			"status":         reg.Status,
 			"attachment_url": reg.AttachmentUrl,
 			"members":        reg.Members,
+			"reject_reason":  reg.RejectReason,
 		},
 	})
 }
@@ -642,4 +642,122 @@ func AuditRegister(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"code": 200, "msg": "审核完成"})
+}
+
+func GetMyRegStatus(c *gin.Context) {
+	compID := c.Query("comp_id")
+	userIDVal, _ := c.Get("user_id")
+	userID := userIDVal.(uint)
+
+	var reg models.Register
+	// 查询记录，同时预加载成员和队长信息，方便前端回显
+	err := database.DB.
+		Preload("Members").
+		Preload("Leader").
+		Where("comp_id = ? AND leader_id = ?", compID, userID).
+		First(&reg).Error
+
+	if err != nil {
+		// 没查到，说明还没报名 (返回 null data)
+		c.JSON(200, gin.H{"code": 200, "data": nil})
+		return
+	}
+
+	// 查到了，返回详细信息供回显
+	c.JSON(200, gin.H{
+		"code": 200,
+		"msg":  "获取成功",
+		"data": gin.H{
+			"id":             reg.ID,
+			"team_name":      reg.TeamName,
+			"status":         reg.Status,       // 0:待审 1:通过 2:驳回
+			"reject_reason":  reg.RejectReason, // 驳回理由
+			"attachment_url": reg.AttachmentUrl,
+			"members":        reg.Members, // 注意：这里包含队长和队员
+			"advisor_id":     reg.AdvisorID,
+		},
+	})
+}
+
+// ResubmitRegistration 重新提交报名 (用于驳回修改)
+func ResubmitRegistration(c *gin.Context) {
+	var req ApplicationReq
+	// 这里复用 ApplicationReq 结构体
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": 400, "msg": "参数错误"})
+		return
+	}
+
+	userIDVal, _ := c.Get("user_id")
+	userID := userIDVal.(uint)
+
+	var reg models.Register
+	// 查找原记录
+	if err := database.DB.Where("comp_id = ? AND leader_id = ?", req.CompID, userID).First(&reg).Error; err != nil {
+		c.JSON(404, gin.H{"code": 404, "msg": "未找到原报名记录"})
+		return
+	}
+
+	// 🔒 只有 "已驳回(2)" 或 "待审核(0)" 允许修改，"已通过(1)" 禁止修改
+	if reg.Status == 1 {
+		c.JSON(403, gin.H{"code": 403, "msg": "审核已通过，无法修改信息"})
+		return
+	}
+
+	// 开启事务
+	tx := database.DB.Begin()
+
+	// 1. 更新主表
+	reg.TeamName = req.TeamName
+	reg.AttachmentUrl = req.AttachmentUrl
+	reg.AdvisorID = req.AdvisorID
+	reg.Status = 0        // ✨ 重点：状态重置为待审核
+	reg.RejectReason = "" // 清空驳回理由
+
+	if err := tx.Save(&reg).Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"code": 500, "msg": "更新失败"})
+		return
+	}
+
+	// 2. 更新成员 (策略：全删全加)
+	if err := tx.Where("reg_id = ?", reg.ID).Delete(&models.RegMember{}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"code": 500, "msg": "清理旧成员失败"})
+		return
+	}
+
+	// 3. 重新插入成员
+	var newMembers []models.RegMember
+	// 3.1 插入队长
+	newMembers = append(newMembers, models.RegMember{
+		RegID:     reg.ID,
+		Name:      req.Leader.Name,
+		StudentID: req.Leader.StuID,
+		Phone:     req.Leader.Phone,
+		Email:     req.Leader.Email,
+		College:   req.Leader.College,
+		IsLeader:  true,
+	})
+	// 3.2 插入队员
+	for _, m := range req.Members {
+		newMembers = append(newMembers, models.RegMember{
+			RegID:     reg.ID,
+			Name:      m.Name,
+			StudentID: m.StuID,
+			Phone:     m.Phone,
+			Email:     m.Email,
+			College:   m.College,
+			IsLeader:  false,
+		})
+	}
+
+	if err := tx.Create(&newMembers).Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"code": 500, "msg": "保存成员失败"})
+		return
+	}
+
+	tx.Commit()
+	c.JSON(200, gin.H{"code": 200, "msg": "重新提交成功"})
 }
