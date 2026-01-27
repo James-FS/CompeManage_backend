@@ -33,6 +33,13 @@ func SetupRoutes(r *gin.Engine) {
 	comp := r.Group("/api/comp", middleware.AuthRequired())
 	{
 		comp.GET("/list", controllers.GetCompetitionList)
+		comp.POST("/create", controllers.CreateCompetition)
+		comp.POST("/batch-import", controllers.BatchImportCompetition)
+		comp.DELETE("/:id", controllers.DeleteCompetition)
+		comp.POST("/batch-delete", controllers.BatchDeleteCompetition)
+		comp.PUT("/:id/restore", controllers.RestoreCompetition)
+		comp.GET("/manager/list", controllers.GetManagerList)
+		comp.GET("/years", controllers.GetCompetitionYears)
 	}
 
 	reg := r.Group("/api/reg", middleware.AuthRequired())

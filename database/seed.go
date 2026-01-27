@@ -172,21 +172,29 @@ func InitData() {
 	}
 
 	users := []models.User{
-		{Username: "admin", Realname: "校级管理员", Password: hashPassword("123")},
-		{Username: "yuan", Realname: "计算机学院管理员", Password: hashPassword("123")},
-		{Username: "teacher", Realname: "张老师(赛事负责人)", Password: hashPassword("123")},
-		{Username: "student", Realname: "李同学", Password: hashPassword("123")},
-		{Username: "expert", Realname: "王专家", Password: hashPassword("123")},
+		{Username: "T2023001", Realname: "李老师", Password: hashPassword("123"), College: "教务处", Grade: "教职员工", Major: "管理"},
+		{Username: "T2023002", Realname: "王老师", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "管理"},
+		{Username: "T2023003", Realname: "张伟", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "计算机科学"},
+		{Username: "T2023004", Realname: "李华", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子信息"},
+		{Username: "T2023005", Realname: "王强", Password: hashPassword("123"), College: "经济管理学院", Grade: "教职员工", Major: "经济管理"},
+		{Username: "T2023006", Realname: "赵敏", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "软件工程"},
+		{Username: "S2024001", Realname: "林晓明", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "2024级", Major: "计算机科学与技术"},
+		{Username: "S2024002", Realname: "陈思思", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "2024级", Major: "软件工程"},
+		{Username: "E2023001", Realname: "周杰", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子工程"},
 		// ✨新增：无权限测试用户
-		{Username: "guest", Realname: "访客用户", Password: hashPassword("123")},
+		{Username: "guest", Realname: "访客用户", Password: hashPassword("123"), College: "其他", Grade: "访客", Major: ""},
 	}
 
 	userRoleMap := map[string]*models.Role{
-		"admin":   &schoolAdminRole,
-		"yuan":    &collegeAdminRole,
-		"teacher": &competitionManagerRole,
-		"student": &studentRole,
-		"expert":  &expertRole,
+		"T2023001": &schoolAdminRole,        // 李校长 - 校级管理员
+		"T2023002": &collegeAdminRole,       // 王院长 - 院级管理员
+		"T2023003": &competitionManagerRole, // 张伟 - 赛事负责人
+		"T2023004": &competitionManagerRole, // 李华 - 赛事负责人
+		"T2023005": &competitionManagerRole, // 王强 - 赛事负责人
+		"T2023006": &competitionManagerRole, // 赵敏 - 赛事负责人
+		"S2024001": &studentRole,            // 林晓明 - 学生
+		"S2024002": &studentRole,            // 陈思思 - 学生
+		"E2023001": &expertRole,             // 周杰 - 专家
 		// guest 用户不分配角色，用于测试无权限访问
 	}
 
@@ -204,11 +212,15 @@ func InitData() {
 	// 5. 初始化竞赛目录与详情 (扩展为10条数据)
 	// ==========================================
 
-	// 5.1 获取"张老师"的ID，作为负责人
+	// 5.1 获取赛事负责人的ID（张伟 T2023003），作为负责人
 	var teacherUser models.User
-	DB.Where("username = ?", "teacher").First(&teacherUser)
+	DB.Where("username = ?", "T2023003").First(&teacherUser)
 
-	// 5.2 定义 2026 年的时间点 (基于当前日期 2026-01-23)
+	// 5.2 获取另一位赛事负责人（李华 T2023004）
+	var teacherUser2 models.User
+	DB.Where("username = ?", "T2023004").First(&teacherUser2)
+
+	// 5.3 定义 2026 年的时间点 (基于当前日期 2026-01-23)
 	// 使用固定日期确保数据有效性
 	baseTime := time.Date(2026, 1, 23, 0, 0, 0, 0, time.Local)
 
@@ -333,9 +345,9 @@ func InitData() {
 			Undertaker: "人工智能学院",
 			CollegeID:  1,
 			Year:       2026,
-			ManagerID:  teacherUser.ID,
+			ManagerID:  teacherUser2.ID, // 李华作为负责人
 			Status:     0,
-			CreatedBy:  teacherUser.ID,
+			CreatedBy:  teacherUser2.ID,
 		},
 		{
 			CompCode:   "IOT-2026",
@@ -464,7 +476,7 @@ func InitData() {
 			NeedAttachment:     0,
 			NeedAdvisor:        1,
 		},
-		// ICPC-SCHOOL-2026 (草��)
+		// ICPC-SCHOOL-2026 (草稿)
 		{
 			CompID:             competitions[7].ID,
 			RegStartTime:       baseTime.AddDate(0, 1, 0),
@@ -519,11 +531,11 @@ func InitData() {
 	log.Println("🎉 树形权限与竞赛测试数据初始化完成！")
 	log.Println("================================")
 	log.Println("📋 用户账号信息：")
-	log.Println("  校级管理员: admin    密码: 123 (拥有所有权限)")
-	log.Println("  院级管理员: yuan     密码: 123 (用户管理+审核+报名配置查看)")
-	log.Println("  赛事负责人: teacher  密码: 123 (竞赛管理+审核+报名配置编辑)")
-	log.Println("  学生:       student  密码: 123 (仅报名权限)")
-	log.Println("  专家:       expert   密码: 123 (无特殊权限)")
+	log.Println("  校级管理员: T2023001    密码: 123 (拥有所有权限)")
+	log.Println("  院级管理员: T2023002     密码: 123 (用户管理+审核+报名配置查看)")
+	log.Println("  赛事负责人: T2023003  密码: 123 (竞赛管理+审核+报名配置编辑)")
+	log.Println("  学生:       S2024001  密码: 123 (仅报名权限)")
+	log.Println("  专家:       E2023001   密码: 123 (无特殊权限)")
 	log.Println("  访客:       guest    密码: 123 (无任何权限-测试用)")
 	log.Println("================================")
 	log.Println("🔐 权限验证测试建议：")
