@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,16 +32,35 @@ type ConfigReq struct {
 // ApplicationReq 学生提交的报名数据
 type ApplicationReq struct {
 	CompID        uint        `json:"comp_id" binding:"required"`
-	TeamName      string      `json:"team_name"`      // 队伍名称
-	Members       []MemberReq `json:"members"`        // 队员列表 (不包含队长)
+	TeamName      string      `json:"team_name"` // 队伍名称
+	Leader        MemberReq   `json:"leader"`
+	Members       []MemberReq `json:"members"` // 队员列表 (不包含队长)
+	AdvisorID     *uint       `json:"advisor_id"`
 	AttachmentUrl string      `json:"attachment_url"` // 附件地址
 }
 
 // MemberReq 队员信息子结构
 type MemberReq struct {
-	Name  string `json:"name" binding:"required"`
-	StuID string `json:"stu_id" binding:"required"` // 学号
-	Phone string `json:"phone"`
+	Name    string `json:"name" binding:"required"`
+	StuID   string `json:"stuID" binding:"required"` // 学号
+	Phone   string `json:"phone"`
+	Email   string `json:"email"`
+	College string `json:"college"`
+}
+
+// AuditListResp 用于前端审核列表的行数据
+type AuditListResp struct {
+	ID            uint   `json:"id"`
+	CompID        uint   `json:"comp_id"`
+	CompName      string `json:"comp_name"`
+	TeamName      string `json:"team_name"`
+	LeaderName    string `json:"leader_name"`
+	StuID         string `json:"stu_id"`
+	Email         string `json:"email"` // 你的前端新增了邮箱筛选
+	Phone         string `json:"phone"`
+	CreateTime    string `json:"create_time"`
+	Status        int8   `json:"status"`
+	AttachmentUrl string `json:"attachment_url"`
 }
 
 // removeUploadedFile 根据前端传来的 URL 删除本地文件
@@ -202,7 +222,7 @@ func GetRegConfig(c *gin.Context) {
 	})
 }
 
-// SubmitRegistration 学生提交报名 (简化版：不查赛事规则，只存数据)
+// SubmitRegistration 学生提交报名
 func SubmitRegistration(c *gin.Context) {
 	// 1. 绑定参数
 	var req ApplicationReq
@@ -260,12 +280,23 @@ func SubmitRegistration(c *gin.Context) {
 		Members:       make([]models.RegMember, 0),
 	}
 
+	leaderMember := models.RegMember{
+		Name:      req.Leader.Name,
+		StudentID: req.Leader.StuID,
+		Phone:     req.Leader.Phone,
+		Email:     req.Leader.Email,   // ✨ 保存邮箱
+		College:   req.Leader.College, // ✨ 保存学院
+		IsLeader:  true,               // ✨✨✨ 标记为队长
+	}
+	register.Members = append(register.Members, leaderMember)
 	// 转换队员列表
 	for _, m := range req.Members {
 		register.Members = append(register.Members, models.RegMember{
 			Name:      m.Name,
 			StudentID: m.StuID,
 			Phone:     m.Phone,
+			Email:     m.Email,
+			College:   m.College,
 			IsLeader:  false,
 		})
 	}
@@ -277,4 +308,456 @@ func SubmitRegistration(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"code": 200, "msg": "报名提交成功"})
+}
+
+// checkUserIsAdmin 通过 SQL 判断是否存在 admin 关联
+func checkUserIsAdmin(userID uint) bool {
+	var count int64
+
+	// 逻辑：在 user_roles 中间表中查找，
+	// 连接 roles 表，
+	// 条件：user_id 是当前用户 AND role_code 是 admin
+	err := database.DB.Table("user_roles").
+		Joins("JOIN roles ON roles.id = user_roles.role_id").
+		Where("user_roles.user_id = ? AND roles.role_code LIKE ?", userID, "%admin%").
+		Count(&count).Error
+
+	if err != nil {
+		return false
+	}
+
+	return count > 0
+}
+
+// GetRegList 获取报名审核列表
+// 支持：赛事名模糊搜索、邮箱筛选、动态权限过滤
+func GetRegList(c *gin.Context) {
+	// 1. 获取参数
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("size", "10"))
+
+	keyword := c.Query("keyword") // 搜负责人姓名 或 队伍名
+	email := c.Query("email")     // 搜邮箱
+	phone := c.Query("phone")
+	status := c.Query("status")      // 搜状态 (0,1,2)
+	compName := c.Query("comp_name") // 搜赛事名称
+	//advisor := c.Query("advisor")        // 搜指导老师
+	pType := c.Query("participant_type") // 搜赛制 (1:个人, 2:团队)
+	// 2. 获取当前用户
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(401, gin.H{"code": 401, "msg": "未登录"})
+		return
+	}
+	userID := userIDVal.(uint)
+
+	// 3. 构建查询
+	// 基础查询：关联赛事表(用于权限和搜名字)、关联用户表(Leader)、关联队员表
+	query := database.DB.Model(&models.Register{}).
+		Joins("LEFT JOIN comp_directories ON comp_directories.id = registers.comp_id").
+		Joins("LEFT JOIN comp_details ON comp_details.comp_id = registers.comp_id").
+		Preload("Competition").
+		Preload("Leader").
+		Preload("Members")
+
+	// 如果不是管理员，限制：只能查 manager_id = 当前用户 的赛事报名
+	if !checkUserIsAdmin(userID) {
+		query = query.Where("comp_directories.manager_id = ?", userID)
+	}
+
+	// --- 条件筛选 ---
+
+	// 1. 搜赛事名称
+	if compName != "" {
+		query = query.Where("comp_directories.comp_name LIKE ?", "%"+compName+"%")
+	}
+
+	// 2. 搜状态
+	if status != "" {
+		query = query.Where("registers.status = ?", status)
+	}
+	// 搜赛制（个人/团队）
+	if pType != "" {
+		query = query.Where("comp_details.participant_type = ?", pType)
+	}
+
+	// 3. 搜 队伍名 或 负责人姓名
+	if keyword != "" {
+		// 注意：这里手动 Join users 表用于搜索，GORM 的 Preload 只是为了取值，不能用于 Where 条件
+		query = query.Joins("LEFT JOIN users ON users.id = registers.leader_id").
+			Where("registers.team_name LIKE ? OR users.realname LIKE ? OR users.username LIKE ?",
+				"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
+	}
+
+	// 4. 搜邮箱
+	if email != "" {
+		// 防止重复 Join (如果 keyword 为空，上面没 Join 过，这里需要 Join)
+		if keyword == "" {
+			query = query.Joins("LEFT JOIN users ON users.id = registers.leader_id")
+		}
+		query = query.Where("EXISTS (SELECT 1 FROM reg_members WHERE reg_members.reg_id = registers.id AND reg_members.email LIKE ? AND reg_members.is_leader = ?)", "%"+email+"%", true)
+	}
+
+	if phone != "" {
+		// 使用 EXISTS 子查询来搜 members 表里的电话
+		query = query.Where("EXISTS (SELECT 1 FROM reg_members WHERE reg_members.reg_id = registers.id AND reg_members.phone LIKE ? AND reg_members.is_leader = ?)", "%"+phone+"%", true)
+	}
+	// --- 分页执行 ---
+	var total int64
+	// Count 时 GORM 会自动忽略 Preload，但保留 Joins 和 Where
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(500, gin.H{"code": 500, "msg": "查询失败", "err": err.Error()})
+		return
+	}
+
+	var list []models.Register
+	offset := (page - 1) * pageSize
+	// Order 指定表名防止字段歧义
+	if err := query.Order("registers.create_time desc").Offset(offset).Limit(pageSize).Find(&list).Error; err != nil {
+		c.JSON(500, gin.H{"code": 500, "msg": "获取数据失败"})
+		return
+	}
+
+	// --- 组装返回数据 (DTO) ---
+	type AuditListResp struct {
+		ID            uint               `json:"id"`
+		CompID        uint               `json:"comp_id"`
+		CompName      string             `json:"comp_name"`
+		TeamName      string             `json:"team_name"`
+		LeaderName    string             `json:"leader_name"`
+		StuID         string             `json:"stu_id"`
+		Email         string             `json:"email"`
+		Phone         string             `json:"phone"`
+		CreateTime    string             `json:"create_time"`
+		Status        int8               `json:"status"`
+		AttachmentUrl string             `json:"attachment_url"`
+		Members       []models.RegMember `json:"members"`
+	}
+
+	var respList []AuditListResp
+	for _, item := range list {
+		// 处理空指针默认值
+		leaderName := "未知"
+		stuID := ""
+		leaderEmail := "" // 最终显示的邮箱
+		leaderPhone := "" // 最终显示的电话
+		//if item.Leader.ID != 0 {
+		//	leaderName = item.Leader.Realname
+		//	if leaderName == "" {
+		//		leaderName = item.Leader.Username
+		//	}
+		//	stuID = item.Leader.Username
+		//}
+
+		for _, m := range item.Members {
+			if m.IsLeader {
+				// 找到了队长！提取填表时的最新信息
+				leaderEmail = m.Email
+				leaderPhone = m.Phone
+
+				if leaderName == "未知" || leaderName == "" {
+					leaderName = m.Name
+				}
+				break
+			}
+		}
+
+		respList = append(respList, AuditListResp{
+			ID:            item.ID,
+			CompID:        item.CompID,
+			CompName:      item.Competition.CompName,
+			TeamName:      item.TeamName,
+			LeaderName:    leaderName,
+			StuID:         stuID,
+			Email:         leaderEmail,
+			Phone:         leaderPhone,
+			CreateTime:    item.CreatedAt.Format("2006-01-02 15:04"),
+			Status:        item.Status,
+			AttachmentUrl: item.AttachmentUrl,
+			Members:       item.Members,
+		})
+	}
+
+	c.JSON(200, gin.H{
+		"code":  200,
+		"msg":   "ok",
+		"data":  respList,
+		"total": total,
+	})
+}
+
+// GetRegDetail 获取单条报名详情 (适配 auditDetail.vue)
+func GetRegDetail(c *gin.Context) {
+	// 获取参数
+	regID := c.Query("id") // 对应 api.getRegDetail(id)
+	if regID == "" {
+		c.JSON(400, gin.H{"code": 400, "msg": "缺少 id 参数"})
+		return
+	}
+
+	userIDVal, _ := c.Get("user_id")
+	userID := userIDVal.(uint)
+
+	// 2. 数据库查询 (关联赛事、负责人User表、成员表)
+	var reg models.Register
+	err := database.DB.
+		Preload("Competition"). // 为了拿 CompName 和 ManagerID
+		Preload("Leader").      // 为了拿 User 表里的真实姓名/邮箱
+		Preload("Members").     // 为了拿队员列表
+		First(&reg, regID).Error
+
+	if err != nil {
+		c.JSON(404, gin.H{"code": 404, "msg": "报名记录不存在"})
+		return
+	}
+
+	// 3. 权限校验
+	// 只有管理员 或 该赛事的负责人 才能看
+	if !checkUserIsAdmin(userID) {
+		if reg.Competition.ManagerID != userID {
+			c.JSON(403, gin.H{"code": 403, "msg": "无权查看此记录"})
+			return
+		}
+	}
+
+	// A. 处理负责人信息 (优先用 User 表，如果没有则用 Members 表兜底)
+	leaderName := "未知"
+	stuID := ""
+	email := ""
+	phone := ""
+
+	// 从 User 表取基础信息
+	if reg.Leader.ID != 0 {
+		leaderName = reg.Leader.Realname
+		if leaderName == "" {
+			leaderName = reg.Leader.Username
+		}
+		stuID = reg.Leader.Username
+	}
+
+	for _, m := range reg.Members {
+		if m.IsLeader {
+			phone = m.Phone
+			// 如果 User 表里没填真实姓名，用报名表里的名字兜底
+			if email == "" {
+				email = m.Email
+			}
+
+			if reg.Leader.Realname == "" {
+				leaderName = m.Name
+			}
+			break
+		}
+	}
+
+	// 5. 返回 JSON
+	c.JSON(200, gin.H{
+		"code": 200,
+		"msg":  "ok",
+		"data": gin.H{
+			"id":             reg.ID,
+			"comp_name":      reg.Competition.CompName, // 自动关联获取
+			"team_name":      reg.TeamName,
+			"leader_name":    leaderName,
+			"stu_id":         stuID,
+			"phone":          phone,
+			"email":          email,
+			"update_time":    reg.UpdatedAt.Format("2006-01-02 15:04:05"),
+			"status":         reg.Status,
+			"attachment_url": reg.AttachmentUrl,
+			"members":        reg.Members,
+			"reject_reason":  reg.RejectReason,
+		},
+	})
+}
+
+// AuditRegister 审核接口
+func AuditRegister(c *gin.Context) {
+	type AuditReq struct {
+		ID     uint   `json:"id" binding:"required"`
+		Status int8   `json:"status"` // 1:通过 2:驳回
+		Reason string `json:"reason"` // 驳回理由
+	}
+	var req AuditReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": 400, "msg": "参数错误"})
+		return
+	}
+
+	// 参数合法性校验
+	// 防止前端传 3, 4, 99 这种非法值
+	if req.Status != 1 && req.Status != 2 {
+		c.JSON(400, gin.H{"code": 400, "msg": "非法的审核状态"})
+		return
+	}
+
+	// 2. 驳回时必填理由
+	if req.Status == 2 && req.Reason == "" {
+		c.JSON(400, gin.H{"code": 400, "msg": "驳回时必须填写原因"})
+		return
+	}
+
+	userIDVal, _ := c.Get("user_id")
+	userID := userIDVal.(uint)
+
+	var reg models.Register
+	err := database.DB.Preload("Competition").First(&reg, req.ID).Error
+
+	if err != nil {
+		c.JSON(404, gin.H{"code": 404, "msg": "记录不存在"})
+		return
+	}
+
+	// 4. 【新增】状态流转校验 (防止重复审核)
+	// 如果已经是 1(通过) 或 2(驳回)，就不应该再审核了 (视业务需求而定)
+	if reg.Status != 0 {
+		c.JSON(409, gin.H{"code": 409, "msg": "该记录已被审核，请勿重复操作"})
+		return
+	}
+
+	// 5. 权限校验
+	if !checkUserIsAdmin(userID) {
+		if reg.Competition.ManagerID != userID {
+			c.JSON(403, gin.H{"code": 403, "msg": "您无权审核此条记录"})
+			return
+		}
+	}
+
+	// 6. 执行更新
+	updateMap := map[string]interface{}{
+		"status": req.Status,
+	}
+
+	// 保存驳回理由
+	if req.Status == 2 {
+		updateMap["reject_reason"] = req.Reason
+	} else {
+		updateMap["reject_reason"] = ""
+	}
+
+	// 7. 更新数据库
+	if err := database.DB.Model(&reg).Updates(updateMap).Error; err != nil {
+		c.JSON(500, gin.H{"code": 500, "msg": "数据库更新失败"})
+		return
+	}
+
+	c.JSON(200, gin.H{"code": 200, "msg": "审核完成"})
+}
+
+func GetMyRegStatus(c *gin.Context) {
+	compID := c.Query("comp_id")
+	userIDVal, _ := c.Get("user_id")
+	userID := userIDVal.(uint)
+
+	var reg models.Register
+	// 查询记录，同时预加载成员和队长信息，方便前端回显
+	err := database.DB.
+		Preload("Members").
+		Preload("Leader").
+		Where("comp_id = ? AND leader_id = ?", compID, userID).
+		First(&reg).Error
+
+	if err != nil {
+		// 没查到，说明还没报名 (返回 null data)
+		c.JSON(200, gin.H{"code": 200, "data": nil})
+		return
+	}
+
+	// 查到了，返回详细信息供回显
+	c.JSON(200, gin.H{
+		"code": 200,
+		"msg":  "获取成功",
+		"data": gin.H{
+			"id":             reg.ID,
+			"team_name":      reg.TeamName,
+			"status":         reg.Status,       // 0:待审 1:通过 2:驳回
+			"reject_reason":  reg.RejectReason, // 驳回理由
+			"attachment_url": reg.AttachmentUrl,
+			"members":        reg.Members, // 注意：这里包含队长和队员
+			"advisor_id":     reg.AdvisorID,
+		},
+	})
+}
+
+// ResubmitRegistration 重新提交报名 (用于驳回修改)
+func ResubmitRegistration(c *gin.Context) {
+	var req ApplicationReq
+	// 这里复用 ApplicationReq 结构体
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": 400, "msg": "参数错误"})
+		return
+	}
+
+	userIDVal, _ := c.Get("user_id")
+	userID := userIDVal.(uint)
+
+	var reg models.Register
+	// 查找原记录
+	if err := database.DB.Where("comp_id = ? AND leader_id = ?", req.CompID, userID).First(&reg).Error; err != nil {
+		c.JSON(404, gin.H{"code": 404, "msg": "未找到原报名记录"})
+		return
+	}
+
+	// 🔒 只有 "已驳回(2)" 或 "待审核(0)" 允许修改，"已通过(1)" 禁止修改
+	if reg.Status == 1 {
+		c.JSON(403, gin.H{"code": 403, "msg": "审核已通过，无法修改信息"})
+		return
+	}
+
+	// 开启事务
+	tx := database.DB.Begin()
+
+	// 1. 更新主表
+	reg.TeamName = req.TeamName
+	reg.AttachmentUrl = req.AttachmentUrl
+	reg.AdvisorID = req.AdvisorID
+	reg.Status = 0        // ✨ 重点：状态重置为待审核
+	reg.RejectReason = "" // 清空驳回理由
+
+	if err := tx.Save(&reg).Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"code": 500, "msg": "更新失败"})
+		return
+	}
+
+	// 2. 更新成员 (策略：全删全加)
+	if err := tx.Where("reg_id = ?", reg.ID).Delete(&models.RegMember{}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"code": 500, "msg": "清理旧成员失败"})
+		return
+	}
+
+	// 3. 重新插入成员
+	var newMembers []models.RegMember
+	// 3.1 插入队长
+	newMembers = append(newMembers, models.RegMember{
+		RegID:     reg.ID,
+		Name:      req.Leader.Name,
+		StudentID: req.Leader.StuID,
+		Phone:     req.Leader.Phone,
+		Email:     req.Leader.Email,
+		College:   req.Leader.College,
+		IsLeader:  true,
+	})
+	// 3.2 插入队员
+	for _, m := range req.Members {
+		newMembers = append(newMembers, models.RegMember{
+			RegID:     reg.ID,
+			Name:      m.Name,
+			StudentID: m.StuID,
+			Phone:     m.Phone,
+			Email:     m.Email,
+			College:   m.College,
+			IsLeader:  false,
+		})
+	}
+
+	if err := tx.Create(&newMembers).Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"code": 500, "msg": "保存成员失败"})
+		return
+	}
+
+	tx.Commit()
+	c.JSON(200, gin.H{"code": 200, "msg": "重新提交成功"})
 }
