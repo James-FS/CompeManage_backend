@@ -14,6 +14,7 @@ type CompDirectory struct {
 	ManagerID  uint   `gorm:"column:manager_id;index;comment:负责人ID(关联用户表)" json:"manager_id"`
 	Status     int8   `gorm:"column:status;type:tinyint;default:0;comment:状态(0:草稿 1:发布 2:结束)" json:"status"`
 	CreatedBy  uint   `gorm:"column:created_by;comment:创建人ID" json:"created_by"`
+	Desc       string `gorm:"column:desc;type:text;comment:竞赛描述说明" json:"desc"`
 
 	BaseModel
 

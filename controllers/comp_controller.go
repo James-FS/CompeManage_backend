@@ -3,6 +3,7 @@ package controllers
 import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/models"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -105,6 +106,328 @@ func GetCompetitionList(c *gin.Context) {
 			"total": total,
 			"page":  req.Page,
 			"size":  req.PageSize,
+		},
+	})
+}
+
+// CreateCompetitionReq 创建竞赛目录
+type CreateCompetitionReq struct {
+	CompName   string `json:"comp_name" binding:"required"`  // 竞赛名称
+	CompLevel  string `json:"comp_level" binding:"required"` // 竞赛级别
+	CompType   string `json:"comp_type"`                     // 竞赛类别
+	Organizer  string `json:"organizer"`                     // 主办方
+	Undertaker string `json:"undertaker"`                    // 承办方
+	ManagerID  uint   `json:"manager_id" binding:"required"` // 赛事负责人ID
+	College    string `json:"college" binding:"required"`    // 所属学院
+	Desc       string `json:"desc"`                          // 描述说明
+	Year       string `json:"year"`                          // 举办年份
+}
+
+// CreateCompetition 新增赛事目录
+func CreateCompetition(c *gin.Context) {
+	// 绑定并校验参数
+	var req CreateCompetitionReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "参数错误", "error": err.Error()})
+		return
+	}
+
+	// 获取学院ID (根据学院名称查询)
+	var college models.College
+	if err := database.DB.Where("name = ?", req.College).First(&college).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "学院不存在"})
+		return
+	}
+
+	// 将年份字符串转换为整数
+	year := 0
+	if req.Year != "" {
+		fmt.Sscanf(req.Year, "%d", &year)
+	}
+
+	// 构造数据库模型
+	compDir := models.CompDirectory{
+		CompName:   req.CompName,
+		CompLevel:  req.CompLevel,
+		CompType:   req.CompType,
+		Organizer:  req.Organizer,
+		Undertaker: req.Undertaker,
+		ManagerID:  req.ManagerID,
+		CollegeID:  college.ID,
+		Year:       year,
+		Desc:       req.Desc,
+		Status:     0, // 0: 草稿状态
+	}
+
+	if err := database.DB.Create(&compDir).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "创建失败", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 200,
+		"msg":  "创建成功",
+		"data": compDir,
+	})
+}
+
+// BatchImportCompetition 批量导入竞赛目录
+func BatchImportCompetition(c *gin.Context) {
+	var req struct {
+		Items []CreateCompetitionReq `json:"items" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "参数错误", "error": err.Error()})
+		return
+	}
+
+	// 构造批量插入的数据
+	var compDirs []models.CompDirectory
+	for _, item := range req.Items {
+		// 获取学院ID
+		var college models.College
+		if err := database.DB.Where("name = ?", item.College).First(&college).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "学院不存在: " + item.College})
+			return
+		}
+
+		// 将年份字符串转换为整数
+		year := 0
+		if item.Year != "" {
+			fmt.Sscanf(item.Year, "%d", &year)
+		}
+
+		compDirs = append(compDirs, models.CompDirectory{
+			CompName:   item.CompName,
+			CompLevel:  item.CompLevel,
+			CompType:   item.CompType,
+			Organizer:  item.Organizer,
+			Undertaker: item.Undertaker,
+			ManagerID:  item.ManagerID,
+			CollegeID:  college.ID,
+			Year:       year,
+			Desc:       item.Desc,
+			Status:     0, // 0: 草稿状态
+		})
+	}
+
+	if err := database.DB.CreateInBatches(compDirs, 100).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "导入失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 200,
+		"msg":  "批量导入成功",
+		"data": gin.H{"count": len(compDirs)},
+	})
+}
+
+// ManagerListReq 获取赛事负责人列表的查询参数
+type ManagerListReq struct {
+	Name     string `form:"name"`                               // 模糊搜索：姓名
+	WorkID   string `form:"work_id"`                            // 模糊搜索：工号
+	College  string `form:"college"`                            // 精确搜索：所属学院
+	Page     int    `form:"page" binding:"required,min=1"`      // 页码
+	PageSize int    `form:"page_size" binding:"required,min=1"` // 每页数量
+}
+
+// ManagerResp 赛事负责人响应结构
+type ManagerResp struct {
+	ID      uint   `json:"id"`
+	Name    string `json:"name"`    // 真实姓名
+	WorkID  string `json:"work_id"` // 工号（username）
+	College string `json:"college"`
+}
+
+// GetManagerList 获取赛事负责人列表
+// 从 role 表查询赛事负责人角色 -> 从 user_roles 联接表找到相关用户 -> 返回用户信息
+func GetManagerList(c *gin.Context) {
+	var req ManagerListReq
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "参数错误", "error": err.Error()})
+		return
+	}
+
+	// 1. 查询赛事负责人角色（假设角色标识为 "competition_manager"）
+	var role models.Role
+	if err := database.DB.Where("role_code = ?", "competition_manager").First(&role).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "获取角色信息失败"})
+		return
+	}
+
+	// 2. 构建用户查询条件
+	query := database.DB.Model(&models.User{}).
+		Joins("JOIN user_roles ON users.id = user_roles.user_id").
+		Where("user_roles.role_id = ?", role.ID)
+
+	// 名称模糊搜索
+	if req.Name != "" {
+		query = query.Where("users.realname LIKE ?", "%"+req.Name+"%")
+	}
+
+	// 工号模糊搜索
+	if req.WorkID != "" {
+		query = query.Where("users.username LIKE ?", "%"+req.WorkID+"%")
+	}
+
+	// 学院精确搜索
+	if req.College != "" {
+		query = query.Where("users.college = ?", req.College)
+	}
+
+	// 3. 计算总数（用于分页）
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询失败"})
+		return
+	}
+
+	// 4. 执行分页查询
+	offset := (req.Page - 1) * req.PageSize
+	var users []models.User
+	if err := query.
+		Select("users.id", "users.realname", "users.username", "users.college").
+		Order("users.id").
+		Offset(offset).
+		Limit(req.PageSize).
+		Find(&users).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询用户数据失败"})
+		return
+	}
+
+	// 5. 转换为响应结构
+	var managers []ManagerResp
+	for _, user := range users {
+		managers = append(managers, ManagerResp{
+			ID:      user.ID,
+			Name:    user.Realname,
+			WorkID:  user.Username,
+			College: user.College,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 200,
+		"msg":  "获取成功",
+		"data": gin.H{
+			"list":  managers,
+			"total": total,
+			"page":  req.Page,
+			"size":  req.PageSize,
+		},
+	})
+}
+
+// GetCompetitionYears 获取赛事中存在的所有年份（用于往年复用的年份选择）
+// SQL: SELECT DISTINCT year FROM comp_directories WHERE year > 0 ORDER BY year DESC
+func GetCompetitionYears(c *gin.Context) {
+	var years []int
+	if err := database.DB.
+		Model(&models.CompDirectory{}).
+		Where("year > ?", 0).
+		Distinct("year").
+		Order("year DESC").
+		Pluck("year", &years).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询年份失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 200,
+		"msg":  "获取成功",
+		"data": gin.H{
+			"years": years,
+		},
+	})
+}
+
+// DeleteCompetition 删除赛事（软删除）
+func DeleteCompetition(c *gin.Context) {
+	id := c.Param("id")
+
+	// 检查赛事是否存在
+	var comp models.CompDirectory
+	if err := database.DB.First(&comp, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"code": 404, "msg": "赛事不存在"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询失败"})
+		}
+		return
+	}
+
+	// 执行软删除
+	if err := database.DB.Delete(&comp).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "删除失败", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 200,
+		"msg":  "删除成功",
+	})
+}
+
+// RestoreCompetition 恢复已删除的赛事
+func RestoreCompetition(c *gin.Context) {
+	id := c.Param("id")
+
+	// 检查赛事是否存在（包括已删除的）
+	var comp models.CompDirectory
+	if err := database.DB.Unscoped().First(&comp, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"code": 404, "msg": "赛事不存在"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询失败"})
+		}
+		return
+	}
+
+	// 检查是否已经被删除
+	if comp.DeletedAt.Time.IsZero() {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "赛事未被删除"})
+		return
+	}
+
+	// 执行恢复操作
+	if err := database.DB.Model(&comp).Update("delete_time", nil).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "恢复失败", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 200,
+		"msg":  "恢复成功",
+	})
+}
+
+// BatchDeleteReq 批量删除请求参数
+type BatchDeleteReq struct {
+	IDs []uint `json:"ids" binding:"required,min=1"` // 要删除的赛事ID列表
+}
+
+// BatchDeleteCompetition 批量删除赛事（软删除）
+func BatchDeleteCompetition(c *gin.Context) {
+	var req BatchDeleteReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "参数错误", "error": err.Error()})
+		return
+	}
+
+	// 执行批量软删除
+	result := database.DB.Delete(&models.CompDirectory{}, req.IDs)
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "删除失败", "error": result.Error.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 200,
+		"msg":  "删除成功",
+		"data": gin.H{
+			"deleted_count": result.RowsAffected,
 		},
 	})
 }

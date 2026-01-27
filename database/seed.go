@@ -176,57 +176,31 @@ func InitData() {
 	}
 
 	users := []models.User{
-		// ========== 校级管理员 (保留原有) ==========
-		{Username: "admin", Realname: "校级管理员", Password: hashPassword("123"), College: "校办"},
-
-		// ========== 院级管理员 (保留原有 + 新增) ==========
-		{Username: "yuan", Realname: "计算机学院管理员", Password: hashPassword("123"), College: "计算机学院"},
-		{Username: "yuan_math", Realname: "数学学院管理员", Password: hashPassword("123"), College: "数学学院"},
-		{Username: "yuan_mech", Realname: "机械工程学院管理员", Password: hashPassword("123"), College: "机械工程学院"},
-
-		// ========== 赛事负责人 (保留原有 + 新增) ==========
-		{Username: "teacher", Realname: "张老师", Password: hashPassword("123"), College: "计算机学院"},
-		{Username: "teacher_wang", Realname: "王老师", Password: hashPassword("123"), College: "数学学院"},
-		{Username: "teacher_li", Realname: "李老师", Password: hashPassword("123"), College: "机械工程学院"},
-
-		// ========== 学生 (保留原有 + 新增) ==========
-		{Username: "student", Realname: "李同学", Password: hashPassword("123"), Grade: "2022", College: "计算机学院", Major: "软件工程"},
-		{Username: "student_zhang", Realname: "张同学", Password: hashPassword("123"), Grade: "2023", College: "计算机学院", Major: "计算机科学"},
-		{Username: "student_wang", Realname: "王同学", Password: hashPassword("123"), Grade: "2023", College: "数学学院", Major: "应用数学"},
-		{Username: "student_liu", Realname: "刘同学", Password: hashPassword("123"), Grade: "2024", College: "机械工程学院", Major: "机械设计"},
-		{Username: "student_chen", Realname: "陈同学", Password: hashPassword("123"), Grade: "2024", College: "计算机学院", Major: "人工智能"},
-
-		// ========== 专家 (保留原有 + 新增) ==========
-		{Username: "expert", Realname: "王专家", Password: hashPassword("123"), College: "校外专家"},
-		{Username: "expert_zhao", Realname: "赵专家", Password: hashPassword("123"), College: "校外专家"},
-
-		// ========== 访客 (保留原有) ==========
-		{Username: "guest", Realname: "访客用户", Password: hashPassword("123")},
+		{Username: "T2023001", Realname: "李老师", Password: hashPassword("123"), College: "教务处", Grade: "教职员工", Major: "管理"},
+		{Username: "T2023002", Realname: "王老师", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "管理"},
+		{Username: "T2023003", Realname: "张伟", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "计算机科学"},
+		{Username: "T2023004", Realname: "李华", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子信息"},
+		{Username: "T2023005", Realname: "王强", Password: hashPassword("123"), College: "经济管理学院", Grade: "教职员工", Major: "经济管理"},
+		{Username: "T2023006", Realname: "赵敏", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "软件工程"},
+		{Username: "S2024001", Realname: "林晓明", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "2024级", Major: "计算机科学与技术"},
+		{Username: "S2024002", Realname: "陈思思", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "2024级", Major: "软件工程"},
+		{Username: "E2023001", Realname: "周杰", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子工程"},
+		// ✨新增：无权限测试用户
+		{Username: "guest", Realname: "访客用户", Password: hashPassword("123"), College: "其他", Grade: "访客", Major: ""},
 	}
 
 	// 用户-角色映射
 	userRoleMap := map[string]*models.Role{
-		// 校级管理员
-		"admin": &schoolAdminRole,
-		// 院级管理员
-		"yuan":      &collegeAdminRole,
-		"yuan_math": &collegeAdminRole,
-		"yuan_mech": &collegeAdminRole,
-		// 赛事负责人
-		"teacher":      &competitionManagerRole,
-		"teacher_wang": &competitionManagerRole,
-		"teacher_li":   &competitionManagerRole,
-		// 学生
-		"student":       &studentRole,
-		"student_zhang": &studentRole,
-		"student_wang":  &studentRole,
-		"student_liu":   &studentRole,
-		"student_chen":  &studentRole,
-		// 专家
-		"expert":      &expertRole,
-		"expert_zhao": &expertRole,
-		// 访客
-		"guest": &guestRole,
+		"T2023001": &schoolAdminRole,        // 李校长 - 校级管理员
+		"T2023002": &collegeAdminRole,       // 王院长 - 院级管理员
+		"T2023003": &competitionManagerRole, // 张伟 - 赛事负责人
+		"T2023004": &competitionManagerRole, // 李华 - 赛事负责人
+		"T2023005": &competitionManagerRole, // 王强 - 赛事负责人
+		"T2023006": &competitionManagerRole, // 赵敏 - 赛事负责人
+		"S2024001": &studentRole,            // 林晓明 - 学生
+		"S2024002": &studentRole,            // 陈思思 - 学生
+		"E2023001": &expertRole,             // 周杰 - 专家
+		// guest 用户不分配角色，用于测试无权限访问
 	}
 
 	for _, u := range users {
@@ -255,14 +229,17 @@ func InitData() {
 	// 5. 初始化竞赛目录与详情 (扩展为20条数据)
 	// ==========================================
 
-	// 5.1 获取负责人ID
-	var teacherUser, teacherWang, teacherLi models.User
-	DB.Where("username = ?", "teacher").First(&teacherUser)
-	DB.Where("username = ?", "teacher_wang").First(&teacherWang)
-	DB.Where("username = ?", "teacher_li").First(&teacherLi)
+	// 5.1 获取赛事负责人的ID（张伟 T2023003），作为负责人
+	var teacherUser models.User
+	DB.Where("username = ?", "T2023003").First(&teacherUser)
 
-	// 5.2 定义时间基准点 (基于当前日期 2026-01-26)
-	baseTime := time.Date(2026, 1, 26, 0, 0, 0, 0, time.Local)
+	// 5.2 获取另一位赛事负责人（李华 T2023004）
+	var teacherUser2 models.User
+	DB.Where("username = ?", "T2023004").First(&teacherUser2)
+
+	// 5.3 定义 2026 年的时间点 (基于当前日期 2026-01-23)
+	// 使用固定日期确保数据有效性
+	baseTime := time.Date(2026, 1, 23, 0, 0, 0, 0, time.Local)
 
 	// 5.3 创建竞赛数据 - 扩展为20条，覆盖各种状态和时间段
 	competitions := []models.CompDirectory{
@@ -684,22 +661,9 @@ func InitData() {
 			Undertaker: "人工智能学院",
 			CollegeID:  1,
 			Year:       2026,
-			ManagerID:  teacherUser.ID,
+			ManagerID:  teacherUser2.ID, // 李华作为负责人
 			Status:     0,
-			CreatedBy:  teacherUser.ID,
-			Detail: models.CompDetail{
-				RegStartTime:       baseTime.AddDate(0, 2, 0),
-				RegEndTime:         baseTime.AddDate(0, 3, 0),
-				CompStartTime:      baseTime.AddDate(0, 4, 0),
-				CompEndTime:        baseTime.AddDate(0, 4, 15),
-				ParticipantType:    2,
-				MaxTeamMember:      4,
-				MinTeamMember:      2,
-				GradeRequirement:   "[2023,2024,2025]",
-				RegistrationMethod: "待定... 需提交AI项目作品。",
-				NeedAttachment:     2,
-				NeedAdvisor:        1,
-			},
+			CreatedBy:  teacherUser2.ID,
 		},
 		{
 			CompCode:   "IOT-2026",
@@ -812,39 +776,174 @@ func InitData() {
 		log.Printf("创建竞赛数据失败: %v", err)
 	}
 
-	// ==========================================
-	// 打印初始化信息
-	// ==========================================
-	log.Println("🎉 扩展版测试数据初始化完成！")
+	// 单独创建竞赛详情，确保时间字段被正确设置
+	compDetails := []models.CompDetail{
+		// NCD-2026
+		{
+			CompID:             competitions[0].ID,
+			RegStartTime:       baseTime.AddDate(0, 0, -10), // 10天前开始报名
+			RegEndTime:         baseTime.AddDate(0, 1, 0),   // 1个月后结束报名
+			CompStartTime:      baseTime.AddDate(0, 2, 0),   // 2个月后开始比赛
+			CompEndTime:        baseTime.AddDate(0, 3, 0),   // 3个月后结束比赛
+			ParticipantType:    2,
+			MaxTeamMember:      5,
+			MinTeamMember:      2,
+			GradeRequirement:   "[2022,2023,2024,2025]",
+			RegistrationMethod: "请各参赛队登录国赛官网报名，并在此系统提交校内审核材料。",
+			NeedAttachment:     2,
+			NeedAdvisor:        2,
+		},
+		// LQB-2026
+		{
+			CompID:             competitions[1].ID,
+			RegStartTime:       baseTime.AddDate(0, 0, -20), // 20天前开始
+			RegEndTime:         baseTime.AddDate(0, 0, 10),  // 10天后结束
+			CompStartTime:      baseTime.AddDate(0, 1, 15),  // 1个半月后比赛
+			CompEndTime:        baseTime.AddDate(0, 1, 15),
+			ParticipantType:    1,
+			MaxTeamMember:      1,
+			MinTeamMember:      1,
+			GradeRequirement:   "[]",
+			RegistrationMethod: "个人赛，C/C++或Java组，直接在线报名。",
+			NeedAttachment:     0,
+			NeedAdvisor:        0,
+		},
+		// MCM-2026
+		{
+			CompID:             competitions[2].ID,
+			RegStartTime:       baseTime.AddDate(0, 0, -5),
+			RegEndTime:         baseTime.AddDate(0, 0, 20),
+			CompStartTime:      baseTime.AddDate(0, 1, 0),
+			CompEndTime:        baseTime.AddDate(0, 1, 4), // 4天比赛
+			ParticipantType:    2,
+			MaxTeamMember:      3,
+			MinTeamMember:      3,
+			GradeRequirement:   "[2022,2023,2024]",
+			RegistrationMethod: "三人组队，需有指导老师，提交英文论文。",
+			NeedAttachment:     1,
+			NeedAdvisor:        2,
+		},
+		// ACM-2026
+		{
+			CompID:             competitions[3].ID,
+			RegStartTime:       baseTime.AddDate(0, 0, 30), // 30天后开始报名
+			RegEndTime:         baseTime.AddDate(0, 2, 0),
+			CompStartTime:      baseTime.AddDate(0, 3, 0),
+			CompEndTime:        baseTime.AddDate(0, 3, 0),
+			ParticipantType:    2,
+			MaxTeamMember:      3,
+			MinTeamMember:      3,
+			GradeRequirement:   "[2023,2024,2025]",
+			RegistrationMethod: "三人组队，通过校内选拔赛获得参赛资格。",
+			NeedAttachment:     0,
+			NeedAdvisor:        1,
+		},
+		// ROBOCON-2026
+		{
+			CompID:             competitions[4].ID,
+			RegStartTime:       baseTime.AddDate(0, -2, 0), // 2个月前开始
+			RegEndTime:         baseTime.AddDate(0, -1, 0), // 1个月前结束
+			CompStartTime:      baseTime.AddDate(0, 0, -5), // 5天前开始比赛
+			CompEndTime:        baseTime.AddDate(0, 0, 10), // 10天后结束
+			ParticipantType:    2,
+			MaxTeamMember:      20,
+			MinTeamMember:      10,
+			GradeRequirement:   "[]",
+			RegistrationMethod: "战队形式参赛，需提交技术方案书。",
+			NeedAttachment:     2,
+			NeedAdvisor:        2,
+		},
+		// CUMCM-2025 (已结束)
+		{
+			CompID:             competitions[5].ID,
+			RegStartTime:       time.Date(2025, 7, 1, 0, 0, 0, 0, time.Local),
+			RegEndTime:         time.Date(2025, 8, 31, 23, 59, 59, 0, time.Local),
+			CompStartTime:      time.Date(2025, 9, 14, 8, 0, 0, 0, time.Local),
+			CompEndTime:        time.Date(2025, 9, 17, 20, 0, 0, 0, time.Local),
+			ParticipantType:    2,
+			MaxTeamMember:      3,
+			MinTeamMember:      3,
+			GradeRequirement:   "[2022,2023,2024]",
+			RegistrationMethod: "已结束。三人组队参赛。",
+			NeedAttachment:     2,
+			NeedAdvisor:        2,
+		},
+		// CCPC-2025 (已结束)
+		{
+			CompID:             competitions[6].ID,
+			RegStartTime:       time.Date(2025, 10, 1, 0, 0, 0, 0, time.Local),
+			RegEndTime:         time.Date(2025, 11, 15, 23, 59, 59, 0, time.Local),
+			CompStartTime:      time.Date(2025, 12, 10, 9, 0, 0, 0, time.Local),
+			CompEndTime:        time.Date(2025, 12, 10, 14, 0, 0, 0, time.Local),
+			ParticipantType:    2,
+			MaxTeamMember:      3,
+			MinTeamMember:      3,
+			GradeRequirement:   "[2022,2023,2024,2025]",
+			RegistrationMethod: "已结束。通过区域赛晋级。",
+			NeedAttachment:     0,
+			NeedAdvisor:        1,
+		},
+		// ICPC-SCHOOL-2026 (草稿)
+		{
+			CompID:             competitions[7].ID,
+			RegStartTime:       baseTime.AddDate(0, 1, 0),
+			RegEndTime:         baseTime.AddDate(0, 2, 0),
+			CompStartTime:      baseTime.AddDate(0, 2, 15),
+			CompEndTime:        baseTime.AddDate(0, 2, 15),
+			ParticipantType:    1,
+			MaxTeamMember:      1,
+			MinTeamMember:      1,
+			GradeRequirement:   "[]",
+			RegistrationMethod: "待定...",
+			NeedAttachment:     0,
+			NeedAdvisor:        0,
+		},
+		// AI-2026 (草稿)
+		{
+			CompID:             competitions[8].ID,
+			RegStartTime:       baseTime.AddDate(0, 2, 0),
+			RegEndTime:         baseTime.AddDate(0, 3, 0),
+			CompStartTime:      baseTime.AddDate(0, 4, 0),
+			CompEndTime:        baseTime.AddDate(0, 4, 15),
+			ParticipantType:    2,
+			MaxTeamMember:      4,
+			MinTeamMember:      2,
+			GradeRequirement:   "[2023,2024,2025]",
+			RegistrationMethod: "待定... 需提交AI项目作品。",
+			NeedAttachment:     2,
+			NeedAdvisor:        1,
+		},
+		// IOT-2026 (草稿)
+		{
+			CompID:             competitions[9].ID,
+			RegStartTime:       baseTime.AddDate(0, 3, 0),
+			RegEndTime:         baseTime.AddDate(0, 4, 0),
+			CompStartTime:      baseTime.AddDate(0, 5, 0),
+			CompEndTime:        baseTime.AddDate(0, 5, 0),
+			ParticipantType:    2,
+			MaxTeamMember:      4,
+			MinTeamMember:      2,
+			GradeRequirement:   "[]",
+			RegistrationMethod: "待定...",
+			NeedAttachment:     1,
+			NeedAdvisor:        1,
+		},
+	}
+
+	// 批量创建竞赛详情
+	if err := DB.Create(&compDetails).Error; err != nil {
+		log.Printf("创建竞赛详情数据失败: %v", err)
+	}
+
+	log.Println("🎉 树形权限与竞赛测试数据初始化完成！")
 	log.Println("================================")
-	log.Println("📋 用户账号信息 (所有密码均为: 123)：")
-	log.Println("")
-	log.Println("【校级管理员】 - 拥有所有权限")
-	log.Println("  admin          校级管理员")
-	log.Println("")
-	log.Println("【院级管理员】 - 用户管理+审核+报名配置查看")
-	log.Println("  yuan           计算机学院管理员")
-	log.Println("  yuan_math      数学学院管理员")
-	log.Println("  yuan_mech      机械工程学院管理员")
-	log.Println("")
-	log.Println("【赛事负责人】 - 竞赛管理+审核+报名配置查看/编辑")
-	log.Println("  teacher        张老师 (计算机学院)")
-	log.Println("  teacher_wang   王老师 (数学学院)")
-	log.Println("  teacher_li     李老师 (机械工程学院)")
-	log.Println("")
-	log.Println("【学生】 - 仅报名权限")
-	log.Println("  student        李同学 (2022级 软件工程)")
-	log.Println("  student_zhang  张同学 (2023级 计算机科学)")
-	log.Println("  student_wang   王同学 (2023级 应用数学)")
-	log.Println("  student_liu    刘同学 (2024级 机械设计)")
-	log.Println("  student_chen   陈同学 (2024级 人工智能)")
-	log.Println("")
-	log.Println("【专家】 - 竞赛查看权限")
-	log.Println("  expert         王专家")
-	log.Println("  expert_zhao    赵专家")
-	log.Println("")
-	log.Println("【访客】 - 无特殊权限(测试用)")
-	log.Println("  guest          访客用户")
+	log.Println("📋 用户账号信息：")
+	log.Println("  校级管理员: T2023001    密码: 123 (拥有所有权限)")
+	log.Println("  院级管理员: T2023002     密码: 123 (用户管理+审核+报名配置查看)")
+	log.Println("  赛事负责人: T2023003  密码: 123 (竞赛管理+审核+报名配置编辑)")
+	log.Println("  学生:       S2024001  密码: 123 (仅报名权限)")
+	log.Println("  专家:       E2023001   密码: 123 (无特殊权限)")
+	log.Println("  访客:       guest    密码: 123 (无任何权限-测试用)")
 	log.Println("================================")
 	log.Println("📊 竞赛数据统计：")
 	log.Println("  已发布(报名中): 5 条")
