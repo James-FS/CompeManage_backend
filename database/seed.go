@@ -237,6 +237,14 @@ func InitData() {
 	var teacherUser2 models.User
 	DB.Where("username = ?", "T2023004").First(&teacherUser2)
 
+	// 5.2.1 获取王老师（王老师 T2023002）
+	var teacherWang models.User
+	DB.Where("username = ?", "T2023002").First(&teacherWang)
+
+	// 5.2.2 获取赛事负责人（赵敏 T2023006）
+	var teacherLi models.User
+	DB.Where("username = ?", "T2023006").First(&teacherLi)
+
 	// 5.3 定义 2026 年的时间点 (基于当前日期 2026-01-23)
 	// 使用固定日期确保数据有效性
 	baseTime := time.Date(2026, 1, 23, 0, 0, 0, 0, time.Local)
