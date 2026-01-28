@@ -68,5 +68,15 @@ func SetupRoutes(r *gin.Engine) {
 			controllers.AuditRegister)
 		reg.GET("/status", controllers.GetMyRegStatus)         // 查状态
 		reg.PUT("/resubmit", controllers.ResubmitRegistration) // 重新提交
+		reg.GET("/my-reg", controllers.GetMyRegList)
+		reg.PUT("/work-submit", controllers.SubmitWork)
+	}
+
+	award := r.Group("/api/award", middleware.AuthRequired())
+	{
+		award.GET("/list", controllers.GetAwardCompList)
+		award.GET("/comp-awards", controllers.GetCompAwards)
+		award.GET("/export-template", controllers.ExportAwardTemplate)
+		award.POST("/import", controllers.ImportAward)
 	}
 }
