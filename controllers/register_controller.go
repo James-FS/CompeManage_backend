@@ -24,6 +24,8 @@ type ConfigReq struct {
 	MaxTeamMember    int        `json:"max_team_member"`
 	RegStartTime     *time.Time `json:"reg_start_time"`
 	RegEndTime       *time.Time `json:"reg_end_time"`
+	SubmitStartTime  *time.Time `json:"submit_start_time"`
+	SubmitEndTime    *time.Time `json:"submit_end_time"`
 	GradeRequirement []int      `json:"grade_requirement"`
 	NeedAdvisor      int        `json:"need_advisor"`
 	NeedAttachment   int        `json:"need_attachment"`
@@ -61,6 +63,11 @@ type AuditListResp struct {
 	CreateTime    string `json:"create_time"`
 	Status        int8   `json:"status"`
 	AttachmentUrl string `json:"attachment_url"`
+}
+
+type SubmitWorkReq struct {
+	RegID   uint   `json:"reg_id" binding:"required"` // 报名ID
+	WorkUrl string `json:"work_attachment_url"`       // 作品文件的URL字符串 (逗号分隔)
 }
 
 // removeUploadedFile 根据前端传来的 URL 删除本地文件
@@ -128,7 +135,14 @@ func SaveRegConfig(c *gin.Context) {
 		detail.RegEndTime = *req.RegEndTime
 	}
 
-	// 6. 执行数据库操作
+	if req.SubmitStartTime != nil {
+		detail.SubmitStartTime = *req.SubmitStartTime
+	}
+
+	if req.SubmitEndTime != nil {
+		detail.SubmitEndTime = *req.SubmitEndTime
+	}
+	//  执行数据库操作
 	if err == gorm.ErrRecordNotFound {
 		// 情况 A: 记录不存在 -> 创建 (Create)
 		if err := database.DB.Create(&detail).Error; err != nil {
@@ -179,7 +193,6 @@ func GetRegConfig(c *gin.Context) {
 			"msg":  "暂无配置",
 			"data": gin.H{
 				"comp_name": comp.CompName,
-				// 其他字段让前端显示默认值即可，或者给 null
 			},
 		})
 		return
@@ -197,12 +210,19 @@ func GetRegConfig(c *gin.Context) {
 	}
 
 	// 4. 数据处理：时间零值处理 (Go 的 0001-01-01 给前端会显示乱码)
-	var startTime, endTime *time.Time
+	var regStartTime, regEndTime, submitStartTime, submitEndTime *time.Time
 	if !detail.RegStartTime.IsZero() {
-		startTime = &detail.RegStartTime
+		regStartTime = &detail.RegStartTime
 	}
 	if !detail.RegEndTime.IsZero() {
-		endTime = &detail.RegEndTime
+		regEndTime = &detail.RegEndTime
+	}
+
+	if !detail.RegStartTime.IsZero() {
+		submitStartTime = &detail.SubmitStartTime
+	}
+	if !detail.RegEndTime.IsZero() {
+		submitEndTime = &detail.SubmitEndTime
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -216,8 +236,10 @@ func GetRegConfig(c *gin.Context) {
 			"grade_requirement": grades,
 			"need_advisor":      detail.NeedAdvisor,
 			"need_attachment":   detail.NeedAttachment,
-			"reg_start_time":    startTime,
-			"reg_end_time":      endTime,
+			"reg_start_time":    regStartTime,
+			"reg_end_time":      regEndTime,
+			"submit_start_time": submitStartTime,
+			"submit_end_time":   submitEndTime,
 		},
 	})
 }
@@ -673,7 +695,7 @@ func GetMyRegStatus(c *gin.Context) {
 			"status":         reg.Status,       // 0:待审 1:通过 2:驳回
 			"reject_reason":  reg.RejectReason, // 驳回理由
 			"attachment_url": reg.AttachmentUrl,
-			"members":        reg.Members, // 注意：这里包含队长和队员
+			"members":        reg.Members, //这里包含队长和队员
 			"advisor_id":     reg.AdvisorID,
 		},
 	})
@@ -760,4 +782,168 @@ func ResubmitRegistration(c *gin.Context) {
 
 	tx.Commit()
 	c.JSON(200, gin.H{"code": 200, "msg": "重新提交成功"})
+}
+
+// GetMyRegList 获取当前用户相关的报名赛事列表
+func GetMyRegList(c *gin.Context) {
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(401, gin.H{"code": 401, "msg": "未登录"})
+		return
+	}
+	userID := userIDVal.(uint)
+
+	// 获取学号
+	var user models.User
+	if err := database.DB.Select("username").First(&user, userID).Error; err != nil {
+		c.JSON(500, gin.H{"code": 500, "msg": "获取用户信息失败"})
+		return
+	}
+	studentID := user.Username
+
+	targetRegID := c.Query("id")
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("size", "10"))
+	offset := (page - 1) * pageSize
+
+	var regs []models.Register
+	var total int64
+
+	//  子查询：找出该学生参与的所有报名ID
+	subQuery := database.DB.Model(&models.RegMember{}).
+		Select("reg_id").
+		Where("username = ?", studentID)
+
+	//  主查询
+	query := database.DB.Model(&models.Register{}).
+		Where("id IN (?)", subQuery).
+		Preload("Competition").
+		Preload("Competition.Detail")
+
+	// 如果传了ID，则只查这一条
+	if targetRegID != "" {
+		query = query.Where("id = ?", targetRegID)
+	}
+
+	query.Count(&total)
+
+	if err := query.Order("create_time desc").Offset(offset).Limit(pageSize).Find(&regs).Error; err != nil {
+		c.JSON(500, gin.H{"code": 500, "msg": "查询失败"})
+		return
+	}
+
+	// 组装数据
+	var list []gin.H
+	for _, r := range regs {
+		compName := "未知赛事"
+		submitStartStr := ""
+		submitEndStr := ""
+
+		if r.Competition.ID != 0 {
+			compName = r.Competition.CompName
+			if r.Competition.Detail.ID != 0 {
+				if !r.Competition.Detail.SubmitStartTime.IsZero() {
+					submitStartStr = r.Competition.Detail.SubmitStartTime.Format("2006-01-02 15:04:05")
+				}
+				if !r.Competition.Detail.SubmitEndTime.IsZero() {
+					submitEndStr = r.Competition.Detail.SubmitEndTime.Format("2006-01-02 15:04:05")
+				}
+			}
+		}
+
+		regAttachment := ""
+		if targetRegID != "" {
+			// 只有在详情模式下，才返回报名附件
+			regAttachment = r.AttachmentUrl
+		}
+
+		list = append(list, gin.H{
+			"id":                r.ID,
+			"comp_id":           r.CompID,
+			"comp_name":         compName,
+			"status":            r.Status,
+			"reg_url":           regAttachment,       // 报名附件 (列表页为空，详情页有值)
+			"work_url":          r.WorkAttachmentUrl, // ✨ 作品附件 (你需要确保Register model里有这个字段)
+			"submit_start_time": submitStartStr,
+			"submit_end_time":   submitEndStr,
+		})
+	}
+
+	c.JSON(200, gin.H{
+		"code": 200,
+		"msg":  "获取成功",
+		"data": gin.H{
+			"list":  list,
+			"total": total,
+		},
+	})
+}
+
+// SubmitWork 提交/保存参赛作品 (允许团队任何成员提交)
+func SubmitWork(c *gin.Context) {
+	var req SubmitWorkReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": 400, "msg": "参数错误", "error": err.Error()})
+		return
+	}
+
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(401, gin.H{"code": 401, "msg": "未登录"})
+		return
+	}
+	userID := userIDVal.(uint)
+
+	// 获取当前用户的学号
+	var user models.User
+	if err := database.DB.Select("username").First(&user, userID).Error; err != nil {
+		c.JSON(500, gin.H{"code": 500, "msg": "获取用户信息失败"})
+		return
+	}
+	currentStuID := user.Username
+
+	// 2查询报名记录 (预加载赛事详情时间)
+	var reg models.Register
+	if err := database.DB.Preload("Competition.Detail").First(&reg, req.RegID).Error; err != nil {
+		c.JSON(404, gin.H{"code": 404, "msg": "报名记录不存在"})
+		return
+	}
+
+	// 检查当前用户的学号，是否在 reg_members 表中对应 req.RegID 的记录里
+	var count int64
+	database.DB.Model(&models.RegMember{}).
+		Where("reg_id = ? AND username = ?", req.RegID, currentStuID).
+		Count(&count)
+
+	if count == 0 {
+		// 既不是队长，也不是队员
+		c.JSON(403, gin.H{"code": 403, "msg": "无权操作：您不是该团队的成员"})
+		return
+	}
+
+	// 时间校验
+	now := time.Now()
+	detail := reg.Competition.Detail
+
+	if detail.SubmitStartTime.IsZero() || detail.SubmitEndTime.IsZero() {
+		c.JSON(403, gin.H{"code": 403, "msg": "该赛事暂未开放作品提交"})
+		return
+	}
+	if now.Before(detail.SubmitStartTime) {
+		c.JSON(403, gin.H{"code": 403, "msg": "作品提交通道尚未开启"})
+		return
+	}
+	if now.After(detail.SubmitEndTime) {
+		c.JSON(403, gin.H{"code": 403, "msg": "作品提交已截止"})
+		return
+	}
+
+	//  执行更新
+	if err := database.DB.Model(&reg).Update("work_attachment_url", req.WorkUrl).Error; err != nil {
+		c.JSON(500, gin.H{"code": 500, "msg": "保存失败"})
+		return
+	}
+
+	c.JSON(200, gin.H{"code": 200, "msg": "作品已成功保存"})
 }
