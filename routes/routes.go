@@ -64,4 +64,12 @@ func SetupRoutes(r *gin.Engine) {
 		reg.GET("/my-reg", controllers.GetMyRegList)
 		reg.PUT("/work-submit", controllers.SubmitWork)
 	}
+
+	award := r.Group("/api/award", middleware.AuthRequired())
+	{
+		award.GET("/list", controllers.GetAwardCompList)
+		award.GET("/comp-awards", controllers.GetCompAwards)
+		award.GET("/export-template", controllers.ExportAwardTemplate)
+		award.POST("/import", controllers.ImportAward)
+	}
 }
