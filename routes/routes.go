@@ -61,5 +61,7 @@ func SetupRoutes(r *gin.Engine) {
 			controllers.AuditRegister)
 		reg.GET("/status", controllers.GetMyRegStatus)         // 查状态
 		reg.PUT("/resubmit", controllers.ResubmitRegistration) // 重新提交
+		reg.GET("/my-reg", controllers.GetMyRegList)
+		reg.PUT("/work-submit", controllers.SubmitWork)
 	}
 }
