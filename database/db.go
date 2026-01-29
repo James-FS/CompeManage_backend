@@ -46,21 +46,28 @@ func Init() {
 }
 
 func autoMigrate() {
+	// 禁用外键检查，避免迁移时的外键约束问题
+	DB.Exec("SET FOREIGN_KEY_CHECKS=0")
+
 	err := DB.AutoMigrate(
 		// 在此处添加需要自动迁移的模型
 		// 例如：&moder.User{},
 		&models.User{},
 		&models.Role{},
 		&models.Permission{},
+		&models.College{},
 		&models.CompDirectory{},
 		&models.CompDetail{},
-		&models.College{},
 		&models.Register{},
 		&models.RegMember{},
 		&models.Notice{},
 		&models.CompDeclaration{},
 		&models.Award{},
 	)
+
+	// 重新启用外键检查
+	DB.Exec("SET FOREIGN_KEY_CHECKS=1")
+
 	if err != nil {
 		log.Fatalf("数据库自动迁移失败：%v", err)
 	}

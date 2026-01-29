@@ -392,7 +392,7 @@ func AuditDeclare(c *gin.Context) {
 			CreatedBy:  auditorID.(uint),
 			Status:     0, // 草稿状态
 			Source:     2, // 来源：申报通过创建
-			DeclareID:  declaration.ID,
+			DeclareID:  &declaration.ID,
 		}
 
 		if err := database.DB.Create(&newComp).Error; err != nil {
