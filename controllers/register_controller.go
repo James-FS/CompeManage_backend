@@ -283,6 +283,16 @@ func SubmitRegistration(c *gin.Context) {
 		c.JSON(403, gin.H{"code": 403, "msg": "非法请求：报名已截止"})
 		return
 	}
+	// 检验是否带有必传附件
+	if comp.Detail.NeedAttachment == 2 && req.AttachmentUrl == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "该赛事要求必须上传报名附件/项目文档"})
+		return
+	}
+	// 检验是否含有指导老师
+	if comp.Detail.NeedAdvisor == 2 && req.AdvisorID == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "该赛事要求必须填写指导老师"})
+		return
+	}
 
 	//  防重复报名校验
 	var count int64
@@ -726,6 +736,19 @@ func ResubmitRegistration(c *gin.Context) {
 		return
 	}
 
+	var detail models.CompDetail
+	if err := database.DB.Where("comp_id = ?", req.CompID).First(&detail).Error; err == nil {
+		// 必传附件检查
+		if detail.NeedAttachment == 2 && req.AttachmentUrl == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "该赛事要求必须上传报名附件，请勿删除附件"})
+			return
+		}
+		// 必填指导老师检查
+		if detail.NeedAdvisor == 2 && req.AdvisorID == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "该赛事要求必须填写指导老师"})
+			return
+		}
+	}
 	// 开启事务
 	tx := database.DB.Begin()
 
@@ -733,7 +756,7 @@ func ResubmitRegistration(c *gin.Context) {
 	reg.TeamName = req.TeamName
 	reg.AttachmentUrl = req.AttachmentUrl
 	reg.AdvisorID = req.AdvisorID
-	reg.Status = 0        // ✨ 重点：状态重置为待审核
+	reg.Status = 0        // 状态重置为待审核
 	reg.RejectReason = "" // 清空驳回理由
 
 	if err := tx.Save(&reg).Error; err != nil {

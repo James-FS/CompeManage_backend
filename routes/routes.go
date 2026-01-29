@@ -30,7 +30,9 @@ func SetupRoutes(r *gin.Engine) {
 		apiGroup.GET("/notice/list", controllers.GetNoticeList)  // 通知列表+筛选
 		apiGroup.GET("/notice/:id", controllers.GetNoticeDetail) // 单个通知查看
 		apiGroup.POST("/notice/create", controllers.CreateNotice)
-		apiGroup.POST("/comp/notice/create", controllers.CreateCompNotice)
+		apiGroup.POST("/notice/comp/create", controllers.CreateCompNotice)
+		apiGroup.PUT("/notice/:id/publish", controllers.PublishNotice)
+		apiGroup.DELETE("/notice/:id", controllers.DeleteNotice)
 		apiGroup.GET("/college/list", controllers.GetCollegeList)
 	}
 
