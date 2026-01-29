@@ -245,6 +245,7 @@ func GetMyDeclares(c *gin.Context) {
 	if err := query.
 		Preload("CollegeInfo").
 		Preload("Manager").
+		Preload("Declarer").
 		Preload("Auditor").
 		Offset((req.Page - 1) * req.PageSize).
 		Limit(req.PageSize).
