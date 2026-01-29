@@ -17,16 +17,16 @@ type CompDeclaration struct {
 	AttachmentPath string `gorm:"column:attachment_path;type:varchar(255);comment:申报附件路径" json:"attachment_path"`
 
 	// 申报状态：0-草稿 1-已提交 2-已通过 3-已拒绝
-	DeclareStatus int8      `gorm:"column:declare_status;type:tinyint;default:0;comment:申报状态(0:草稿 1:已提交 2:已通过 3:已拒绝)" json:"declare_status"`
-	AuditRemark   string    `gorm:"column:audit_remark;type:text;comment:审核意见" json:"audit_remark"`
-	AuditBy       uint      `gorm:"column:audit_by;comment:审核人ID(校级管理员)" json:"audit_by"`
-	AuditAt       time.Time `gorm:"column:audit_at;comment:审核时间" json:"audit_at"`
+	DeclareStatus int8       `gorm:"column:declare_status;type:tinyint;default:0;comment:申报状态(0:草稿 1:已提交 2:已通过 3:已拒绝)" json:"declare_status"`
+	AuditRemark   string     `gorm:"column:audit_remark;type:text;comment:审核意见" json:"audit_remark"`
+	AuditBy       *uint      `gorm:"column:audit_by;comment:审核人ID(校级管理员)" json:"audit_by"`
+	AuditAt       *time.Time `gorm:"column:audit_at;comment:审核时间" json:"audit_at"`
 
 	// 申报人ID (创建人)
 	CreatedBy uint `gorm:"column:created_by;comment:申报人ID" json:"created_by"`
 
 	// 关联的赛事目录ID (审核通过后生成)
-	CompDirectoryID uint `gorm:"column:comp_directory_id;index;comment:关联的赛事目录ID(通过后)" json:"comp_directory_id"`
+	CompDirectoryID *uint `gorm:"column:comp_directory_id;index;comment:关联的赛事目录ID(通过后)" json:"comp_directory_id"`
 
 	BaseModel
 

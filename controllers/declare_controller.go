@@ -248,7 +248,7 @@ func GetMyDeclares(c *gin.Context) {
 		Preload("Auditor").
 		Offset((req.Page - 1) * req.PageSize).
 		Limit(req.PageSize).
-		Order("created_at DESC").
+		Order("create_time DESC").
 		Find(&declarations).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询失败", "error": err.Error()})
 		return
@@ -326,7 +326,7 @@ func GetPendingDeclares(c *gin.Context) {
 		Preload("Declarer").
 		Offset((req.Page - 1) * req.PageSize).
 		Limit(req.PageSize).
-		Order("created_at ASC").
+		Order("create_time ASC").
 		Find(&declarations).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询失败", "error": err.Error()})
 		return
@@ -401,16 +401,19 @@ func AuditDeclare(c *gin.Context) {
 
 		// 更新申报状态
 		declaration.DeclareStatus = 2
-		declaration.AuditBy = auditorID.(uint)
-		declaration.AuditAt = now
-		declaration.CompDirectoryID = newComp.ID
+		auditorID_uint := auditorID.(uint)
+		declaration.AuditBy = &auditorID_uint
+		declaration.AuditAt = &now
+		compDirID := newComp.ID
+		declaration.CompDirectoryID = &compDirID
 		declaration.AuditRemark = "审核通过"
 		status = "通过"
 
 	case 3: // 审核拒绝
 		declaration.DeclareStatus = 3
-		declaration.AuditBy = auditorID.(uint)
-		declaration.AuditAt = now
+		auditorID_uint := auditorID.(uint)
+		declaration.AuditBy = &auditorID_uint
+		declaration.AuditAt = &now
 		declaration.AuditRemark = req.AuditRemark
 		status = "拒绝"
 	}
@@ -454,7 +457,7 @@ func GetAllDeclares(c *gin.Context) {
 		Preload("Auditor").
 		Offset((req.Page - 1) * req.PageSize).
 		Limit(req.PageSize).
-		Order("created_at DESC").
+		Order("create_time DESC").
 		Find(&declarations).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询失败", "error": err.Error()})
 		return
