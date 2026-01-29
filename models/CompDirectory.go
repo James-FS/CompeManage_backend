@@ -15,6 +15,8 @@ type CompDirectory struct {
 	Status     int8   `gorm:"column:status;type:tinyint;default:0;comment:状态(0:草稿 1:发布 2:结束)" json:"status"`
 	CreatedBy  uint   `gorm:"column:created_by;comment:创建人ID" json:"created_by"`
 	Desc       string `gorm:"column:desc;type:text;comment:竞赛描述说明" json:"desc"`
+	Source     int8   `gorm:"column:source;type:tinyint;default:1;comment:来源(1:校级直接创建 2:申报通过创建)" json:"source"`
+	DeclareID  *uint  `gorm:"column:declare_id;index;comment:关联的申报ID(source=2时有值);constraint:false" json:"declare_id"`
 
 	BaseModel
 
@@ -26,6 +28,9 @@ type CompDirectory struct {
 
 	// 关联关系：多对一 (多个竞赛目录关联一个学院)
 	CollegeInfo *College `gorm:"foreignKey:CollegeID;references:ID" json:"college_info"`
+
+	// 关联关系：一对一 (目录关联一个申报记录)
+	Declaration *CompDeclaration `gorm:"foreignKey:DeclareID;references:ID" json:"declaration"`
 }
 
 //// TableName 指定表名

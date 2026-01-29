@@ -672,6 +672,19 @@ func InitData() {
 			ManagerID:  teacherUser2.ID, // 李华作为负责人
 			Status:     0,
 			CreatedBy:  teacherUser2.ID,
+			Detail: models.CompDetail{
+				RegStartTime:       baseTime.AddDate(0, 2, 0),
+				RegEndTime:         baseTime.AddDate(0, 3, 0),
+				CompStartTime:      baseTime.AddDate(0, 4, 0),
+				CompEndTime:        baseTime.AddDate(0, 4, 15),
+				ParticipantType:    2,
+				MaxTeamMember:      4,
+				MinTeamMember:      2,
+				GradeRequirement:   "[2023,2024,2025]",
+				RegistrationMethod: "待定... 需提交AI项目作品。",
+				NeedAttachment:     2,
+				NeedAdvisor:        1,
+			},
 		},
 		{
 			CompCode:   "IOT-2026",
@@ -779,20 +792,33 @@ func InitData() {
 		},
 	}
 
-	// 批量创建竞赛 (GORM 会自动处理 Detail 的关联插入)
-	if err := DB.Create(&competitions).Error; err != nil {
-		log.Printf("创建竞赛数据失败: %v", err)
+	// 批量创建竞赛 (先创建竞赛主体，不创建关联的Detail)
+	// 使用Omit忽略Detail字段，避免自动创建空的detail记录
+	if err := DB.Omit("Detail").Create(&competitions).Error; err != nil {
+		log.Printf("❌ 创建竞赛数据失败: %v", err)
+		return
 	}
 
-	// 单独创建竞赛详情，确保时间字段被正确设置
-	compDetails := []models.CompDetail{
-		// NCD-2026
-		{
-			CompID:             competitions[0].ID,
-			RegStartTime:       baseTime.AddDate(0, 0, -10), // 10天前开始报名
-			RegEndTime:         baseTime.AddDate(0, 1, 0),   // 1个月后结束报名
-			CompStartTime:      baseTime.AddDate(0, 2, 0),   // 2个月后开始比赛
-			CompEndTime:        baseTime.AddDate(0, 3, 0),   // 3个月后结束比赛
+	// 验证竞赛数据是否创建成功
+	var compCount int64
+	DB.Model(&models.CompDirectory{}).Count(&compCount)
+	log.Printf("✅ 成功创建竞赛目录数据: %d 条", compCount)
+
+	if compCount == 0 {
+		log.Printf("❌ 竞赛目录创建失败，数据库中没有数据")
+		return
+	}
+
+	// 单独创建竞赛详情，确保CompID正确对应
+	// 注意：这里需要根据CompCode来匹配并创建详情
+	detailUpdates := map[string]models.CompDetail{
+		"NCD-2026": {
+			RegStartTime:       baseTime.AddDate(0, 0, -10),
+			RegEndTime:         baseTime.AddDate(0, 1, 0),
+			CompStartTime:      baseTime.AddDate(0, 2, 0),
+			CompEndTime:        baseTime.AddDate(0, 3, 0),
+			SubmitStartTime:    baseTime.AddDate(0, 1, 5),
+			SubmitEndTime:      baseTime.AddDate(0, 1, 25),
 			ParticipantType:    2,
 			MaxTeamMember:      5,
 			MinTeamMember:      2,
@@ -801,13 +827,13 @@ func InitData() {
 			NeedAttachment:     2,
 			NeedAdvisor:        2,
 		},
-		// LQB-2026
-		{
-			CompID:             competitions[1].ID,
-			RegStartTime:       baseTime.AddDate(0, 0, -20), // 20天前开始
-			RegEndTime:         baseTime.AddDate(0, 0, 10),  // 10天后结束
-			CompStartTime:      baseTime.AddDate(0, 1, 15),  // 1个半月后比赛
+		"LQB-2026": {
+			RegStartTime:       baseTime.AddDate(0, 0, -20),
+			RegEndTime:         baseTime.AddDate(0, 0, 10),
+			CompStartTime:      baseTime.AddDate(0, 1, 15),
 			CompEndTime:        baseTime.AddDate(0, 1, 15),
+			SubmitStartTime:    baseTime.AddDate(0, 0, 12),
+			SubmitEndTime:      baseTime.AddDate(0, 1, 10),
 			ParticipantType:    1,
 			MaxTeamMember:      1,
 			MinTeamMember:      1,
@@ -816,13 +842,13 @@ func InitData() {
 			NeedAttachment:     0,
 			NeedAdvisor:        0,
 		},
-		// MCM-2026
-		{
-			CompID:             competitions[2].ID,
+		"MCM-2026": {
 			RegStartTime:       baseTime.AddDate(0, 0, -5),
 			RegEndTime:         baseTime.AddDate(0, 0, 20),
 			CompStartTime:      baseTime.AddDate(0, 1, 0),
-			CompEndTime:        baseTime.AddDate(0, 1, 4), // 4天比赛
+			CompEndTime:        baseTime.AddDate(0, 1, 4),
+			SubmitStartTime:    baseTime.AddDate(0, 0, 8),
+			SubmitEndTime:      baseTime.AddDate(0, 0, 28),
 			ParticipantType:    2,
 			MaxTeamMember:      3,
 			MinTeamMember:      3,
@@ -831,13 +857,43 @@ func InitData() {
 			NeedAttachment:     1,
 			NeedAdvisor:        2,
 		},
-		// ACM-2026
-		{
-			CompID:             competitions[3].ID,
-			RegStartTime:       baseTime.AddDate(0, 0, 30), // 30天后开始报名
+		"HUAWEI-2026": {
+			RegStartTime:       baseTime.AddDate(0, 0, -15),
+			RegEndTime:         baseTime.AddDate(0, 0, 15),
+			CompStartTime:      baseTime.AddDate(0, 1, 20),
+			CompEndTime:        baseTime.AddDate(0, 1, 22),
+			SubmitStartTime:    baseTime.AddDate(0, 0, 5),
+			SubmitEndTime:      baseTime.AddDate(0, 1, 15),
+			ParticipantType:    1,
+			MaxTeamMember:      1,
+			MinTeamMember:      1,
+			GradeRequirement:   "[2022,2023,2024,2025]",
+			RegistrationMethod: "个人赛，包括网络、云计算、人工智能三个赛道。",
+			NeedAttachment:     0,
+			NeedAdvisor:        0,
+		},
+		"CHALLENGE-2026": {
+			RegStartTime:       baseTime.AddDate(0, 0, -8),
+			RegEndTime:         baseTime.AddDate(0, 0, 25),
+			CompStartTime:      baseTime.AddDate(0, 2, 10),
+			CompEndTime:        baseTime.AddDate(0, 2, 12),
+			SubmitStartTime:    baseTime.AddDate(0, 0, 15),
+			SubmitEndTime:      baseTime.AddDate(0, 2, 5),
+			ParticipantType:    2,
+			MaxTeamMember:      4,
+			MinTeamMember:      2,
+			GradeRequirement:   "[2022,2023,2024]",
+			RegistrationMethod: "团队参赛，需提交网络拓扑设计方案。",
+			NeedAttachment:     2,
+			NeedAdvisor:        1,
+		},
+		"ACM-2026": {
+			RegStartTime:       baseTime.AddDate(0, 0, 30),
 			RegEndTime:         baseTime.AddDate(0, 2, 0),
 			CompStartTime:      baseTime.AddDate(0, 3, 0),
 			CompEndTime:        baseTime.AddDate(0, 3, 0),
+			SubmitStartTime:    baseTime.AddDate(0, 2, 15),
+			SubmitEndTime:      baseTime.AddDate(0, 2, 28),
 			ParticipantType:    2,
 			MaxTeamMember:      3,
 			MinTeamMember:      3,
@@ -846,13 +902,43 @@ func InitData() {
 			NeedAttachment:     0,
 			NeedAdvisor:        1,
 		},
-		// ROBOCON-2026
-		{
-			CompID:             competitions[4].ID,
-			RegStartTime:       baseTime.AddDate(0, -2, 0), // 2个月前开始
-			RegEndTime:         baseTime.AddDate(0, -1, 0), // 1个月前结束
-			CompStartTime:      baseTime.AddDate(0, 0, -5), // 5天前开始比赛
-			CompEndTime:        baseTime.AddDate(0, 0, 10), // 10天后结束
+		"CTFCHAMP-2026": {
+			RegStartTime:       baseTime.AddDate(0, 1, 0),
+			RegEndTime:         baseTime.AddDate(0, 2, 15),
+			CompStartTime:      baseTime.AddDate(0, 3, 10),
+			CompEndTime:        baseTime.AddDate(0, 3, 12),
+			SubmitStartTime:    baseTime.AddDate(0, 2, 20),
+			SubmitEndTime:      baseTime.AddDate(0, 3, 5),
+			ParticipantType:    2,
+			MaxTeamMember:      4,
+			MinTeamMember:      2,
+			GradeRequirement:   "[2022,2023,2024,2025]",
+			RegistrationMethod: "CTF竞赛形式，需提交战队信息。",
+			NeedAttachment:     1,
+			NeedAdvisor:        1,
+		},
+		"ENGMATH-2026": {
+			RegStartTime:       baseTime.AddDate(0, 1, 15),
+			RegEndTime:         baseTime.AddDate(0, 2, 20),
+			CompStartTime:      baseTime.AddDate(0, 3, 15),
+			CompEndTime:        baseTime.AddDate(0, 3, 15),
+			SubmitStartTime:    baseTime.AddDate(0, 2, 28),
+			SubmitEndTime:      baseTime.AddDate(0, 3, 10),
+			ParticipantType:    1,
+			MaxTeamMember:      1,
+			MinTeamMember:      1,
+			GradeRequirement:   "[2022,2023,2024]",
+			RegistrationMethod: "个人赛，工程数学综合应用。",
+			NeedAttachment:     0,
+			NeedAdvisor:        0,
+		},
+		"ROBOCON-2026": {
+			RegStartTime:       baseTime.AddDate(0, -2, 0),
+			RegEndTime:         baseTime.AddDate(0, -1, 0),
+			CompStartTime:      baseTime.AddDate(0, 0, -5),
+			CompEndTime:        baseTime.AddDate(0, 0, 10),
+			SubmitStartTime:    baseTime.AddDate(0, -1, 15),
+			SubmitEndTime:      baseTime.AddDate(0, 0, 0),
 			ParticipantType:    2,
 			MaxTeamMember:      20,
 			MinTeamMember:      10,
@@ -861,13 +947,28 @@ func InitData() {
 			NeedAttachment:     2,
 			NeedAdvisor:        2,
 		},
-		// CUMCM-2025 (已结束)
-		{
-			CompID:             competitions[5].ID,
+		"MECHDESIGN-2026": {
+			RegStartTime:       baseTime.AddDate(0, -3, 0),
+			RegEndTime:         baseTime.AddDate(0, -1, 15),
+			CompStartTime:      baseTime.AddDate(0, 0, -10),
+			CompEndTime:        baseTime.AddDate(0, 0, 5),
+			SubmitStartTime:    baseTime.AddDate(0, -2, 10),
+			SubmitEndTime:      baseTime.AddDate(0, -1, 5),
+			ParticipantType:    2,
+			MaxTeamMember:      5,
+			MinTeamMember:      3,
+			GradeRequirement:   "[2022,2023,2024]",
+			RegistrationMethod: "需提交机械创新设计作品及说明书。",
+			NeedAttachment:     2,
+			NeedAdvisor:        2,
+		},
+		"CUMCM-2025": {
 			RegStartTime:       time.Date(2025, 7, 1, 0, 0, 0, 0, time.Local),
 			RegEndTime:         time.Date(2025, 8, 31, 23, 59, 59, 0, time.Local),
 			CompStartTime:      time.Date(2025, 9, 14, 8, 0, 0, 0, time.Local),
 			CompEndTime:        time.Date(2025, 9, 17, 20, 0, 0, 0, time.Local),
+			SubmitStartTime:    time.Date(2025, 8, 10, 0, 0, 0, 0, time.Local),
+			SubmitEndTime:      time.Date(2025, 9, 10, 0, 0, 0, 0, time.Local),
 			ParticipantType:    2,
 			MaxTeamMember:      3,
 			MinTeamMember:      3,
@@ -876,13 +977,13 @@ func InitData() {
 			NeedAttachment:     2,
 			NeedAdvisor:        2,
 		},
-		// CCPC-2025 (已结束)
-		{
-			CompID:             competitions[6].ID,
+		"CCPC-2025": {
 			RegStartTime:       time.Date(2025, 10, 1, 0, 0, 0, 0, time.Local),
 			RegEndTime:         time.Date(2025, 11, 15, 23, 59, 59, 0, time.Local),
 			CompStartTime:      time.Date(2025, 12, 10, 9, 0, 0, 0, time.Local),
 			CompEndTime:        time.Date(2025, 12, 10, 14, 0, 0, 0, time.Local),
+			SubmitStartTime:    time.Date(2025, 11, 20, 0, 0, 0, 0, time.Local),
+			SubmitEndTime:      time.Date(2025, 12, 5, 0, 0, 0, 0, time.Local),
 			ParticipantType:    2,
 			MaxTeamMember:      3,
 			MinTeamMember:      3,
@@ -891,13 +992,43 @@ func InitData() {
 			NeedAttachment:     0,
 			NeedAdvisor:        1,
 		},
-		// ICPC-SCHOOL-2026 (草稿)
-		{
-			CompID:             competitions[7].ID,
+		"BIGDATA-2025": {
+			RegStartTime:       time.Date(2025, 3, 1, 0, 0, 0, 0, time.Local),
+			RegEndTime:         time.Date(2025, 4, 15, 0, 0, 0, 0, time.Local),
+			CompStartTime:      time.Date(2025, 5, 1, 0, 0, 0, 0, time.Local),
+			CompEndTime:        time.Date(2025, 6, 30, 0, 0, 0, 0, time.Local),
+			SubmitStartTime:    time.Date(2025, 4, 20, 0, 0, 0, 0, time.Local),
+			SubmitEndTime:      time.Date(2025, 5, 25, 0, 0, 0, 0, time.Local),
+			ParticipantType:    2,
+			MaxTeamMember:      4,
+			MinTeamMember:      1,
+			GradeRequirement:   "[2021,2022,2023,2024]",
+			RegistrationMethod: "已结束。数据分析与算法实现。",
+			NeedAttachment:     2,
+			NeedAdvisor:        1,
+		},
+		"ROBOT-2025": {
+			RegStartTime:       time.Date(2025, 4, 1, 0, 0, 0, 0, time.Local),
+			RegEndTime:         time.Date(2025, 5, 31, 0, 0, 0, 0, time.Local),
+			CompStartTime:      time.Date(2025, 7, 15, 0, 0, 0, 0, time.Local),
+			CompEndTime:        time.Date(2025, 7, 20, 0, 0, 0, 0, time.Local),
+			SubmitStartTime:    time.Date(2025, 6, 1, 0, 0, 0, 0, time.Local),
+			SubmitEndTime:      time.Date(2025, 7, 10, 0, 0, 0, 0, time.Local),
+			ParticipantType:    2,
+			MaxTeamMember:      8,
+			MinTeamMember:      4,
+			GradeRequirement:   "[]",
+			RegistrationMethod: "已结束。机器人足球、救援等多个赛道。",
+			NeedAttachment:     2,
+			NeedAdvisor:        2,
+		},
+		"ICPC-SCHOOL-2026": {
 			RegStartTime:       baseTime.AddDate(0, 1, 0),
 			RegEndTime:         baseTime.AddDate(0, 2, 0),
 			CompStartTime:      baseTime.AddDate(0, 2, 15),
 			CompEndTime:        baseTime.AddDate(0, 2, 15),
+			SubmitStartTime:    baseTime.AddDate(0, 1, 20),
+			SubmitEndTime:      baseTime.AddDate(0, 2, 10),
 			ParticipantType:    1,
 			MaxTeamMember:      1,
 			MinTeamMember:      1,
@@ -906,13 +1037,13 @@ func InitData() {
 			NeedAttachment:     0,
 			NeedAdvisor:        0,
 		},
-		// AI-2026 (草稿)
-		{
-			CompID:             competitions[8].ID,
+		"AI-2026": {
 			RegStartTime:       baseTime.AddDate(0, 2, 0),
 			RegEndTime:         baseTime.AddDate(0, 3, 0),
 			CompStartTime:      baseTime.AddDate(0, 4, 0),
 			CompEndTime:        baseTime.AddDate(0, 4, 15),
+			SubmitStartTime:    baseTime.AddDate(0, 3, 10),
+			SubmitEndTime:      baseTime.AddDate(0, 3, 28),
 			ParticipantType:    2,
 			MaxTeamMember:      4,
 			MinTeamMember:      2,
@@ -921,13 +1052,13 @@ func InitData() {
 			NeedAttachment:     2,
 			NeedAdvisor:        1,
 		},
-		// IOT-2026 (草稿)
-		{
-			CompID:             competitions[9].ID,
+		"IOT-2026": {
 			RegStartTime:       baseTime.AddDate(0, 3, 0),
 			RegEndTime:         baseTime.AddDate(0, 4, 0),
 			CompStartTime:      baseTime.AddDate(0, 5, 0),
 			CompEndTime:        baseTime.AddDate(0, 5, 0),
+			SubmitStartTime:    baseTime.AddDate(0, 4, 10),
+			SubmitEndTime:      baseTime.AddDate(0, 4, 28),
 			ParticipantType:    2,
 			MaxTeamMember:      4,
 			MinTeamMember:      2,
@@ -936,12 +1067,82 @@ func InitData() {
 			NeedAttachment:     1,
 			NeedAdvisor:        1,
 		},
+		"BLOCKCHAIN-2026": {
+			RegStartTime:       baseTime.AddDate(0, 2, 15),
+			RegEndTime:         baseTime.AddDate(0, 3, 15),
+			CompStartTime:      baseTime.AddDate(0, 4, 10),
+			CompEndTime:        baseTime.AddDate(0, 4, 12),
+			SubmitStartTime:    baseTime.AddDate(0, 3, 20),
+			SubmitEndTime:      baseTime.AddDate(0, 4, 5),
+			ParticipantType:    2,
+			MaxTeamMember:      5,
+			MinTeamMember:      2,
+			GradeRequirement:   "[2022,2023,2024,2025]",
+			RegistrationMethod: "待定... 需提交区块链应用设计方案。",
+			NeedAttachment:     2,
+			NeedAdvisor:        1,
+		},
+		"SMARTCAR-2026": {
+			RegStartTime:       baseTime.AddDate(0, 2, 0),
+			RegEndTime:         baseTime.AddDate(0, 3, 30),
+			CompStartTime:      baseTime.AddDate(0, 5, 0),
+			CompEndTime:        baseTime.AddDate(0, 5, 5),
+			SubmitStartTime:    baseTime.AddDate(0, 4, 5),
+			SubmitEndTime:      baseTime.AddDate(0, 4, 28),
+			ParticipantType:    2,
+			MaxTeamMember:      4,
+			MinTeamMember:      2,
+			GradeRequirement:   "[2022,2023,2024,2025]",
+			RegistrationMethod: "待定... 智能车模设计与调试。",
+			NeedAttachment:     2,
+			NeedAdvisor:        2,
+		},
+		"MATHMODEL-SCHOOL-2026": {
+			RegStartTime:       baseTime.AddDate(0, 3, 0),
+			RegEndTime:         baseTime.AddDate(0, 4, 0),
+			CompStartTime:      baseTime.AddDate(0, 4, 15),
+			CompEndTime:        baseTime.AddDate(0, 4, 18),
+			SubmitStartTime:    baseTime.AddDate(0, 4, 1),
+			SubmitEndTime:      baseTime.AddDate(0, 4, 12),
+			ParticipantType:    2,
+			MaxTeamMember:      3,
+			MinTeamMember:      3,
+			GradeRequirement:   "[2023,2024,2025]",
+			RegistrationMethod: "待定... 为全国数学建模竞赛进行校内选拔。",
+			NeedAttachment:     1,
+			NeedAdvisor:        0,
+		},
 	}
 
-	// 批量创建竞赛详情
-	if err := DB.Create(&compDetails).Error; err != nil {
-		log.Printf("创建竞赛详情数据失败: %v", err)
+	// 按CompCode逐个创建竞赛详情
+	detailCount := 0
+	for compCode, detail := range detailUpdates {
+		var comp models.CompDirectory
+		// 通过CompCode查询竞赛
+		if err := DB.Where("comp_code = ?", compCode).First(&comp).Error; err != nil {
+			log.Printf("⚠️  查询竞赛 %s 失败: %v", compCode, err)
+			continue
+		}
+
+		// 检查是否已经有详情
+		var existingDetail models.CompDetail
+		if err := DB.Where("comp_id = ?", comp.ID).First(&existingDetail).Error; err == nil {
+			// 详情已存在，跳过
+			log.Printf("   竞赛 %s 的详情已存在，跳过创建", compCode)
+			detailCount++
+			continue
+		}
+
+		// 创建新详情
+		detail.CompID = comp.ID
+		if err := DB.Create(&detail).Error; err != nil {
+			log.Printf("❌ 创建竞赛详情 %s 失败: %v", compCode, err)
+		} else {
+			log.Printf("✅ 创建竞赛详情 %s 成功 (CompID: %d)", compCode, comp.ID)
+			detailCount++
+		}
 	}
+	log.Printf("✅ 竞赛详情创建完成: %d/%d 条成功", detailCount, len(detailUpdates))
 
 	log.Println("🎉 树形权限与竞赛测试数据初始化完成！")
 	log.Println("================================")
