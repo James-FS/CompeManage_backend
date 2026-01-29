@@ -31,6 +31,8 @@ func SetupRoutes(r *gin.Engine) {
 		apiGroup.GET("/notice/:id", controllers.GetNoticeDetail) // 单个通知查看
 		apiGroup.POST("/notice/create", controllers.CreateNotice)
 		apiGroup.POST("/notice/comp/create", controllers.CreateCompNotice)
+		apiGroup.PUT("/notice/:id/publish", controllers.PublishNotice)
+		apiGroup.DELETE("/notice/:id", controllers.DeleteNotice)
 		apiGroup.GET("/college/list", controllers.GetCollegeList)
 	}
 

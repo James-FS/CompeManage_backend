@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"strconv"
+	"time"
 )
 
 // GetNoticeList 处理“通知列表+筛选”接口
@@ -17,6 +18,7 @@ func GetNoticeList(c *gin.Context) {
 	compIDStr := c.Query("compID")
 	isLatestStr := c.DefaultQuery("is_latest", "true") // 默认按最新返回
 	isLatest, _ := strconv.ParseBool(isLatestStr)
+	statusStr := c.Query("status") // 新增：按状态筛选（0/1）
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))           // 默认第1页
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10")) // 默认每页10条
@@ -49,6 +51,14 @@ func GetNoticeList(c *gin.Context) {
 		}
 		compID := uint(compIDUint64)
 		dbQuery = dbQuery.Where("competition_detail_id = ?", compID)
+	}
+	if statusStr != "" {
+		status, err := strconv.Atoi(statusStr)
+		if err != nil || (status != 0 && status != 1) {
+			utils.BadRequest(c, "status只能是0（未发布）或1（已发布）")
+			return
+		}
+		dbQuery = dbQuery.Where("status = ?", status)
 	}
 	if isLatest {
 		dbQuery = dbQuery.Order("publish_time DESC") // 最新在前
@@ -113,7 +123,6 @@ func CreateNotice(c *gin.Context) {
 	// 1. 解析前端传入的通知参数（含附件URL）
 	// 前端通过form-data或x-www-form-urlencoded传递参数，用Gin的PostForm获取
 	title := c.PostForm("title")
-	publishTime := c.PostForm("publish_time")
 	content := c.PostForm("content")
 	compIDStr := c.PostForm("compID")         // 简化后的竞赛ID
 	attachmentURL := c.PostForm("attachment") // 前端上传附件后拿到的URL
@@ -123,10 +132,7 @@ func CreateNotice(c *gin.Context) {
 		utils.BadRequest(c, "通知标题不能为空")
 		return
 	}
-	if publishTime == "" {
-		utils.BadRequest(c, "发布时间不能为空")
-		return
-	}
+
 	// compID可选，但传了就必须是数字
 	var compID uint
 	if compIDStr != "" {
@@ -141,10 +147,10 @@ func CreateNotice(c *gin.Context) {
 	// 3. 构建Notice模型，存入附件URL
 	notice := models.Notice{
 		Title:               title,
-		PublishTime:         publishTime,
 		Content:             content,
 		CompetitionDetailID: compID,
 		Attachment:          attachmentURL, // 核心：将前端传入的附件URL存入字段
+		Status:              0,             // 默认未发布
 	}
 
 	// 4. 保存到数据库
@@ -160,7 +166,6 @@ func CreateNotice(c *gin.Context) {
 func CreateCompNotice(c *gin.Context) {
 	// 1. 解析参数（compID强制必填）
 	title := c.PostForm("title")
-	publishTime := c.PostForm("publish_time")
 	content := c.PostForm("content")
 	compIDStr := c.PostForm("compID") // 赛事页面必须传当前赛事ID
 	attachmentURL := c.PostForm("attachment")
@@ -168,10 +173,6 @@ func CreateCompNotice(c *gin.Context) {
 	// 2. 基础校验（title/publishTime/compID均必填）
 	if title == "" {
 		utils.BadRequest(c, "通知标题不能为空")
-		return
-	}
-	if publishTime == "" {
-		utils.BadRequest(c, "发布时间不能为空")
 		return
 	}
 	if compIDStr == "" {
@@ -190,10 +191,10 @@ func CreateCompNotice(c *gin.Context) {
 	// 4. 保存数据库（强制关联赛事ID）
 	notice := models.Notice{
 		Title:               title,
-		PublishTime:         publishTime,
 		Content:             content,
 		CompetitionDetailID: compID, // 必传，关联当前赛事
 		Attachment:          attachmentURL,
+		Status:              0, // 默认未发布
 	}
 	if err := database.DB.Create(&notice).Error; err != nil {
 		fmt.Printf("数据库写入失败: %v\n", err)
@@ -201,4 +202,80 @@ func CreateCompNotice(c *gin.Context) {
 		return
 	}
 	utils.Success(c, gin.H{"notice": notice})
+}
+
+// PublishNotice 发布通知（修改status为1，UpdatedAt为发布时间）
+func PublishNotice(c *gin.Context) {
+	// 1. 获取通知ID
+	noticeIDStr := c.Param("id")
+	noticeIDUint, err := strconv.ParseUint(noticeIDStr, 10, 32)
+	if err != nil {
+		utils.BadRequest(c, "通知ID格式错误，必须是数字")
+		return
+	}
+	noticeID := uint(noticeIDUint)
+
+	// 2. 检查通知是否存在
+	var notice models.Notice
+	if err := database.DB.First(&notice, noticeID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.NotFound(c, "该通知不存在")
+		} else {
+			utils.InternalServerError(c, "查询通知失败", err)
+		}
+		return
+	}
+
+	// 3. 检查是否已发布
+	if notice.Status == 1 {
+		utils.BadRequest(c, "该通知已发布，无需重复操作")
+		return
+	}
+
+	// 4. 更新状态为已发布，更新时间为当前时间
+	if err := database.DB.Model(&notice).Updates(map[string]interface{}{
+		"status":     1,
+		"updated_at": time.Now(), // 发布时间=更新时间
+	}).Error; err != nil {
+		utils.InternalServerError(c, "发布通知失败", err)
+		return
+	}
+
+	// 5. 返回发布结果
+	utils.Success(c, gin.H{
+		"notice": notice,
+		"msg":    "通知发布成功",
+	})
+}
+
+// DeleteNotice 删除通知（物理删除/逻辑删除可选，这里用GORM软删除）
+func DeleteNotice(c *gin.Context) {
+	// 1. 获取通知ID
+	noticeIDStr := c.Param("id")
+	noticeIDUint, err := strconv.ParseUint(noticeIDStr, 10, 32)
+	if err != nil {
+		utils.BadRequest(c, "通知ID格式错误，必须是数字")
+		return
+	}
+	noticeID := uint(noticeIDUint)
+
+	// 2. 检查通知是否存在
+	var notice models.Notice
+	if err := database.DB.First(&notice, noticeID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.NotFound(c, "该通知不存在")
+		} else {
+			utils.InternalServerError(c, "查询通知失败", err)
+		}
+		return
+	}
+
+	// 3. 删除通知（GORM软删除，会自动填充DeletedAt字段）
+	if err := database.DB.Delete(&notice).Error; err != nil {
+		utils.InternalServerError(c, "删除通知失败", err)
+		return
+	}
+
+	// 4. 返回删除结果
+	utils.Success(c, gin.H{"msg": "通知删除成功"})
 }
