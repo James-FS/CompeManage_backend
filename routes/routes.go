@@ -46,6 +46,23 @@ func SetupRoutes(r *gin.Engine) {
 		comp.GET("/years", controllers.GetCompetitionYears)
 	}
 
+	// 赛事申报接口（院级管理员申报）
+	declare := r.Group("/api/declare", middleware.AuthRequired())
+	{
+		// 院级申报
+		declare.POST("", controllers.CreateDeclare)            // 创建申报
+		declare.GET("/:id", controllers.GetDeclareDetail)      // 获取申报详情
+		declare.PUT("/:id", controllers.UpdateDeclare)         // 更新申报信息
+		declare.POST("/:id/submit", controllers.SubmitDeclare) // 提交申报
+		declare.GET("/my/list", controllers.GetMyDeclares)     // 获取我的申报列表
+		declare.DELETE("/:id", controllers.DeleteDeclare)      // 删除申报
+
+		// 校级审核
+		declare.GET("/pending/list", controllers.GetPendingDeclares) // 获取待审核申报
+		declare.POST("/audit", controllers.AuditDeclare)             // 审核申报
+		declare.GET("/all", controllers.GetAllDeclares)              // 获取所有申报
+	}
+
 	reg := r.Group("/api/reg", middleware.AuthRequired())
 	{
 		reg.POST("/config",

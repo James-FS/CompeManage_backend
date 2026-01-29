@@ -58,6 +58,7 @@ func autoMigrate() {
 		&models.Register{},
 		&models.RegMember{},
 		&models.Notice{},
+		&models.CompDeclaration{},
 		&models.Award{},
 	)
 	if err != nil {
