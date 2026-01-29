@@ -30,6 +30,7 @@ type DeclareUpdateReq struct {
 	CompType   string `json:"comp_type"`
 	Organizer  string `json:"organizer"`
 	Undertaker string `json:"undertaker"`
+	CollegeID  uint   `json:"college_id"`
 	ManagerID  uint   `json:"manager_id"`
 	Year       int    `json:"year"`
 	Desc       string `json:"desc"`
@@ -118,7 +119,7 @@ func GetDeclareDetail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 200, "msg": "查询成功", "data": declaration})
 }
 
-// UpdateDeclare 更新赛事申报信息(仅草稿状态)
+// UpdateDeclare 更新赛事申报信息(草稿和已驳回状态可编辑)
 func UpdateDeclare(c *gin.Context) {
 	declareID := c.Param("id")
 	var req DeclareUpdateReq
@@ -127,7 +128,7 @@ func UpdateDeclare(c *gin.Context) {
 		return
 	}
 
-	// 检查申报是否存在且为草稿状态
+	// 检查申报是否存在
 	var declaration models.CompDeclaration
 	if err := database.DB.First(&declaration, declareID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -138,9 +139,9 @@ func UpdateDeclare(c *gin.Context) {
 		return
 	}
 
-	// 只有草稿状态可以编辑
-	if declaration.DeclareStatus != 0 {
-		c.JSON(http.StatusForbidden, gin.H{"code": 403, "msg": "仅草稿状态可编辑"})
+	// 只有草稿(0)和已驳回(3)状态可以编辑
+	if declaration.DeclareStatus != 0 && declaration.DeclareStatus != 3 {
+		c.JSON(http.StatusForbidden, gin.H{"code": 403, "msg": "仅草稿和已驳回状态可编辑"})
 		return
 	}
 
@@ -161,6 +162,9 @@ func UpdateDeclare(c *gin.Context) {
 	if req.Undertaker != "" {
 		updates["undertaker"] = req.Undertaker
 	}
+	if req.CollegeID != 0 {
+		updates["college_id"] = req.CollegeID
+	}
 	if req.ManagerID != 0 {
 		updates["manager_id"] = req.ManagerID
 	}
@@ -179,7 +183,7 @@ func UpdateDeclare(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 200, "msg": "更新成功", "data": declaration})
 }
 
-// SubmitDeclare 提交申报（状态：草稿 → 已提交）
+// SubmitDeclare 提交申报（状态：草稿/已驳回 → 已提交）
 func SubmitDeclare(c *gin.Context) {
 	declareID := c.Param("id")
 
@@ -193,9 +197,9 @@ func SubmitDeclare(c *gin.Context) {
 		return
 	}
 
-	// 只有草稿状态可以提交
-	if declaration.DeclareStatus != 0 {
-		c.JSON(http.StatusForbidden, gin.H{"code": 403, "msg": "只有草稿状态可提交"})
+	// 只有草稿(0)和已驳回(3)状态可以提交
+	if declaration.DeclareStatus != 0 && declaration.DeclareStatus != 3 {
+		c.JSON(http.StatusForbidden, gin.H{"code": 403, "msg": "只有草稿和已驳回状态可提交"})
 		return
 	}
 
@@ -206,6 +210,35 @@ func SubmitDeclare(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"code": 200, "msg": "申报已提交，等待审核"})
+}
+
+// RevokeDeclare 撤回申报（状态：已提交 → 草稿）
+func RevokeDeclare(c *gin.Context) {
+	declareID := c.Param("id")
+
+	var declaration models.CompDeclaration
+	if err := database.DB.First(&declaration, declareID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"code": 404, "msg": "申报记录不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询失败"})
+		return
+	}
+
+	// 只有已提交状态可以撤回
+	if declaration.DeclareStatus != 1 {
+		c.JSON(http.StatusForbidden, gin.H{"code": 403, "msg": "只有已提交状态可撤回"})
+		return
+	}
+
+	// 更新为草稿状态
+	if err := database.DB.Model(&declaration).Update("declare_status", 0).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "撤回失败", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"code": 200, "msg": "申报已撤回，可重新编辑"})
 }
 
 // GetMyDeclares 获取我的申报列表（院级管理员）
@@ -250,6 +283,112 @@ func GetMyDeclares(c *gin.Context) {
 		Offset((req.Page - 1) * req.PageSize).
 		Limit(req.PageSize).
 		Order("create_time DESC").
+		Find(&declarations).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询失败", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 200,
+		"msg":  "查询成功",
+		"data": gin.H{
+			"total": total,
+			"items": declarations,
+		},
+	})
+}
+
+// GetMyPendingDeclares 获取我的待审核申报（状态0,1,3）
+func GetMyPendingDeclares(c *gin.Context) {
+	var req DeclareListReq
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "参数错误", "error": err.Error()})
+		return
+	}
+
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "未授权"})
+		return
+	}
+
+	// 查询当前用户的待审核申报（状态0-草稿, 1-已提交, 3-已驳回）
+	query := database.DB.Where("created_by = ?", userID.(uint)).
+		Where("declare_status IN ?", []int{0, 1, 3})
+
+	// 筛选条件
+	if req.CompName != "" {
+		query = query.Where("comp_name LIKE ?", "%"+req.CompName+"%")
+	}
+	if req.CompLevel != "" {
+		query = query.Where("comp_level = ?", req.CompLevel)
+	}
+
+	var total int64
+	query.Model(&models.CompDeclaration{}).Count(&total)
+
+	var declarations []models.CompDeclaration
+	if err := query.
+		Preload("CollegeInfo").
+		Preload("Manager").
+		Preload("Declarer").
+		Preload("Auditor").
+		Offset((req.Page - 1) * req.PageSize).
+		Limit(req.PageSize).
+		Order("create_time DESC").
+		Find(&declarations).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询失败", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 200,
+		"msg":  "查询成功",
+		"data": gin.H{
+			"total": total,
+			"items": declarations,
+		},
+	})
+}
+
+// GetMyPublishedDeclares 获取我的已发布申报（状态2-已通过）
+func GetMyPublishedDeclares(c *gin.Context) {
+	var req DeclareListReq
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "参数错误", "error": err.Error()})
+		return
+	}
+
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "未授权"})
+		return
+	}
+
+	// 查询当前用户的已通过申报（状态2）
+	query := database.DB.Where("created_by = ?", userID.(uint)).
+		Where("declare_status = ?", 2)
+
+	// 筛选条件
+	if req.CompName != "" {
+		query = query.Where("comp_name LIKE ?", "%"+req.CompName+"%")
+	}
+	if req.CompLevel != "" {
+		query = query.Where("comp_level = ?", req.CompLevel)
+	}
+
+	var total int64
+	query.Model(&models.CompDeclaration{}).Count(&total)
+
+	var declarations []models.CompDeclaration
+	if err := query.
+		Preload("CollegeInfo").
+		Preload("Manager").
+		Preload("Declarer").
+		Preload("Auditor").
+		Offset((req.Page - 1) * req.PageSize).
+		Limit(req.PageSize).
+		Order("audit_at DESC").
 		Find(&declarations).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询失败", "error": err.Error()})
 		return
@@ -459,6 +598,55 @@ func GetAllDeclares(c *gin.Context) {
 		Offset((req.Page - 1) * req.PageSize).
 		Limit(req.PageSize).
 		Order("create_time DESC").
+		Find(&declarations).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询失败", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 200,
+		"msg":  "查询成功",
+		"data": gin.H{
+			"total": total,
+			"items": declarations,
+		},
+	})
+}
+
+// GetAuditedDeclares 获取审核记录（已审核过的赛事列表）
+func GetAuditedDeclares(c *gin.Context) {
+	var req DeclareListReq
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "参数错误", "error": err.Error()})
+		return
+	}
+
+	// 查询所有已审核的申报（status=2 已通过 或 status=3 已驳回）
+	query := database.DB.Where("declare_status IN ?", []int{2, 3})
+
+	// 筛选条件
+	if req.CompName != "" {
+		query = query.Where("comp_name LIKE ?", "%"+req.CompName+"%")
+	}
+	if req.CompLevel != "" {
+		query = query.Where("comp_level = ?", req.CompLevel)
+	}
+	if req.CollegeID != 0 {
+		query = query.Where("college_id = ?", req.CollegeID)
+	}
+
+	var total int64
+	query.Model(&models.CompDeclaration{}).Count(&total)
+
+	var declarations []models.CompDeclaration
+	if err := query.
+		Preload("CollegeInfo").
+		Preload("Manager").
+		Preload("Declarer").
+		Preload("Auditor").
+		Offset((req.Page - 1) * req.PageSize).
+		Limit(req.PageSize).
+		Order("audit_at DESC").
 		Find(&declarations).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询失败", "error": err.Error()})
 		return

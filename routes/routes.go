@@ -52,15 +52,19 @@ func SetupRoutes(r *gin.Engine) {
 	declare := r.Group("/api/declare", middleware.AuthRequired())
 	{
 		// 院级申报
-		declare.POST("", controllers.CreateDeclare)            // 创建申报
-		declare.GET("/:id", controllers.GetDeclareDetail)      // 获取申报详情
-		declare.PUT("/:id", controllers.UpdateDeclare)         // 更新申报信息
-		declare.POST("/:id/submit", controllers.SubmitDeclare) // 提交申报
-		declare.GET("/my/list", controllers.GetMyDeclares)     // 获取我的申报列表
-		declare.DELETE("/:id", controllers.DeleteDeclare)      // 删除申报
+		declare.POST("", controllers.CreateDeclare)                      // 创建申报
+		declare.GET("/:id", controllers.GetDeclareDetail)                // 获取申报详情
+		declare.PUT("/:id", controllers.UpdateDeclare)                   // 更新申报信息
+		declare.POST("/:id/submit", controllers.SubmitDeclare)           // 提交申报
+		declare.POST("/:id/revoke", controllers.RevokeDeclare)           // 撤回申报
+		declare.GET("/my/list", controllers.GetMyDeclares)               // 获取我的申报列表（所有状态）
+		declare.GET("/my/pending", controllers.GetMyPendingDeclares)     // 获取我的待审核申报
+		declare.GET("/my/published", controllers.GetMyPublishedDeclares) // 获取我的已发布申报
+		declare.DELETE("/:id", controllers.DeleteDeclare)                // 删除申报
 
 		// 校级审核
 		declare.GET("/pending/list", controllers.GetPendingDeclares) // 获取待审核申报
+		declare.GET("/audited/list", controllers.GetAuditedDeclares) // 获取审核记录
 		declare.POST("/audit", controllers.AuditDeclare)             // 审核申报
 		declare.GET("/all", controllers.GetAllDeclares)              // 获取所有申报
 	}
