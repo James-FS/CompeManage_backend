@@ -21,6 +21,7 @@ type CompDetail struct {
 	NeedAttachment     int       `gorm:"column:need_attachment;default:0;comment:是否需要上传附件,0:无需 1:可选 2:必须" json:"need_attachment"`
 	NeedAdvisor        int       `gorm:"column:need_advisor;default:0;comment:是否需要指导老师,0:无需 1:可选 2:必须" json:"need_advisor"`
 	AttachmentTemplate string    `gorm:"column:attachment_template;type:varchar(255);comment:附件模板地址" json:"attachment_template"`
+	AwardHierarchy     string    `gorm:"column:award_hierarchy;type:json;comment:奖项等级排序配置" json:"award_hierarchy"`
 	BaseModel
 }
 

@@ -24,45 +24,106 @@ func SetupRoutes(r *gin.Engine) {
 	apiGroup := r.Group("/api")
 	{
 		apiGroup.POST("/login", controllers.Login)
-		apiGroup.GET("/permission/list", controllers.GetAllPermissions)
-		apiGroup.GET("/role/list", controllers.GetAllRoles)
-		apiGroup.POST("/role/assign_perm", controllers.AssignPermissions)
-		apiGroup.GET("/notice/list", controllers.GetNoticeList)  // 通知列表+筛选
-		apiGroup.GET("/notice/:id", controllers.GetNoticeDetail) // 单个通知查看
-		apiGroup.POST("/notice/create", controllers.CreateNotice)
-		apiGroup.POST("/notice/comp/create", controllers.CreateCompNotice)
-		apiGroup.PUT("/notice/:id/publish", controllers.PublishNotice)
-		apiGroup.DELETE("/notice/:id", controllers.DeleteNotice)
+
 		apiGroup.GET("/college/list", controllers.GetCollegeList)
+	}
+
+	notice := r.Group("/api/notice", middleware.AuthRequired())
+	{
+		notice.GET("/list",
+			controllers.GetNoticeList,
+			middleware.RequirePermission("notice:list")) // 通知列表+筛选
+		notice.GET("/:id",
+			controllers.GetNoticeDetail,
+			middleware.RequirePermission("notice:detail")) // 单个通知查看
+		//notice.POST("/create",
+		//	controllers.CreateNotice,
+		//	middleware.RequirePermission("notice:create"))
+		notice.POST("/comp/create",
+			controllers.CreateCompNotice,
+			middleware.RequirePermission("notice:create"))
+		notice.PUT("/:id/publish",
+			controllers.PublishNotice,
+			middleware.RequirePermission("notice:publish"))
+		notice.DELETE("/:id",
+			controllers.DeleteNotice,
+			middleware.RequirePermission("notice:delete"))
+	}
+
+	perm := r.Group("/api/perm", middleware.AuthRequired())
+	{
+		perm.GET("/permission/list",
+			controllers.GetAllPermissions,
+			middleware.RequirePermission("perm:list"))
+		perm.GET("/role/list",
+			controllers.GetAllRoles,
+			middleware.RequirePermission("role:list"))
+		perm.POST("/role/assign_perm",
+			controllers.AssignPermissions,
+			middleware.RequirePermission("perm:assign"))
 	}
 
 	comp := r.Group("/api/comp", middleware.AuthRequired())
 	{
-		comp.GET("/list", controllers.GetCompetitionList)
-		comp.POST("/create", controllers.CreateCompetition)
-		comp.POST("/batch-import", controllers.BatchImportCompetition)
-		comp.DELETE("/:id", controllers.DeleteCompetition)
-		comp.POST("/batch-delete", controllers.BatchDeleteCompetition)
-		comp.PUT("/:id/restore", controllers.RestoreCompetition)
-		comp.GET("/manager/list", controllers.GetManagerList)
-		comp.GET("/years", controllers.GetCompetitionYears)
+		comp.GET("/list",
+			controllers.GetCompetitionList,
+			middleware.RequirePermission("comp:list"))
+		comp.POST("/create",
+			controllers.CreateCompetition,
+			middleware.RequirePermission("comp:create"))
+		comp.POST("/batch-import",
+			controllers.BatchImportCompetition,
+			middleware.RequirePermission("comp:batch-import"))
+		comp.DELETE("/:id",
+			controllers.DeleteCompetition,
+			middleware.RequirePermission("comp:delete"))
+		comp.POST("/batch-delete",
+			controllers.BatchDeleteCompetition,
+			middleware.RequirePermission("comp:batch-delete"))
+		comp.PUT("/:id/restore",
+			controllers.RestoreCompetition,
+			middleware.RequirePermission("comp:restore"))
+		comp.GET("/manager/list",
+			controllers.GetManagerList,
+			middleware.RequirePermission("manager:list"))
+		comp.GET("/years",
+			controllers.GetCompetitionYears,
+			middleware.RequirePermission("comp:years:list"))
 	}
 
 	// 赛事申报接口（院级管理员申报）
 	declare := r.Group("/api/declare", middleware.AuthRequired())
 	{
 		// 院级申报
-		declare.POST("", controllers.CreateDeclare)            // 创建申报
-		declare.GET("/:id", controllers.GetDeclareDetail)      // 获取申报详情
-		declare.PUT("/:id", controllers.UpdateDeclare)         // 更新申报信息
-		declare.POST("/:id/submit", controllers.SubmitDeclare) // 提交申报
-		declare.GET("/my/list", controllers.GetMyDeclares)     // 获取我的申报列表
-		declare.DELETE("/:id", controllers.DeleteDeclare)      // 删除申报
+		declare.POST("",
+			controllers.CreateDeclare,
+			middleware.RequirePermission("declare:create")) // 创建申报
+		declare.GET("/:id",
+			controllers.GetDeclareDetail,
+			middleware.RequirePermission("declare:get")) // 获取申报详情
+		declare.PUT("/:id",
+			controllers.UpdateDeclare,
+			middleware.RequirePermission("declare:update")) // 更新申报信息
+		declare.POST("/:id/submit",
+			controllers.SubmitDeclare,
+			middleware.RequirePermission("declare:submit")) // 提交申报
+		declare.GET("/my/list",
+			controllers.GetMyDeclares,
+			middleware.RequirePermission("declare:list")) // 获取我的申报列表
+		declare.DELETE("/:id",
+			controllers.DeleteDeclare,
+			middleware.RequirePermission("declare:delete")) // 删除申报
 
 		// 校级审核
-		declare.GET("/pending/list", controllers.GetPendingDeclares) // 获取待审核申报
-		declare.POST("/audit", controllers.AuditDeclare)             // 审核申报
-		declare.GET("/all", controllers.GetAllDeclares)              // 获取所有申报
+		declare.GET("/pending/list",
+			controllers.GetPendingDeclares,
+			middleware.RequirePermission("declare:pending-list")) // 获取待审核申报
+		declare.POST("/audit",
+			controllers.AuditDeclare,
+			middleware.RequirePermission("declare:audit")) // 审核申报
+		declare.GET("/all",
+			controllers.GetAllDeclares,
+			middleware.RequirePermission("declare:all-declares")) // 获取所有申报
 	}
 
 	reg := r.Group("/api/reg", middleware.AuthRequired())
@@ -85,17 +146,33 @@ func SetupRoutes(r *gin.Engine) {
 		reg.PUT("/audit",
 			middleware.RequirePermission("reg:audit:update"),
 			controllers.AuditRegister)
-		reg.GET("/status", controllers.GetMyRegStatus)         // 查状态
-		reg.PUT("/resubmit", controllers.ResubmitRegistration) // 重新提交
-		reg.GET("/my-reg", controllers.GetMyRegList)
-		reg.PUT("/work-submit", controllers.SubmitWork)
+		reg.GET("/status",
+			middleware.RequirePermission("reg:status"),
+			controllers.GetMyRegStatus) // 查状态
+		reg.PUT("/resubmit",
+			middleware.RequirePermission("reg:resubmit"),
+			controllers.ResubmitRegistration) // 重新提交
+		reg.GET("/my-reg",
+			middleware.RequirePermission("reg:my-reg"),
+			controllers.GetMyRegList)
+		reg.PUT("/work-submit",
+			middleware.RequirePermission("reg:my-reg:submit"),
+			controllers.SubmitWork)
 	}
 
 	award := r.Group("/api/award", middleware.AuthRequired())
 	{
-		award.GET("/list", controllers.GetAwardCompList)
-		award.GET("/comp-awards", controllers.GetCompAwards)
-		award.GET("/export-template", controllers.ExportAwardTemplate)
-		award.POST("/import", controllers.ImportAward)
+		award.GET("/list",
+			controllers.GetAwardCompList,
+			middleware.RequirePermission("award:list"))
+		award.GET("/comp-awards",
+			controllers.GetCompAwards,
+			middleware.RequirePermission("award:comp:list"))
+		award.GET("/export-template",
+			controllers.ExportAwardTemplate,
+			middleware.RequirePermission("award:export:template"))
+		award.POST("/import",
+			controllers.ImportAward,
+			middleware.RequirePermission("award:import"))
 	}
 }

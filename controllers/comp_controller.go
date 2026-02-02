@@ -5,6 +5,7 @@ import (
 	"CompeManage_backend/models"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -45,12 +46,29 @@ func GetCompetitionList(c *gin.Context) {
 	}
 
 	// 按状态筛选 (未开始/进行中/已结束)
-	if req.Status != "" {
-		query = query.Where("status = ?", req.Status)
+	if req.Status != "" && req.Status != "all" {
+		now := time.Now() // 获取服务器当前精准时间
+		// 注意：GORM 的 Joins 默认是 Inner Join，这里为了防止没详情的报错，可以用 Left Join
+		// 但通常发布的赛事都有详情，所以直接用 Joins 也没问题
+		query = query.Joins("LEFT JOIN comp_details ON comp_details.comp_id = comp_directories.id")
+
+		switch req.Status {
+		case "upcoming": // 未开始 (当前时间 < 报名开始时间)
+			query = query.Where("comp_details.reg_start_time > ?", now)
+
+		case "ongoing": // 进行中 (报名开始 <= 当前 <= 报名结束)
+			query = query.Where("comp_details.reg_start_time <= ? AND comp_details.reg_end_time >= ?", now, now)
+
+		case "ended": // 已结束 (当前时间 > 报名结束)
+			query = query.Where("comp_details.reg_end_time < ?", now)
+
+		default:
+
+		}
 	}
 
 	// 按级别筛选 (校级/省级/国家级)
-	if req.CompLevel != "" {
+	if req.CompLevel != "" && req.CompLevel != "全部" {
 		query = query.Where("comp_level = ?", req.CompLevel)
 	}
 
@@ -67,12 +85,22 @@ func GetCompetitionList(c *gin.Context) {
 	// 仅查看"我负责的" (从 Token 获取当前用户ID)
 	if req.IsMy {
 		userID, exists := c.Get("user_id")
-		if exists {
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "未登录"})
+			return
+		}
+		uid := userID.(uint)
+		if !checkUserIsAdmin(uid) {
+			// 不是管理员：只返回当前用户负责的赛事
 			query = query.Where("manager_id = ?", userID)
 			query = query.Preload("Detail", func(db *gorm.DB) *gorm.DB {
 				return db.Select("comp_id", "reg_start_time", "reg_end_time", "participant_type")
 			})
 		}
+
+		query = query.Preload("Detail", func(db *gorm.DB) *gorm.DB {
+			return db.Select("comp_id", "reg_start_time", "reg_end_time", "participant_type")
+		})
 	}
 
 	if req.IsReg {

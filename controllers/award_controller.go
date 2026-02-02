@@ -192,6 +192,7 @@ func GetCompAwards(c *gin.Context) {
 		Preload("Register").
 		Preload("Register.Leader").
 		Where("comp_id = ?", compID).
+		Order("level_rank ASC").
 		Find(&awards).Error
 
 	if err != nil {

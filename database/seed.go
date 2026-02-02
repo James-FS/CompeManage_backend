@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm/clause"
 )
 
 // InitData 扩展版测试数据初始化
@@ -26,77 +27,112 @@ func InitData() {
 	log.Println("正在初始化扩展版模拟数据...")
 
 	// ==========================================
-	// 1. 初始化权限 (Permission) - 构建树形结构
+	// 1. 初始化权限 (Permission) - 按SQL结构构建树形
 	// ==========================================
-	// 结构设计：
-	// - 系统管理 (目录)
-	//   - 用户管理 (菜单) -> 查看、新增
-	//   - 角色管理 (菜单) -> 查看、分配
-	// - 竞赛业务 (目录)
-	//   - 竞赛列表 (菜单) -> 发布、编辑
-	//   - 报名审核 (菜单) -> 审核
-	//   - 报名配置 (菜单) -> 查看、编辑
-	// - 学生中心 (目录)
-	//   - 我的竞赛 (菜单) -> 报名
 
-	// --- Level 1: 根目录 (Type=1, ParentID=0) ---
-	sysRoot := models.Permission{Name: "系统管理", Code: "sys:root", Type: 1, ParentID: 0, Description: "系统基础配置目录"}
-	compRoot := models.Permission{Name: "竞赛业务", Code: "comp:root", Type: 1, ParentID: 0, Description: "竞赛核心���务目录"}
-	stuRoot := models.Permission{Name: "学生中心", Code: "stu:root", Type: 1, ParentID: 0, Description: "学生个人中心目录"}
+	// --- Level 1: 大分类（顶级父目录）Type=1, ParentID=0 ---
+	competitionDir := models.Permission{Name: "竞赛管理", Code: "competition", Type: 1, ParentID: 0, Description: "竞赛、申报、获奖相关功能"}
+	registrationDir := models.Permission{Name: "报名管理", Code: "registration", Type: 1, ParentID: 0, Description: "报名配置、审核、提交相关功能"}
+	noticeDir := models.Permission{Name: "通知管理", Code: "notice", Type: 1, ParentID: 0, Description: "通知发布和管理功能"}
+	systemDir := models.Permission{Name: "系统管理", Code: "system", Type: 1, ParentID: 0, Description: "权限、角色、基础数据管理"}
 
-	DB.Create(&sysRoot)
-	DB.Create(&compRoot)
-	DB.Create(&stuRoot)
+	DB.Create(&competitionDir)
+	DB.Create(&registrationDir)
+	DB.Create(&noticeDir)
+	DB.Create(&systemDir)
 
-	// --- Level 2: 菜单页面 (Type=2, ParentID=Root.ID) ---
+	// --- Level 2: 子分类（中间层父目录）Type=1(作为目录), ParentID=Level1.ID ---
 
-	// 1.1 系统管理下的菜单
-	userMenu := models.Permission{Name: "用户管理", Code: "sys:user", Type: 2, ParentID: sysRoot.ID, Description: "用户管理页面"}
-	roleMenu := models.Permission{Name: "角色管理", Code: "sys:role", Type: 2, ParentID: sysRoot.ID, Description: "角色管理页面"}
-	DB.Create(&userMenu)
-	DB.Create(&roleMenu)
+	// 竞赛管理下的子分类
+	compSub := models.Permission{Name: "竞赛目录", Code: "comp", Type: 1, ParentID: competitionDir.ID, Description: "竞赛基础数据管理"}
+	declareSub := models.Permission{Name: "赛事申报", Code: "declare", Type: 1, ParentID: competitionDir.ID, Description: "赛事申报审核管理"}
+	awardSub := models.Permission{Name: "获奖管理", Code: "award", Type: 1, ParentID: competitionDir.ID, Description: "获奖信息导入和管理"}
 
-	// 1.2 竞赛业务下的菜单
-	compListMenu := models.Permission{Name: "竞赛列表", Code: "comp:list", Type: 2, ParentID: compRoot.ID, Description: "竞赛信息列表页面"}
-	auditMenu := models.Permission{Name: "报名审核", Code: "comp:audit_page", Type: 2, ParentID: compRoot.ID, Description: "学生报名审核页面"}
-	regConfigMenu := models.Permission{Name: "报名配置", Code: "reg:config", Type: 2, ParentID: compRoot.ID, Description: "报名配置管理页面"}
-	DB.Create(&compListMenu)
-	DB.Create(&auditMenu)
-	DB.Create(&regConfigMenu)
+	// 报名管理下的子分类
+	regConfigSub := models.Permission{Name: "报名配置", Code: "reg:config", Type: 1, ParentID: registrationDir.ID, Description: "报名时间、规则配置"}
+	regAuditSub := models.Permission{Name: "报名审核", Code: "reg:audit", Type: 1, ParentID: registrationDir.ID, Description: "报名信息审核"}
+	regSubmitSub := models.Permission{Name: "报名提交", Code: "reg:submit", Type: 1, ParentID: registrationDir.ID, Description: "学生报名和作品提交"}
 
-	// 1.3 学生中心下的菜单
-	myCompMenu := models.Permission{Name: "我的竞赛", Code: "stu:comp", Type: 2, ParentID: stuRoot.ID, Description: "学生参赛记录页面"}
-	DB.Create(&myCompMenu)
+	// 系统管理下的子分类
+	permSub := models.Permission{Name: "权限管理", Code: "perm", Type: 1, ParentID: systemDir.ID, Description: "权限和角色配置"}
+	basicSub := models.Permission{Name: "基础数据", Code: "basic", Type: 1, ParentID: systemDir.ID, Description: "学院、文件上传等基础数据"}
 
-	// --- Level 3: 按钮/API功能 (Type=3, ParentID=Menu.ID) ---
-	// 用户管理下的功能
+	DB.Create(&compSub)
+	DB.Create(&declareSub)
+	DB.Create(&awardSub)
+	DB.Create(&regConfigSub)
+	DB.Create(&regAuditSub)
+	DB.Create(&regSubmitSub)
+	DB.Create(&permSub)
+	DB.Create(&basicSub)
+
+	// --- Level 3: 具体权限（叶子节点）Type=3(API/按钮), ParentID=Level2.ID ---
+	// 注意：通知管理下的权限直接挂到 noticeDir 下，没有中间层
+
 	perms := []models.Permission{
-		// 用户管理 & 角色管理 (保持不变) ...
-		{Name: "查看用户", Code: "sys:user:list", Type: 3, ParentID: userMenu.ID},
-		{Name: "新增用户", Code: "sys:user:add", Type: 3, ParentID: userMenu.ID},
-		{Name: "查看角色", Code: "sys:role:list", Type: 3, ParentID: roleMenu.ID},
-		{Name: "分配权限", Code: "sys:role:assign", Type: 3, ParentID: roleMenu.ID},
+		// 竞赛目录权限 (parent: compSub)
+		{Name: "查看竞赛列表", Code: "comp:list", Type: 3, ParentID: compSub.ID, Description: "查看竞赛目录列表"},
+		{Name: "创建竞赛", Code: "comp:create", Type: 3, ParentID: compSub.ID, Description: "创建新的竞赛"},
+		{Name: "批量导入竞赛", Code: "comp:batch-import", Type: 3, ParentID: compSub.ID, Description: "批量导入竞赛"},
+		{Name: "删除竞赛", Code: "comp:delete", Type: 3, ParentID: compSub.ID, Description: "删除竞赛信息"},
+		{Name: "批量删除竞赛", Code: "comp:batch-delete", Type: 3, ParentID: compSub.ID, Description: "批量删除竞赛"},
+		{Name: "恢复竞赛", Code: "comp:restore", Type: 3, ParentID: compSub.ID, Description: "恢复已删除的竞赛"},
+		{Name: "查看竞赛年份", Code: "comp:years:list", Type: 3, ParentID: compSub.ID, Description: "查看竞赛年份列表"},
+		{Name: "查看赛事负责人", Code: "manager:list", Type: 3, ParentID: compSub.ID, Description: "查看赛事负责人列表"},
 
-		// 竞赛列表 (保持不变)
-		{Name: "发布竞赛", Code: "comp:add", Type: 3, ParentID: compListMenu.ID},
-		{Name: "编辑竞赛", Code: "comp:edit", Type: 3, ParentID: compListMenu.ID},
+		// 赛事申报权限 (parent: declareSub)
+		{Name: "创建申报", Code: "declare:create", Type: 3, ParentID: declareSub.ID, Description: "创建新的赛事申报"},
+		{Name: "查看申报详情", Code: "declare:get", Type: 3, ParentID: declareSub.ID, Description: "查看申报信息详情"},
+		{Name: "编辑申报", Code: "declare:update", Type: 3, ParentID: declareSub.ID, Description: "编辑申报信息"},
+		{Name: "提交申报", Code: "declare:submit", Type: 3, ParentID: declareSub.ID, Description: "提交赛事申报"},
+		{Name: "查看我的申报", Code: "declare:list", Type: 3, ParentID: declareSub.ID, Description: "查看自己的申报列表"},
+		{Name: "删除申报", Code: "declare:delete", Type: 3, ParentID: declareSub.ID, Description: "删除申报信息"},
+		{Name: "查看待审核申报", Code: "declare:pending-list", Type: 3, ParentID: declareSub.ID, Description: "查看待审核申报列表"},
+		{Name: "审核申报", Code: "declare:audit", Type: 3, ParentID: declareSub.ID, Description: "审核赛事申报"},
+		{Name: "查看所有申报", Code: "declare:all-declares", Type: 3, ParentID: declareSub.ID, Description: "查看所有申报信息"},
 
-		// ⚠️【修改】审核页面下的功能 (匹配 routes.go)
-		{Name: "审核列表", Code: "reg:audit:list", Type: 3, ParentID: auditMenu.ID},   // 对应 GET /api/reg/list
-		{Name: "审核详情", Code: "reg:audit:detail", Type: 3, ParentID: auditMenu.ID}, // 对应 GET /api/reg/detail
-		{Name: "审核操作", Code: "reg:audit:update", Type: 3, ParentID: auditMenu.ID}, // 对应 PUT /api/reg/audit
+		// 获奖管理权限 (parent: awardSub)
+		{Name: "查看获奖赛事列表", Code: "award:list", Type: 3, ParentID: awardSub.ID, Description: "查看获奖赛事列表"},
+		{Name: "查看赛事获奖信息", Code: "award:comp:list", Type: 3, ParentID: awardSub.ID, Description: "查看具体赛事的获奖信息"},
+		{Name: "导出获奖模板", Code: "award:export:template", Type: 3, ParentID: awardSub.ID, Description: "导出获奖信息模板"},
+		{Name: "导入获奖信息", Code: "award:import", Type: 3, ParentID: awardSub.ID, Description: "导入获奖信息"},
 
-		// 报名配置 (保持不变)
-		{Name: "编辑报名配置", Code: "reg:config:edit", Type: 3, ParentID: regConfigMenu.ID},
-		{Name: "查看报名配置", Code: "reg:config:view", Type: 3, ParentID: regConfigMenu.ID},
+		// 报名配置权限 (parent: regConfigSub)
+		{Name: "编辑报名配置", Code: "reg:config:edit", Type: 3, ParentID: regConfigSub.ID, Description: "编辑报名时间和规则配置"},
+		{Name: "查看报名配置", Code: "reg:config:view", Type: 3, ParentID: regConfigSub.ID, Description: "查看报名配置"},
 
-		// ⚠️【修改】我的竞赛下的功能 (匹配 routes.go)
-		{Name: "立即报名", Code: "reg:config:submit", Type: 3, ParentID: myCompMenu.ID}, // 对应 POST /api/reg/submit
+		// 报名审核权限 (parent: regAuditSub)
+		{Name: "查看报名列表", Code: "reg:audit:list", Type: 3, ParentID: regAuditSub.ID, Description: "查看报名信息列表"},
+		{Name: "查看报名详情", Code: "reg:audit:detail", Type: 3, ParentID: regAuditSub.ID, Description: "查看报名详细信息"},
+		{Name: "审核报名", Code: "reg:audit:update", Type: 3, ParentID: regAuditSub.ID, Description: "审核报名信息（通过/驳回）"},
+
+		// 报名提交权限 (parent: regSubmitSub)
+		{Name: "学生报名", Code: "reg:config:submit", Type: 3, ParentID: regSubmitSub.ID, Description: "学生提交报名信息"},
+		{Name: "查看报名状态", Code: "reg:status", Type: 3, ParentID: regSubmitSub.ID, Description: "查看个人报名状态"},
+		{Name: "重新提交报名", Code: "reg:resubmit", Type: 3, ParentID: regSubmitSub.ID, Description: "驳回后重新提交报名"},
+		{Name: "查看我的报名", Code: "reg:my-reg", Type: 3, ParentID: regSubmitSub.ID, Description: "查看个人报名信息"},
+		{Name: "提交作品", Code: "reg:my-reg:submit", Type: 3, ParentID: regSubmitSub.ID, Description: "提交参赛作品"},
+
+		// 通知管理权限 (parent: noticeDir，直接挂在大分类下)
+		{Name: "查看通知列表", Code: "notice:list", Type: 3, ParentID: noticeDir.ID, Description: "查看通知列表"},
+		{Name: "查看通知详情", Code: "notice:detail", Type: 3, ParentID: noticeDir.ID, Description: "查看通知详细内容"},
+		{Name: "创建通知", Code: "notice:create", Type: 3, ParentID: noticeDir.ID, Description: "创建新通知"},
+		{Name: "发布通知", Code: "notice:publish", Type: 3, ParentID: noticeDir.ID, Description: "发布通知"},
+		{Name: "删除通知", Code: "notice:delete", Type: 3, ParentID: noticeDir.ID, Description: "删除通知"},
+
+		// 权限管理权限 (parent: permSub)
+		{Name: "查看权限列表", Code: "perm:list", Type: 3, ParentID: permSub.ID, Description: "查看系统权限列表"},
+		{Name: "查看角色列表", Code: "role:list", Type: 3, ParentID: permSub.ID, Description: "查看系统角色列表"},
+		{Name: "分配权限", Code: "perm:assign", Type: 3, ParentID: permSub.ID, Description: "给角色分配权限"},
+
+		// 基础数据权限 (parent: basicSub)
+		{Name: "查看学院列表", Code: "college:list", Type: 3, ParentID: basicSub.ID, Description: "查看学院列表"},
+		{Name: "文件上传", Code: "upload:file", Type: 3, ParentID: basicSub.ID, Description: "上传文件"},
 	}
 	DB.Create(&perms)
 
 	// ==========================================
-	// 2. 初始化角色 (Role)
+	// 2. 初始化角色 (Role) - 保持不变
 	// ==========================================
 	schoolAdminRole := models.Role{RoleName: "校级管理员", RoleCode: "school_admin", Description: "校级系统管理员，拥有所有权限"}
 	collegeAdminRole := models.Role{RoleName: "院级管理员", RoleCode: "college_admin", Description: "学院管理员，负责用户和审核"}
@@ -113,7 +149,7 @@ func InitData() {
 	DB.Create(&guestRole)
 
 	// ==========================================
-	// 3. 关联角色与权限 (Role-Permission)
+	// 3. 关联角色与权限 (Role-Permission) - 按新权限结构更新
 	// ==========================================
 
 	// --- A. 校级管理员：给所有权限 ---
@@ -121,42 +157,79 @@ func InitData() {
 	DB.Find(&allPerms)
 	DB.Model(&schoolAdminRole).Association("Permissions").Append(&allPerms)
 
-	// --- B. 院级管理员：增加审核相关权限 ---
+	// --- B. 院级管理员：竞赛查看、申报审核、报名审核、基础数据查看 ---
 	var collegePerms []models.Permission
 	DB.Where("code IN ?", []string{
-		"sys:root", "sys:user", "sys:user:list",
-		"comp:root", "comp:audit_page",
-		// 👇 修改这里：使用新的 code
+		// 大分类（目录权限）
+		"competition", "registration", "notice", "system",
+		// 子分类（目录权限）
+		"comp", "declare", "award", "reg:config", "reg:audit", "basic",
+		// 具体权限
+		"comp:list", "comp:years:list", "manager:list",
+		"declare:get", "declare:list", "declare:pending-list", "declare:audit", "declare:all-declares",
+		"award:list", "award:comp:list",
+		"reg:config:view",
 		"reg:audit:list", "reg:audit:detail", "reg:audit:update",
-		"reg:config", "reg:config:view",
+		"notice:list", "notice:detail",
+		"college:list",
 	}).Find(&collegePerms)
 	DB.Model(&collegeAdminRole).Association("Permissions").Append(&collegePerms)
 
-	// --- C. 赛事负责人：增加审核相关权限 ---
+	// --- C. 赛事负责人：竞赛管理、申报管理、报名配置、报名审核 ---
 	var managerPerms []models.Permission
 	DB.Where("code IN ?", []string{
-		"comp:root",
-		"comp:list", "comp:add", "comp:edit",
-		"comp:audit_page",
-		// 👇 修改这里：使用新的 code
+		// 大分类
+		"competition", "registration", "notice",
+		// 子分类
+		"comp", "declare", "award", "reg:config", "reg:audit", "reg:submit",
+		// 竞赛目录（全权限）
+		"comp:list", "comp:create", "comp:batch-import", "comp:delete", "comp:batch-delete", "comp:restore", "comp:years:list", "manager:list",
+		// 赛事申报（除删除外）
+		"declare:create", "declare:get", "declare:update", "declare:submit", "declare:list", "declare:pending-list", "declare:audit", "declare:all-declares",
+		// 获奖管理
+		"award:list", "award:comp:list", "award:export:template", "award:import",
+		// 报名配置（全权限）
+		"reg:config:edit", "reg:config:view",
+		// 报名审核（全权限）
 		"reg:audit:list", "reg:audit:detail", "reg:audit:update",
-		"reg:config", "reg:config:view", "reg:config:edit",
+		// 通知查看
+		"notice:list", "notice:detail",
+		// 基础数据
+		"college:list", "upload:file",
 	}).Find(&managerPerms)
 	DB.Model(&competitionManagerRole).Association("Permissions").Append(&managerPerms)
 
-	// --- D. 学生：修改报名权限 ---
+	// --- D. 学生：报名提交相关、通知查看 ---
 	var studentPerms []models.Permission
 	DB.Where("code IN ?", []string{
-		"stu:root", "stu:comp",
-		// 👇 修改这里：使用新的 code
-		"reg:config:submit",
+		// 大分类
+		"registration", "notice",
+		// 子分类
+		"reg:submit",
+		// 报名提交权限
+		"reg:config:submit", "reg:status", "reg:resubmit", "reg:my-reg", "reg:my-reg:submit",
+		// 通知查看
+		"notice:list", "notice:detail",
+		// 基础数据
+		"college:list", "upload:file",
 	}).Find(&studentPerms)
 	DB.Model(&studentRole).Association("Permissions").Append(&studentPerms)
 
-	// --- E. 专家：竞赛查看权限 ---
+	// --- E. 专家：竞赛查看、申报查看、获奖查看、通知查看 ---
 	var expertPerms []models.Permission
 	DB.Where("code IN ?", []string{
-		"comp:root", "comp:list",
+		// 大分类
+		"competition", "notice",
+		// 子分类
+		"comp", "declare", "award",
+		// 竞赛查看
+		"comp:list", "comp:years:list", "manager:list",
+		// 申报查看
+		"declare:get", "declare:list", "declare:all-declares",
+		// 获奖查看
+		"award:list", "award:comp:list",
+		// 通知查看
+		"notice:list", "notice:detail",
 	}).Find(&expertPerms)
 	DB.Model(&expertRole).Association("Permissions").Append(&expertPerms)
 
@@ -164,7 +237,7 @@ func InitData() {
 	// 不分配任何权限
 
 	// ==========================================
-	// 4. 初始化用户 (User) - 每个角色至少一个账号
+	// 4. 初始化用户 (User) - 保持不变
 	// ==========================================
 	hashPassword := func(password string) string {
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -185,7 +258,7 @@ func InitData() {
 		{Username: "S2024001", Realname: "林晓明", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "2024级", Major: "计算机科学与技术"},
 		{Username: "S2024002", Realname: "陈思思", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "2024级", Major: "软件工程"},
 		{Username: "E2023001", Realname: "周杰", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子工程"},
-		// ✨新增：无权限测试用户
+		// 新增：无权限测试用户
 		{Username: "guest", Realname: "访客用户", Password: hashPassword("123"), College: "其他", Grade: "访客", Major: ""},
 	}
 
@@ -212,6 +285,8 @@ func InitData() {
 			DB.Model(&u).Association("Roles").Append(role)
 		}
 	}
+
+	// 初始化学院数据
 	colleges := []models.College{
 		{ID: 1, Name: "计算机学院"},
 		{ID: 2, Name: "数学学院"},
@@ -225,8 +300,9 @@ func InitData() {
 		}
 	}
 	log.Println("学院数据初始化完成")
+
 	// ==========================================
-	// 5. 初始化竞赛目录与详情 (扩展为20条数据)
+	// 5. 初始化竞赛目录与详情 (保持不变)
 	// ==========================================
 
 	// 5.1 获取赛事负责人的ID（张伟 T2023003），作为负责人
@@ -1115,43 +1191,56 @@ func InitData() {
 	}
 
 	// 按CompCode逐个创建竞赛详情
+	// 按CompCode逐个创建竞赛详情
 	detailCount := 0
+	failedComps := []string{}
+
 	for compCode, detail := range detailUpdates {
 		var comp models.CompDirectory
 		// 通过CompCode查询竞赛
 		if err := DB.Where("comp_code = ?", compCode).First(&comp).Error; err != nil {
 			log.Printf("⚠️  查询竞赛 %s 失败: %v", compCode, err)
+			failedComps = append(failedComps, compCode)
 			continue
 		}
-
-		// 检查是否已经有详情
-		var existingDetail models.CompDetail
-		if err := DB.Where("comp_id = ?", comp.ID).First(&existingDetail).Error; err == nil {
-			// 详情已存在，跳过
-			log.Printf("   竞赛 %s 的详情已存在，跳过创建", compCode)
-			detailCount++
-			continue
+		if detail.AwardHierarchy == "" {
+			detail.AwardHierarchy = `["一等奖","二等奖","三等奖"]` // 设置默认奖项
 		}
-
-		// 创建新详情
+		// ✅ 移除之前的检查逻辑，直接创建或更新
 		detail.CompID = comp.ID
-		if err := DB.Create(&detail).Error; err != nil {
-			log.Printf("❌ 创建竞赛详情 %s 失败: %v", compCode, err)
+
+		// 使用 FirstOrCreate 确保记录存在
+		if err := DB.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "comp_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"reg_start_time", "reg_end_time",
+				"submit_start_time", "submit_end_time",
+				"participant_type", "max_team_member", "min_team_member",
+				"grade_requirement", "registration_method",
+				"need_attachment", "need_advisor",
+			}),
+		}).Create(&detail).Error; err != nil {
+			log.Printf("❌ 创建或更新竞赛详情 %s 失败: %v", compCode, err)
+			failedComps = append(failedComps, compCode)
 		} else {
 			log.Printf("✅ 创建竞赛详情 %s 成功 (CompID: %d)", compCode, comp.ID)
 			detailCount++
 		}
 	}
+
 	log.Printf("✅ 竞赛详情创建完成: %d/%d 条成功", detailCount, len(detailUpdates))
+	if len(failedComps) > 0 {
+		log.Printf("❌ 失败的竞赛: %v", failedComps)
+	}
 
 	log.Println("🎉 树形权限与竞赛测试数据初始化完成！")
 	log.Println("================================")
 	log.Println("📋 用户账号信息：")
 	log.Println("  校级管理员: T2023001    密码: 123 (拥有所有权限)")
-	log.Println("  院级管理员: T2023002     密码: 123 (用户管理+审核+报名配置查看)")
-	log.Println("  赛事负责人: T2023003  密码: 123 (竞赛管理+审核+报名配置编辑)")
-	log.Println("  学生:       S2024001  密码: 123 (仅报名权限)")
-	log.Println("  专家:       E2023001   密码: 123 (无特殊权限)")
+	log.Println("  院级管理员: T2023002     密码: 123 (竞赛查看+申报审核+报名审核+报名配置查看)")
+	log.Println("  赛事负责人: T2023003  密码: 123 (竞赛管理+申报管理+报名配置编辑+报名审核)")
+	log.Println("  学生:       S2024001  密码: 123 (报名提交+通知查看)")
+	log.Println("  专家:       E2023001   密码: 123 (竞赛查看+申报查看+获奖查看+通知查看)")
 	log.Println("  访客:       guest    密码: 123 (无任何权限-测试用)")
 	log.Println("================================")
 	log.Println("📊 竞赛数据统计：")
@@ -1162,14 +1251,9 @@ func InitData() {
 	log.Println("  草稿:           6 条")
 	log.Println("  总计:          20 条")
 	log.Println("================================")
-	log.Println("🔐 路由权限对应关系 (RequirePermission 中间件)：")
-	log.Println("  POST /api/reg/config     -> reg:config:edit (赛事负责人+校级管理员)")
-	log.Println("  GET  /api/reg/config/get -> reg:config:view (赛事负责人+院级管理员+校级管理员)")
-	log.Println("================================")
-	log.Println("🧪 权限验证测试建议：")
-	log.Println("  1. teacher 登录   -> 可访问 POST/GET /api/reg/config*")
-	log.Println("  2. yuan 登录      -> 只能 GET /api/reg/config/get")
-	log.Println("  3. student 登录   -> 无法访问 /api/reg/* (403)")
-	log.Println("  4. guest 登录     -> 无法访问任何受保护路由 (403)")
+	log.Println("🔐 新权限结构说明：")
+	log.Println("  第1层: 竞赛管理(competition)、报名管理(registration)、通知管理(notice)、系统管理(system)")
+	log.Println("  第2层: 竞赛目录(comp)、赛事申报(declare)、获奖管理(award)等子分类")
+	log.Println("  第3层: 具体的操作权限(如 comp:list, reg:audit:update 等)")
 	log.Println("================================")
 }
