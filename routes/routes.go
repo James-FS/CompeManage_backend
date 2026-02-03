@@ -158,6 +158,9 @@ func SetupRoutes(r *gin.Engine) {
 		reg.PUT("/work-submit",
 			middleware.RequirePermission("reg:my-reg:submit"),
 			controllers.SubmitWork)
+		reg.GET("/user/list",
+			middleware.RequirePermission("reg:user:list"),
+			controllers.GetUserList)
 	}
 
 	award := r.Group("/api/award", middleware.AuthRequired())
