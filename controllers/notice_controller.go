@@ -233,9 +233,11 @@ func PublishNotice(c *gin.Context) {
 	}
 
 	// 4. 更新状态为已发布，更新时间为当前时间
+	currentPublishTime := time.Now().Format("2006-01-02 15:04:05")
 	if err := database.DB.Model(&notice).Updates(map[string]interface{}{
-		"status":     1,
-		"updated_at": time.Now(), // 发布时间=更新时间
+		"status":       1,
+		"publish_time": currentPublishTime, // 发布时固定publish_time
+		"updated_at":   time.Now(),         // 发布时间=更新时间
 	}).Error; err != nil {
 		utils.InternalServerError(c, "发布通知失败", err)
 		return
