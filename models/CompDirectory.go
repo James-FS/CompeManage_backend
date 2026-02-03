@@ -16,7 +16,7 @@ type CompDirectory struct {
 	CreatedBy  uint   `gorm:"column:created_by;comment:创建人ID" json:"created_by"`
 	Desc       string `gorm:"column:desc;type:text;comment:竞赛描述说明" json:"desc"`
 	Source     int8   `gorm:"column:source;type:tinyint;default:1;comment:来源(1:校级直接创建 2:申报通过创建)" json:"source"`
-	DeclareID  uint   `gorm:"column:declare_id;index;comment:关联的申报ID(source=2时有值)" json:"declare_id"`
+	DeclareID  *uint  `gorm:"column:declare_id;index;comment:关联的申报ID(source=2时有值);constraint:false" json:"declare_id"`
 
 	BaseModel
 
