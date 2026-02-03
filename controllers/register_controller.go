@@ -71,6 +71,20 @@ type SubmitWorkReq struct {
 	WorkUrl string `json:"work_attachment_url"`       // 作品文件的URL字符串 (逗号分隔)
 }
 
+type UserListReq struct {
+	Page     int    `form:"page" binding:"required,min=1"`
+	PageSize int    `form:"page_size" binding:"required,min=1,max=100"`
+	Role     string `form:"role" binding:"required"` // 角色类型，如：teacher, student, expert
+	Search   string `form:"search"`                  // 可选：按姓名或学号搜索
+}
+type UserListResp struct {
+	ID       uint   `json:"id"`
+	Name     string `json:"name"`     // 姓名 (realname)
+	Username string `json:"username"` // 学号
+	College  string `json:"college"`  // 学院
+	Grade    string `json:"grade"`    // 年级（可选）
+}
+
 // removeUploadedFile 根据前端传来的 URL 删除本地文件
 // 例如 url: "/static/reg_attachments/xxx.pdf" -> 删除 "./static/reg_attachments/xxx.pdf"
 func removeUploadedFile(fileUrl string) {
@@ -713,18 +727,58 @@ func GetMyRegStatus(c *gin.Context) {
 	userIDVal, _ := c.Get("user_id")
 	userID := userIDVal.(uint)
 
-	var reg models.Register
-	// 查询记录，同时预加载成员和队长信息，方便前端回显
+	var user models.User
+	if err := database.DB.Select("username").First(&user, userID).Error; err != nil {
+		c.JSON(500, gin.H{"code": 500, "msg": "获取用户信息失败"})
+		return
+	}
+	studentID := user.Username
+
+	// 先查 RegMember 表，找出该学生参与的报名
+	var member models.RegMember
 	err := database.DB.
-		Preload("Members").
-		Preload("Leader").
-		Where("comp_id = ? AND leader_id = ?", compID, userID).
-		First(&reg).Error
+		Where("reg_id IN (SELECT id FROM registers WHERE comp_id = ?) AND username = ?", compID, studentID).
+		First(&member).Error
 
 	if err != nil {
-		// 没查到，说明还没报名 (返回 null data)
+		// 没查到，说明该学生没有参加这场报名
 		c.JSON(200, gin.H{"code": 200, "data": nil})
 		return
+	}
+
+	var reg models.Register
+	if err := database.DB.
+		Preload("Members").
+		Preload("Leader").
+		Where("id = ?", member.RegID).
+		First(&reg).Error; err != nil {
+		c.JSON(200, gin.H{"code": 200, "data": nil})
+		return
+	}
+
+	type MemberResp struct {
+		ID        uint   `json:"id"`
+		Name      string `json:"name"`
+		StudentID string `json:"stu_id"`   // 统一用 student_id
+		Username  string `json:"username"` // 同时提供 username
+		Phone     string `json:"phone"`
+		Email     string `json:"email"`
+		College   string `json:"college"`
+		IsLeader  bool   `json:"is_leader"`
+	}
+
+	var membersResp []MemberResp
+	for _, m := range reg.Members {
+		membersResp = append(membersResp, MemberResp{
+			ID:   m.ID,
+			Name: m.Name,
+			//StudentID: m.StudentID, // 数据库字段
+			Username: m.StudentID, // 兼容前端
+			Phone:    m.Phone,
+			Email:    m.Email,
+			College:  m.College,
+			IsLeader: m.IsLeader,
+		})
 	}
 
 	// 查到了，返回详细信息供回显
@@ -737,7 +791,7 @@ func GetMyRegStatus(c *gin.Context) {
 			"status":         reg.Status,       // 0:待审 1:通过 2:驳回
 			"reject_reason":  reg.RejectReason, // 驳回理由
 			"attachment_url": reg.AttachmentUrl,
-			"members":        reg.Members, //这里包含队长和队员
+			"members":        membersResp, //这里包含队长和队员
 			"advisor_id":     reg.AdvisorID,
 		},
 	})
@@ -1001,4 +1055,91 @@ func SubmitWork(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"code": 200, "msg": "作品已成功保存"})
+}
+
+func GetUserList(c *gin.Context) {
+	var req UserListReq
+
+	// 参数绑定和验证
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":  400,
+			"msg":   "参数错误",
+			"error": err.Error(),
+		})
+		return
+	}
+
+	if req.PageSize > 50 {
+		req.PageSize = 50 // 防止前端传入过大的分页数
+	}
+
+	// 3. 构建数据库查询
+	// 基础查询：关联 roles 表，通过 user_roles 中间表
+	query := database.DB.Model(&models.User{}).
+		Joins("LEFT JOIN user_roles ON user_roles.user_id = users.id").
+		Joins("LEFT JOIN roles ON roles.id = user_roles.role_id").
+		Where("roles.role_code = ?", req.Role).
+		Select(" users.id, users.realname, users.username, users.college, users.grade")
+
+	// 4. 搜索功能（可选）
+	if req.Search != "" {
+		query = query.Where(
+			"users.realname LIKE ? OR users.username LIKE ?",
+			"%"+req.Search+"%",
+			"%"+req.Search+"%",
+		)
+	}
+
+	// 5. 统计总数
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":  500,
+			"msg":   "统计用户数失败",
+			"error": err.Error(),
+		})
+		return
+	}
+
+	// 6. 分页查询
+	var users []models.User
+	offset := (req.Page - 1) * req.PageSize
+
+	if err := query.
+		Order("users.create_time DESC").
+		Offset(offset).
+		Limit(req.PageSize).
+		Find(&users).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":  500,
+			"msg":   "查询用户列表失败",
+			"error": err.Error(),
+		})
+		return
+	}
+
+	// 7. 转换为响应格式
+	var respList []UserListResp
+	for _, user := range users {
+		respList = append(respList, UserListResp{
+			ID:       user.ID,
+			Name:     user.Realname,
+			Username: user.Username,
+			College:  user.College,
+			Grade:    user.Grade,
+		})
+	}
+
+	// 8. 返回响应
+	c.JSON(http.StatusOK, gin.H{
+		"code": 200,
+		"msg":  "获取成功",
+		"data": gin.H{
+			"list":      respList,
+			"total":     total,
+			"page":      req.Page,
+			"page_size": req.PageSize,
+		},
+	})
 }

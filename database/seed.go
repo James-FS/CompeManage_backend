@@ -112,6 +112,7 @@ func InitData() {
 		{Name: "重新提交报名", Code: "reg:resubmit", Type: 3, ParentID: regSubmitSub.ID, Description: "驳回后重新提交报名"},
 		{Name: "查看我的报名", Code: "reg:my-reg", Type: 3, ParentID: regSubmitSub.ID, Description: "查看个人报名信息"},
 		{Name: "提交作品", Code: "reg:my-reg:submit", Type: 3, ParentID: regSubmitSub.ID, Description: "提交参赛作品"},
+		{Name: "查看学生列表", Code: "reg:user:list", Type: 3, ParentID: regSubmitSub.ID, Description: "选取学生填入报名信息"},
 
 		// 通知管理权限 (parent: noticeDir，直接挂在大分类下)
 		{Name: "查看通知列表", Code: "notice:list", Type: 3, ParentID: noticeDir.ID, Description: "查看通知列表"},
@@ -207,7 +208,7 @@ func InitData() {
 		// 子分类
 		"reg:submit",
 		// 报名提交权限
-		"reg:config:submit", "reg:status", "reg:resubmit", "reg:my-reg", "reg:my-reg:submit",
+		"reg:config:submit", "reg:status", "reg:resubmit", "reg:my-reg", "reg:my-reg:submit", "reg:user:list",
 		// 通知查看
 		"notice:list", "notice:detail",
 		// 基础数据
