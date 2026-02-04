@@ -35,7 +35,7 @@ func GetAwardCompList(c *gin.Context) {
 	db.Count(&total)
 
 	// 只查主要字段，提升性能
-	if err := db.Select("id, comp_name, status, year, organizer").
+	if err := db.Select("id, comp_name,comp_type, comp_level, status, year, organizer").
 		Order("id desc").
 		Offset(offset).Limit(pageSize).
 		Find(&comps).Error; err != nil {

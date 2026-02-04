@@ -110,6 +110,12 @@ func SetupRoutes(r *gin.Engine) {
 		declare.GET("/my/list",
 			controllers.GetMyDeclares,
 			middleware.RequirePermission("declare:list")) // 获取我的申报列表
+		declare.GET("/my/pending",
+			controllers.GetMyPendingDeclares,
+			middleware.RequirePermission("declare:list")) // 获取我的待审核申报
+		declare.GET("/my/published",
+			controllers.GetMyPublishedDeclares,
+			middleware.RequirePermission("declare:list")) // 获取我的已发布申报
 		declare.DELETE("/:id",
 			controllers.DeleteDeclare,
 			middleware.RequirePermission("declare:delete")) // 删除申报
@@ -158,6 +164,9 @@ func SetupRoutes(r *gin.Engine) {
 		reg.PUT("/work-submit",
 			middleware.RequirePermission("reg:my-reg:submit"),
 			controllers.SubmitWork)
+		reg.GET("/user/list",
+			middleware.RequirePermission("reg:user:list"),
+			controllers.GetUserList)
 	}
 
 	award := r.Group("/api/award", middleware.AuthRequired())
@@ -180,5 +189,21 @@ func SetupRoutes(r *gin.Engine) {
 		award.POST("/student/supplement",
 			controllers.SubmitStudentAwardSupplement)
 		//middleware.RequirePermission("award:student:supplement") // 权限标识自定义
+	}
+
+	summary := r.Group("/api/summary", middleware.AuthRequired())
+	{
+		summary.GET("/list",
+			controllers.GetSummaryList,
+		// middleware.RequirePermission("summary:list")
+		)
+		summary.GET("/:id",
+			controllers.GetSummaryDetail,
+		// middleware.RequirePermission("summary:detail")
+		)
+		summary.POST("/:id",
+			controllers.SaveSummary,
+		// middleware.RequirePermission("summary:edit")
+		)
 	}
 }

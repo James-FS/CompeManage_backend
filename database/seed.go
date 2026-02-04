@@ -47,6 +47,7 @@ func InitData() {
 	compSub := models.Permission{Name: "竞赛目录", Code: "comp", Type: 1, ParentID: competitionDir.ID, Description: "竞赛基础数据管理"}
 	declareSub := models.Permission{Name: "赛事申报", Code: "declare", Type: 1, ParentID: competitionDir.ID, Description: "赛事申报审核管理"}
 	awardSub := models.Permission{Name: "获奖管理", Code: "award", Type: 1, ParentID: competitionDir.ID, Description: "获奖信息导入和管理"}
+	summarySub := models.Permission{Name: "赛事总结", Code: "summary", Type: 1, ParentID: competitionDir.ID, Description: "赛事总结填写与归档"}
 
 	// 报名管理下的子分类
 	regConfigSub := models.Permission{Name: "报名配置", Code: "reg:config", Type: 1, ParentID: registrationDir.ID, Description: "报名时间、规则配置"}
@@ -60,6 +61,7 @@ func InitData() {
 	DB.Create(&compSub)
 	DB.Create(&declareSub)
 	DB.Create(&awardSub)
+	DB.Create(&summarySub)
 	DB.Create(&regConfigSub)
 	DB.Create(&regAuditSub)
 	DB.Create(&regSubmitSub)
@@ -79,6 +81,11 @@ func InitData() {
 		{Name: "恢复竞赛", Code: "comp:restore", Type: 3, ParentID: compSub.ID, Description: "恢复已删除的竞赛"},
 		{Name: "查看竞赛年份", Code: "comp:years:list", Type: 3, ParentID: compSub.ID, Description: "查看竞赛年份列表"},
 		{Name: "查看赛事负责人", Code: "manager:list", Type: 3, ParentID: compSub.ID, Description: "查看赛事负责人列表"},
+
+		// 赛事总结权限 (parent: summarySub)
+		{Name: "查看总结列表", Code: "summary:list", Type: 3, ParentID: summarySub.ID, Description: "查看赛事总结列表"},
+		{Name: "查看总结详情", Code: "summary:detail", Type: 3, ParentID: summarySub.ID, Description: "查看赛事总结详情"},
+		{Name: "编辑赛事总结", Code: "summary:edit", Type: 3, ParentID: summarySub.ID, Description: "填写/归档赛事总结"},
 
 		// 赛事申报权限 (parent: declareSub)
 		{Name: "创建申报", Code: "declare:create", Type: 3, ParentID: declareSub.ID, Description: "创建新的赛事申报"},
@@ -112,6 +119,7 @@ func InitData() {
 		{Name: "重新提交报名", Code: "reg:resubmit", Type: 3, ParentID: regSubmitSub.ID, Description: "驳回后重新提交报名"},
 		{Name: "查看我的报名", Code: "reg:my-reg", Type: 3, ParentID: regSubmitSub.ID, Description: "查看个人报名信息"},
 		{Name: "提交作品", Code: "reg:my-reg:submit", Type: 3, ParentID: regSubmitSub.ID, Description: "提交参赛作品"},
+		{Name: "查看学生列表", Code: "reg:user:list", Type: 3, ParentID: regSubmitSub.ID, Description: "选取学生填入报名信息"},
 
 		// 通知管理权限 (parent: noticeDir，直接挂在大分类下)
 		{Name: "查看通知列表", Code: "notice:list", Type: 3, ParentID: noticeDir.ID, Description: "查看通知列表"},
@@ -163,11 +171,12 @@ func InitData() {
 		// 大分类（目录权限）
 		"competition", "registration", "notice", "system",
 		// 子分类（目录权限）
-		"comp", "declare", "award", "reg:config", "reg:audit", "basic",
+		"comp", "declare", "award", "summary", "reg:config", "reg:audit", "basic",
 		// 具体权限
 		"comp:list", "comp:years:list", "manager:list",
 		"declare:get", "declare:list", "declare:pending-list", "declare:audit", "declare:all-declares",
 		"award:list", "award:comp:list",
+		"summary:list", "summary:detail",
 		"reg:config:view",
 		"reg:audit:list", "reg:audit:detail", "reg:audit:update",
 		"notice:list", "notice:detail",
@@ -181,13 +190,15 @@ func InitData() {
 		// 大分类
 		"competition", "registration", "notice",
 		// 子分类
-		"comp", "declare", "award", "reg:config", "reg:audit", "reg:submit",
+		"comp", "declare", "award", "summary", "reg:config", "reg:audit", "reg:submit",
 		// 竞赛目录（全权限）
 		"comp:list", "comp:create", "comp:batch-import", "comp:delete", "comp:batch-delete", "comp:restore", "comp:years:list", "manager:list",
 		// 赛事申报（除删除外）
 		"declare:create", "declare:get", "declare:update", "declare:submit", "declare:list", "declare:pending-list", "declare:audit", "declare:all-declares",
 		// 获奖管理
 		"award:list", "award:comp:list", "award:export:template", "award:import",
+		// 赛事总结
+		"summary:list", "summary:detail", "summary:edit",
 		// 报名配置（全权限）
 		"reg:config:edit", "reg:config:view",
 		// 报名审核（全权限）
@@ -207,7 +218,7 @@ func InitData() {
 		// 子分类
 		"reg:submit",
 		// 报名提交权限
-		"reg:config:submit", "reg:status", "reg:resubmit", "reg:my-reg", "reg:my-reg:submit",
+		"reg:config:submit", "reg:status", "reg:resubmit", "reg:my-reg", "reg:my-reg:submit", "reg:user:list",
 		// 通知查看
 		"notice:list", "notice:detail",
 		// 基础数据
