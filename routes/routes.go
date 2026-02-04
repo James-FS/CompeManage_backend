@@ -110,6 +110,12 @@ func SetupRoutes(r *gin.Engine) {
 		declare.GET("/my/list",
 			controllers.GetMyDeclares,
 			middleware.RequirePermission("declare:list")) // 获取我的申报列表
+		declare.GET("/my/pending",
+			controllers.GetMyPendingDeclares,
+			middleware.RequirePermission("declare:list")) // 获取我的待审核申报
+		declare.GET("/my/published",
+			controllers.GetMyPublishedDeclares,
+			middleware.RequirePermission("declare:list")) // 获取我的已发布申报
 		declare.DELETE("/:id",
 			controllers.DeleteDeclare,
 			middleware.RequirePermission("declare:delete")) // 删除申报
@@ -180,5 +186,21 @@ func SetupRoutes(r *gin.Engine) {
 		award.GET("/student/my-awards",
 			controllers.GetStudentMyAwardList,
 			middleware.RequirePermission("award:student:my-list"))
+	}
+
+	summary := r.Group("/api/summary", middleware.AuthRequired())
+	{
+		summary.GET("/list",
+			controllers.GetSummaryList,
+		// middleware.RequirePermission("summary:list")
+		)
+		summary.GET("/:id",
+			controllers.GetSummaryDetail,
+		// middleware.RequirePermission("summary:detail")
+		)
+		summary.POST("/:id",
+			controllers.SaveSummary,
+		// middleware.RequirePermission("summary:edit")
+		)
 	}
 }

@@ -12,28 +12,30 @@ import (
 
 // DeclareCreateReq 创建申报请求
 type DeclareCreateReq struct {
-	CompName   string `json:"comp_name" binding:"required"`
-	CompLevel  string `json:"comp_level" binding:"required"`
-	CompType   string `json:"comp_type" binding:"required"`
-	Organizer  string `json:"organizer" binding:"required"`
-	Undertaker string `json:"undertaker" binding:"required"`
-	CollegeID  uint   `json:"college_id" binding:"required"`
-	ManagerID  uint   `json:"manager_id" binding:"required"`
-	Year       int    `json:"year" binding:"required"`
-	Desc       string `json:"desc"`
+	CompName       string `json:"comp_name" binding:"required"`
+	CompLevel      string `json:"comp_level" binding:"required"`
+	CompType       string `json:"comp_type" binding:"required"`
+	Organizer      string `json:"organizer" binding:"required"`
+	Undertaker     string `json:"undertaker" binding:"required"`
+	CollegeID      uint   `json:"college_id" binding:"required"`
+	ManagerID      uint   `json:"manager_id" binding:"required"`
+	Year           int    `json:"year" binding:"required"`
+	Desc           string `json:"desc"`
+	AttachmentPath string `json:"attachment_path"`
 }
 
 // DeclareUpdateReq 更新申报请求
 type DeclareUpdateReq struct {
-	CompName   string `json:"comp_name"`
-	CompLevel  string `json:"comp_level"`
-	CompType   string `json:"comp_type"`
-	Organizer  string `json:"organizer"`
-	Undertaker string `json:"undertaker"`
-	CollegeID  uint   `json:"college_id"`
-	ManagerID  uint   `json:"manager_id"`
-	Year       int    `json:"year"`
-	Desc       string `json:"desc"`
+	CompName       string  `json:"comp_name"`
+	CompLevel      string  `json:"comp_level"`
+	CompType       string  `json:"comp_type"`
+	Organizer      string  `json:"organizer"`
+	Undertaker     string  `json:"undertaker"`
+	CollegeID      uint    `json:"college_id"`
+	ManagerID      uint    `json:"manager_id"`
+	Year           int     `json:"year"`
+	Desc           string  `json:"desc"`
+	AttachmentPath *string `json:"attachment_path"`
 }
 
 // DeclareListReq 申报列表查询请求
@@ -73,17 +75,18 @@ func CreateDeclare(c *gin.Context) {
 	}
 
 	declaration := models.CompDeclaration{
-		CompName:      req.CompName,
-		CompLevel:     req.CompLevel,
-		CompType:      req.CompType,
-		Organizer:     req.Organizer,
-		Undertaker:    req.Undertaker,
-		CollegeID:     req.CollegeID,
-		ManagerID:     req.ManagerID,
-		Year:          req.Year,
-		Desc:          req.Desc,
-		DeclareStatus: 0, // 草稿状态
-		CreatedBy:     userID.(uint),
+		CompName:       req.CompName,
+		CompLevel:      req.CompLevel,
+		CompType:       req.CompType,
+		Organizer:      req.Organizer,
+		Undertaker:     req.Undertaker,
+		CollegeID:      req.CollegeID,
+		ManagerID:      req.ManagerID,
+		Year:           req.Year,
+		Desc:           req.Desc,
+		AttachmentPath: req.AttachmentPath,
+		DeclareStatus:  0, // 草稿状态
+		CreatedBy:      userID.(uint),
 	}
 
 	// 保存到数据库
@@ -173,6 +176,9 @@ func UpdateDeclare(c *gin.Context) {
 	}
 	if req.Desc != "" {
 		updates["desc"] = req.Desc
+	}
+	if req.AttachmentPath != nil {
+		updates["attachment_path"] = *req.AttachmentPath
 	}
 
 	if err := database.DB.Model(&declaration).Updates(updates).Error; err != nil {
