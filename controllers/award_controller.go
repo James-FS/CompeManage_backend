@@ -3,11 +3,13 @@ package controllers
 import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/models"
+	"errors"
 	"fmt"
-	"strconv"
-
 	"github.com/gin-gonic/gin"
 	"github.com/xuri/excelize/v2"
+	"gorm.io/gorm"
+	"strconv"
+	"time"
 )
 
 // 1. 获取获奖管理的赛事列表
@@ -305,6 +307,137 @@ func GetStudentMyAwardList(c *gin.Context) {
 			"total": total,       // 总条数
 			"page":  page,        // 当前页码
 			"size":  size,        // 每页条数
+		},
+	})
+}
+
+func SubmitStudentAwardSupplement(c *gin.Context) {
+	// 1. 获取当前登录学生ID
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(401, gin.H{"code": 401, "msg": "请先登录"})
+		return
+	}
+	leaderID, ok := userIDVal.(uint)
+	if !ok {
+		c.JSON(400, gin.H{"code": 400, "msg": "用户ID格式错误"})
+		return
+	}
+
+	// 2. 解析并校验请求参数（补录场景证明URL必填）
+	var req struct {
+		CompID     uint                   `json:"comp_id" binding:"required"`
+		TeamName   string                 `json:"team_name" binding:"required"`
+		Members    []models.RegMemberInfo `json:"members" binding:"required,dive"`
+		AwardLevel string                 `json:"award_level" binding:"required"`
+		AwardName  string                 `json:"award_name" binding:"required"`
+		ProofURL   string                 `json:"proof_url" binding:"required"` // 补录必须传证明
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": 400, "msg": "参数错误：" + err.Error()})
+		return
+	}
+
+	// 3. 队员信息强校验（补录场景必填）
+	leaderCount := 0
+	for _, member := range req.Members {
+		if member.IsLeader {
+			leaderCount++
+		}
+		if member.Name == "" || member.StudentID == "" || member.Phone == "" || member.College == "" {
+			c.JSON(400, gin.H{"code": 400, "msg": fmt.Sprintf("队员[%s]的姓名/学号/手机号/学院不能为空", member.Name)})
+			return
+		}
+	}
+	if leaderCount == 0 || leaderCount > 1 {
+		c.JSON(400, gin.H{"code": 400, "msg": "队员列表必须且仅能指定1名队长"})
+		return
+	}
+
+	// 4. 校验赛事存在
+	var comp models.CompDirectory
+	if err := database.DB.First(&comp, req.CompID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(404, gin.H{"code": 404, "msg": "赛事不存在"})
+			return
+		}
+		c.JSON(500, gin.H{"code": 500, "msg": "查询赛事失败：" + err.Error()})
+		return
+	}
+
+	// 5. 开启事务
+	tx := database.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// 6. 创建补录报名记录（status=3）
+	now := time.Now()
+	reg := models.Register{
+		CompID:         req.CompID,
+		LeaderID:       leaderID,
+		TeamName:       req.TeamName,
+		Status:         3,    // 补录待审核
+		SupplementTime: &now, // 记录补录时间
+	}
+	if err := tx.Create(&reg).Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"code": 500, "msg": "创建补录报名失败：" + err.Error()})
+		return
+	}
+
+	// 7. 批量存储队员
+	for _, member := range req.Members {
+		regMember := models.RegMember{
+			RegID:     reg.ID,
+			Name:      member.Name,
+			StudentID: member.StudentID,
+			Phone:     member.Phone,
+			Email:     member.Email,
+			College:   member.College,
+			IsLeader:  member.IsLeader,
+			Year:      member.Year,
+		}
+		if err := tx.Create(&regMember).Error; err != nil {
+			tx.Rollback()
+			c.JSON(500, gin.H{"code": 500, "msg": fmt.Sprintf("存储队员[%s]失败：%s", member.Name, err.Error())})
+			return
+		}
+	}
+
+	// 8. 创建补录奖项（标记source=supplement）
+	award := models.Award{
+		CompID:     req.CompID,
+		RegID:      reg.ID,
+		AwardLevel: req.AwardLevel,
+		AwardName:  req.AwardName,
+		Status:     "draft",
+		ProofUrl:   req.ProofURL,
+		Source:     "supplement", // 标记为学生补录
+		LevelRank:  99,
+	}
+	if err := tx.Create(&award).Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"code": 500, "msg": "创建补录奖项失败：" + err.Error()})
+		return
+	}
+
+	// 9. 提交事务
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"code": 500, "msg": "事务提交失败：" + err.Error()})
+		return
+	}
+
+	// 10. 返回响应
+	c.JSON(200, gin.H{
+		"code": 200,
+		"data": gin.H{
+			"award_id": award.ID,
+			"reg_id":   reg.ID,
+			"msg":      "补录申报成功，待审核",
 		},
 	})
 }
