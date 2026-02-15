@@ -177,9 +177,6 @@ func SetupRoutes(r *gin.Engine) {
 		award.GET("/comp-awards",
 			controllers.GetCompAwards,
 			middleware.RequirePermission("award:comp:list"))
-		award.GET("/export-template",
-			controllers.ExportAwardTemplate,
-			middleware.RequirePermission("award:export:template"))
 		award.POST("/import",
 			controllers.ImportAward,
 			middleware.RequirePermission("award:import"))
@@ -189,6 +186,18 @@ func SetupRoutes(r *gin.Engine) {
 		award.POST("/student/supplement",
 			controllers.SubmitStudentAwardSupplement)
 		//middleware.RequirePermission("award:student:supplement") // 权限标识自定义
+		award.GET("/audit/list",
+			controllers.GetAwardAuditList)
+		award.GET("/audit/detail/:id",
+			controllers.GetAwardAuditDetail)
+		award.PUT("/audit/:id/pass",
+			controllers.PassAwardAudit)
+		award.PUT("/audit/:id/reject",
+			controllers.RejectAwardAudit)
+		award.PUT("/audit/batch/pass",
+			controllers.BatchPassAwardAudit)
+		award.PUT("/audit/batch/reject",
+			controllers.BatchRejectAwardAudit)
 	}
 
 	summary := r.Group("/api/summary", middleware.AuthRequired())
