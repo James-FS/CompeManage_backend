@@ -110,6 +110,16 @@ func SaveRegConfig(c *gin.Context) {
 		return
 	}
 
+	if req.RegStartTime == nil || req.RegEndTime == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "报名起止时间不能为空"})
+		return
+	}
+
+	if (req.SubmitStartTime == nil) != (req.SubmitEndTime == nil) {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "作品提交时间必须同时填写开始和结束"})
+		return
+	}
+
 	userIDVal, exists := c.Get("user_id")
 	userID := userIDVal.(uint)
 	if !exists {
@@ -168,6 +178,18 @@ func SaveRegConfig(c *gin.Context) {
 
 	if req.SubmitEndTime != nil {
 		detail.SubmitEndTime = *req.SubmitEndTime
+	}
+
+	if detail.CompStartTime.IsZero() {
+		detail.CompStartTime = *req.RegStartTime
+	}
+
+	if detail.CompEndTime.IsZero() {
+		if req.SubmitEndTime != nil {
+			detail.CompEndTime = *req.SubmitEndTime
+		} else {
+			detail.CompEndTime = *req.RegEndTime
+		}
 	}
 	//  执行数据库操作
 	if err == gorm.ErrRecordNotFound {
@@ -252,10 +274,10 @@ func GetRegConfig(c *gin.Context) {
 		regEndTime = &detail.RegEndTime
 	}
 
-	if !detail.RegStartTime.IsZero() {
+	if !detail.SubmitStartTime.IsZero() {
 		submitStartTime = &detail.SubmitStartTime
 	}
-	if !detail.RegEndTime.IsZero() {
+	if !detail.SubmitEndTime.IsZero() {
 		submitEndTime = &detail.SubmitEndTime
 	}
 

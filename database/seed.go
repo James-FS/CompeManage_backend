@@ -9,6 +9,112 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+func grantRolePermissionsByCode(roleCode string, permCodes []string) {
+	if len(permCodes) == 0 {
+		return
+	}
+
+	var role models.Role
+	if err := DB.Where("role_code = ?", roleCode).First(&role).Error; err != nil {
+		log.Printf("未找到角色 %s，跳过权限补齐: %v", roleCode, err)
+		return
+	}
+
+	var perms []*models.Permission
+	if err := DB.Where("code IN ?", permCodes).Find(&perms).Error; err != nil {
+		log.Printf("查询权限失败(%s): %v", roleCode, err)
+		return
+	}
+
+	if len(perms) == 0 {
+		log.Printf("未找到可补齐权限(%s): %v", roleCode, permCodes)
+		return
+	}
+
+	if err := DB.Model(&role).Association("Permissions").Append(perms); err != nil {
+		log.Printf("补齐权限失败(%s): %v", roleCode, err)
+		return
+	}
+
+	log.Printf("已补齐角色 %s 的通知权限", roleCode)
+}
+
+func ensureNoticeManagePermissions() {
+	noticeManagePerms := []string{"notice:create", "notice:publish", "notice:delete"}
+	grantRolePermissionsByCode("competition_manager", noticeManagePerms)
+	grantRolePermissionsByCode("college_admin", noticeManagePerms)
+	grantRolePermissionsByCode("school_admin", noticeManagePerms)
+}
+
+func seedNotices(baseTime time.Time) {
+	var noticeCount int64
+	DB.Model(&models.Notice{}).Count(&noticeCount)
+	if noticeCount > 0 {
+		log.Printf("通知数据已存在（%d条），跳过通知初始化", noticeCount)
+		return
+	}
+
+	var detailIDs []uint
+	DB.Model(&models.CompDetail{}).Order("id ASC").Limit(3).Pluck("id", &detailIDs)
+
+	getDetailID := func(index int) uint {
+		if index >= 0 && index < len(detailIDs) {
+			return detailIDs[index]
+		}
+		return 0
+	}
+
+	notices := []models.Notice{
+		{
+			Title:               "关于举办2026年校级程序设计竞赛的通知",
+			Content:             "请各学院按要求组织报名，具体时间安排见赛事系统。",
+			CompetitionDetailID: getDetailID(0),
+			Status:              1,
+			PublishTime:         baseTime.AddDate(0, 0, -12).Format("2006-01-02 15:04:05"),
+			Attachment:          "/static/notices/programming_notice_2026.pdf",
+		},
+		{
+			Title:               "关于开展2026年度学科竞赛报名工作的通知",
+			Content:             "各学院请在报名截止前完成团队信息提交，逾期不再受理。",
+			CompetitionDetailID: getDetailID(1),
+			Status:              1,
+			PublishTime:         baseTime.AddDate(0, 0, -7).Format("2006-01-02 15:04:05"),
+			Attachment:          "/static/notices/enroll_guide_2026.docx",
+		},
+		{
+			Title:               "蓝桥杯校赛赛前培训安排通知",
+			Content:             "培训面向参赛学生开放，请按通知时间参加线上答疑。",
+			CompetitionDetailID: getDetailID(2),
+			Status:              1,
+			PublishTime:         baseTime.AddDate(0, 0, -3).Format("2006-01-02 15:04:05"),
+			Attachment:          "/static/notices/lanqiao_training_2026.pdf",
+		},
+		{
+			Title:               "2026年大学生创新创业训练计划申报提醒",
+			Content:             "项目负责人请尽快完善申报材料，系统将于月底关闭。",
+			CompetitionDetailID: getDetailID(0),
+			Status:              0,
+			PublishTime:         "",
+			Attachment:          "",
+		},
+		{
+			Title:               "关于竞赛材料归档规范的补充说明",
+			Content:             "请按统一模板上传材料，文件命名需包含学院与队伍名称。",
+			CompetitionDetailID: getDetailID(1),
+			Status:              1,
+			PublishTime:         baseTime.AddDate(0, 0, -1).Format("2006-01-02 15:04:05"),
+			Attachment:          "/static/notices/archive_rule_2026.pdf",
+		},
+	}
+
+	if err := DB.Create(&notices).Error; err != nil {
+		log.Printf("❌ 初始化通知数据失败: %v", err)
+		return
+	}
+
+	log.Printf("✅ 初始化通知数据: %d 条", len(notices))
+}
+
 // InitData 扩展版测试数据初始化
 // 功能：
 // 1. 扩充竞赛数据（新增更多竞赛信息）
@@ -21,6 +127,8 @@ func InitData() {
 	DB.Model(&models.User{}).Count(&count)
 	if count > 0 {
 		log.Println("数据库已有数据，跳过初始化...")
+		seedNotices(time.Date(2026, 1, 23, 0, 0, 0, 0, time.Local))
+		ensureNoticeManagePermissions()
 		return
 	}
 
@@ -178,7 +286,7 @@ func InitData() {
 		"summary:list", "summary:detail",
 		"reg:config:view",
 		"reg:audit:list", "reg:audit:detail", "reg:audit:update",
-		"notice:list", "notice:detail",
+		"notice:list", "notice:detail", "notice:create", "notice:publish", "notice:delete",
 		"college:list",
 	}).Find(&collegePerms)
 	DB.Model(&collegeAdminRole).Association("Permissions").Append(&collegePerms)
@@ -202,8 +310,8 @@ func InitData() {
 		"reg:config:edit", "reg:config:view",
 		// 报名审核（全权限）
 		"reg:audit:list", "reg:audit:detail", "reg:audit:update",
-		// 通知查看
-		"notice:list", "notice:detail",
+		// 通知管理
+		"notice:list", "notice:detail", "notice:create", "notice:publish", "notice:delete",
 		// 基础数据
 		"college:list", "upload:file",
 	}).Find(&managerPerms)
@@ -242,6 +350,8 @@ func InitData() {
 		"notice:list", "notice:detail",
 	}).Find(&expertPerms)
 	DB.Model(&expertRole).Association("Permissions").Append(&expertPerms)
+
+	ensureNoticeManagePermissions()
 
 	// --- F. 访客：无特殊权限 ---
 	// 不分配任何权限
@@ -1391,6 +1501,8 @@ func InitData() {
 			}
 		}
 	}
+
+	seedNotices(baseTime)
 
 	log.Println("🎉 树形权限与竞赛测试数据初始化完成！")
 	log.Println("================================")
