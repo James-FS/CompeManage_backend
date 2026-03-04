@@ -3,6 +3,7 @@ package controllers
 import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/models"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -91,18 +92,16 @@ func GetAwardCompList(c *gin.Context) {
 
 	db := database.DB.Model(&models.CompDirectory{})
 
-	// 复用权限检查逻辑 (需要在同包下)
 	if !checkUserIsAdmin(userID) {
 		db = db.Where("manager_id = ?", userID)
 	}
 
 	db.Count(&total)
 
-	// 只查主要字段，提升性能
-	if err := db.Select("id, comp_name,comp_type, comp_level, status, year, organizer").
-		Order("id desc").
-		Offset(offset).Limit(pageSize).
-		Find(&comps).Error; err != nil {
+	if err := db.Preload("Detail"). // ← 关联查询 comp_detail 表
+					Order("id desc").
+					Offset(offset).Limit(pageSize).
+					Find(&comps).Error; err != nil {
 		c.JSON(500, gin.H{"code": 500, "msg": "查询失败"})
 		return
 	}
@@ -112,7 +111,100 @@ func GetAwardCompList(c *gin.Context) {
 		"data": gin.H{"list": comps, "total": total},
 	})
 }
+func ExportAwardTemplate(c *gin.Context) {
+	compID := c.Query("comp_id")
 
+	// 1. 数据查询 —— 同时预加载 Leader 和 Members（与文件其他函数保持一致）
+	var regs []models.Register
+	if err := database.DB.
+		Preload("Leader").
+		Preload("Members").
+		Where("comp_id = ? AND status = 1", compID).
+		Find(&regs).Error; err != nil {
+		c.JSON(500, gin.H{"code": 500, "msg": "查询数据失败"})
+		return
+	}
+
+	// 2. 生成 Excel
+	f := excelize.NewFile()
+	sheet := "获奖录入"
+	f.NewSheet(sheet)
+	f.DeleteSheet("Sheet1")
+
+	// 表头：与图片完全对应
+	// A:奖项等级 B:获奖项目名 C:负责人 D:学号 E:所属学院 F:指导老师
+	// G:成员1 H:学号1 I:成员2 J:学号2 K:成员3 L:学号3 M:成员4 N:学号4 O:成员5 P:学号5
+	headers := []string{
+		"奖项等级", "获奖项目名", "负责人", "学号", "所属学院", "指导老师",
+		"成员1", "学号1",
+		"成员2", "学号2",
+		"成员3", "学号3",
+		"成员4", "学号4",
+		"成员5", "学号5",
+	}
+	for i, h := range headers {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		f.SetCellValue(sheet, cell, h)
+	}
+
+	// 3. 填充数据行
+	for i, r := range regs {
+		row := i + 2
+
+		// 利用文件已有的 getLeaderMember 函数获取负责人信息
+		leaderName, leaderStuID, _, _ := getLeaderMember(r.Members, r.Leader)
+
+		// 所属学院：优先从 Members 中找队长，否则从 Leader 取
+		college := r.Leader.College
+		if college == "" {
+			for _, m := range r.Members {
+				if m.IsLeader {
+					college = m.College
+					break
+				}
+			}
+		}
+
+		// 过滤掉队长，只保留非队长成员（与 GetAwardAuditDetail 逻辑对齐）
+		var nonLeaderMembers []models.RegMember
+		for _, m := range r.Members {
+			if !m.IsLeader {
+				nonLeaderMembers = append(nonLeaderMembers, m)
+			}
+		}
+
+		f.SetCellValue(sheet, fmt.Sprintf("A%d", row), "")          // 奖项等级（导入时填写）
+		f.SetCellValue(sheet, fmt.Sprintf("B%d", row), r.TeamName)  // 获奖项目名
+		f.SetCellValue(sheet, fmt.Sprintf("C%d", row), leaderName)  // 负责人
+		f.SetCellValue(sheet, fmt.Sprintf("D%d", row), leaderStuID) // 学号
+		f.SetCellValue(sheet, fmt.Sprintf("E%d", row), college)     // 所属学院
+		f.SetCellValue(sheet, fmt.Sprintf("F%d", row), "")          // 指导老师（导入时填写）
+
+		// 成员1~5（非队长成员，最多5人）
+		memberCols := []string{"G", "H", "I", "J", "K", "L", "M", "N", "O", "P"}
+		for j := 0; j < 5; j++ {
+			memberName := ""
+			memberStuID := ""
+			if j < len(nonLeaderMembers) {
+				memberName = nonLeaderMembers[j].Name
+				memberStuID = nonLeaderMembers[j].StudentID
+			}
+			f.SetCellValue(sheet, fmt.Sprintf("%s%d", memberCols[j*2], row), memberName)
+			f.SetCellValue(sheet, fmt.Sprintf("%s%d", memberCols[j*2+1], row), memberStuID)
+		}
+	}
+
+	// 4. 返回二进制流
+	fileName := fmt.Sprintf("Award_Template_%s.xlsx", compID)
+	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", fileName))
+	c.Header("Content-Transfer-Encoding", "binary")
+	c.Header("Cache-Control", "no-cache")
+
+	if err := f.Write(c.Writer); err != nil {
+		fmt.Println("导出流写入中断:", err)
+	}
+}
 func ImportAward(c *gin.Context) {
 	compIDStr := c.Query("comp_id")
 	if compIDStr == "" {
@@ -133,7 +225,6 @@ func ImportAward(c *gin.Context) {
 		return
 	}
 
-	// 获取第一个工作表
 	sheetName := f.GetSheetName(0)
 	rows, err := f.GetRows(sheetName)
 	if err != nil {
@@ -141,55 +232,107 @@ func ImportAward(c *gin.Context) {
 		return
 	}
 
+	// 查出赛事信息（comp_level）和 award_hierarchy
+	var comp models.CompDirectory
+	if err := database.DB.Preload("Detail").First(&comp, compID).Error; err != nil {
+		c.JSON(400, gin.H{"code": 400, "msg": "找不到对应赛事"})
+		return
+	}
+	var awardHierarchy []string
+	if err := json.Unmarshal([]byte(comp.Detail.AwardHierarchy), &awardHierarchy); err != nil || len(awardHierarchy) == 0 {
+		c.JSON(400, gin.H{"code": 400, "msg": "奖项等级配置解析失败或未配置"})
+		return
+	}
+
 	successCount := 0
+	failCount := 0
+	var failReasons []string
 
 	tx := database.DB.Begin()
 
 	for i, row := range rows {
-		if i == 0 || len(row) < 5 {
-			continue
-		} // 跳过表头
-
-		regIDStr := row[0]
-		awardLevel := row[4] // E列
-		awardName := ""
-		if len(row) > 5 {
-			awardName = row[5]
-		} // F列
-
-		if awardLevel == "" || regIDStr == "" {
+		if i == 0 || len(row) < 2 {
 			continue
 		}
 
-		regID, _ := strconv.Atoi(regIDStr)
+		// A(0):level_rank数字  B(1):获奖项目名(团队名)
+		levelRankStr := strings.TrimSpace(row[0])
+		teamName := strings.TrimSpace(row[1])
 
-		// Upsert 逻辑: 有则更新，无则插入
+		if levelRankStr == "" || teamName == "" {
+			continue
+		}
+
+		// 校验 level_rank 并映射 award_name
+		levelRank, err := strconv.Atoi(levelRankStr)
+		if err != nil || levelRank < 1 || levelRank > len(awardHierarchy) {
+			failCount++
+			failReasons = append(failReasons, fmt.Sprintf("第%d行：奖项等级[%s]无效，应为1~%d的数字", i+1, levelRankStr, len(awardHierarchy)))
+			continue
+		}
+		awardName := awardHierarchy[levelRank-1] // 如 "一等奖"
+		awardLevel := comp.CompLevel + awardName // 如 "省级一等奖"
+
+		// 通过 comp_id + team_name 匹配报名记录
+		var reg models.Register
+		if err := tx.Where("comp_id = ? AND team_name = ? AND status = 1", compID, teamName).First(&reg).Error; err != nil {
+			failCount++
+			failReasons = append(failReasons, fmt.Sprintf("第%d行：找不到团队[%s]的报名记录", i+1, teamName))
+			continue
+		}
+
+		// Upsert：有则更新，无则插入
 		var award models.Award
-		err := tx.Where("reg_id = ?", regID).First(&award).Error
-
+		err = tx.Where("reg_id = ?", reg.ID).First(&award).Error
 		if err != nil {
-			// 不存在 -> 创建
 			newAward := models.Award{
 				CompID:     uint(compID),
-				RegID:      uint(regID),
+				RegID:      reg.ID,
+				LevelRank:  levelRank,
 				AwardLevel: awardLevel,
 				AwardName:  awardName,
 			}
 			if err := tx.Create(&newAward).Error; err == nil {
 				successCount++
+			} else {
+				failCount++
+				failReasons = append(failReasons, fmt.Sprintf("第%d行：创建奖项失败 - %s", i+1, err.Error()))
 			}
 		} else {
-			// 存在 -> 更新
+			award.LevelRank = levelRank
 			award.AwardLevel = awardLevel
 			award.AwardName = awardName
 			if err := tx.Save(&award).Error; err == nil {
 				successCount++
+			} else {
+				failCount++
+				failReasons = append(failReasons, fmt.Sprintf("第%d行：更新奖项失败 - %s", i+1, err.Error()))
 			}
 		}
 	}
 
-	tx.Commit()
-	c.JSON(200, gin.H{"code": 200, "msg": fmt.Sprintf("成功处理 %d 条数据", successCount)})
+	if err := tx.Commit().Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"code": 500, "msg": "事务提交失败"})
+		return
+	}
+
+	resp := gin.H{
+		"code": 200,
+		"msg":  fmt.Sprintf("成功处理 %d 条，失败 %d 条", successCount, failCount),
+		"data": gin.H{
+			"success_count": successCount,
+			"fail_count":    failCount,
+		},
+	}
+	if len(failReasons) > 0 {
+		resp["data"] = gin.H{
+			"success_count": successCount,
+			"fail_count":    failCount,
+			"fail_reasons":  failReasons,
+		}
+	}
+	c.JSON(200, resp)
 }
 
 // 4. 获取获奖公示详情 (只读列表)
@@ -290,7 +433,7 @@ func GetStudentMyAwardList(c *gin.Context) {
 	}
 
 	// 7. 排序：按申报时间倒序
-	dbQuery = dbQuery.Order("awards.created_at DESC")
+	dbQuery = dbQuery.Order("awards.create_time DESC")
 
 	// 8. 查询总数+分页列表（复用现有错误处理风格）
 	var total int64

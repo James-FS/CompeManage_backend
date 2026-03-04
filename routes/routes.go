@@ -180,6 +180,8 @@ func SetupRoutes(r *gin.Engine) {
 		award.POST("/import",
 			controllers.ImportAward,
 			middleware.RequirePermission("award:import"))
+		award.GET("/export-template",
+			controllers.ExportAwardTemplate)
 		award.GET("/student/my-awards",
 			controllers.GetStudentMyAwardList,
 			middleware.RequirePermission("award:student:my-list"))
@@ -204,15 +206,15 @@ func SetupRoutes(r *gin.Engine) {
 	{
 		summary.GET("/list",
 			controllers.GetSummaryList,
-		// middleware.RequirePermission("summary:list")
+			// middleware.RequirePermission("summary:list")
 		)
 		summary.GET("/:id",
 			controllers.GetSummaryDetail,
-		// middleware.RequirePermission("summary:detail")
+			// middleware.RequirePermission("summary:detail")
 		)
 		summary.POST("/:id",
 			controllers.SaveSummary,
-		// middleware.RequirePermission("summary:edit")
+			// middleware.RequirePermission("summary:edit")
 		)
 	}
 }
