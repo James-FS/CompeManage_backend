@@ -178,7 +178,7 @@ func SetupRoutes(r *gin.Engine) {
 			controllers.ImportAward,
 			middleware.RequirePermission("award:import"))
 		award.GET("/student/my-awards",
-			controllers.GetStudentMyAwardList,
-			middleware.RequirePermission("award:student:my-list"))
+			controllers.GetStudentMyAwardList)
+		//middleware.RequirePermission("award:student:my-list"))
 	}
 }

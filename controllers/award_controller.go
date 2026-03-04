@@ -279,7 +279,7 @@ func GetStudentMyAwardList(c *gin.Context) {
 	}
 
 	// 7. 排序：按申报时间倒序
-	dbQuery = dbQuery.Order("awards.created_at DESC")
+	dbQuery = dbQuery.Order("awards.create_time DESC")
 
 	// 8. 查询总数+分页列表（复用现有错误处理风格）
 	var total int64
