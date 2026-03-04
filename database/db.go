@@ -63,6 +63,7 @@ func autoMigrate() {
 		&models.Notice{},
 		&models.CompDeclaration{},
 		&models.Award{},
+		&models.Summary{},
 	)
 
 	// 重新启用外键检查

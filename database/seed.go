@@ -9,6 +9,112 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+func grantRolePermissionsByCode(roleCode string, permCodes []string) {
+	if len(permCodes) == 0 {
+		return
+	}
+
+	var role models.Role
+	if err := DB.Where("role_code = ?", roleCode).First(&role).Error; err != nil {
+		log.Printf("未找到角色 %s，跳过权限补齐: %v", roleCode, err)
+		return
+	}
+
+	var perms []*models.Permission
+	if err := DB.Where("code IN ?", permCodes).Find(&perms).Error; err != nil {
+		log.Printf("查询权限失败(%s): %v", roleCode, err)
+		return
+	}
+
+	if len(perms) == 0 {
+		log.Printf("未找到可补齐权限(%s): %v", roleCode, permCodes)
+		return
+	}
+
+	if err := DB.Model(&role).Association("Permissions").Append(perms); err != nil {
+		log.Printf("补齐权限失败(%s): %v", roleCode, err)
+		return
+	}
+
+	log.Printf("已补齐角色 %s 的通知权限", roleCode)
+}
+
+func ensureNoticeManagePermissions() {
+	noticeManagePerms := []string{"notice:create", "notice:publish", "notice:delete"}
+	grantRolePermissionsByCode("competition_manager", noticeManagePerms)
+	grantRolePermissionsByCode("college_admin", noticeManagePerms)
+	grantRolePermissionsByCode("school_admin", noticeManagePerms)
+}
+
+func seedNotices(baseTime time.Time) {
+	var noticeCount int64
+	DB.Model(&models.Notice{}).Count(&noticeCount)
+	if noticeCount > 0 {
+		log.Printf("通知数据已存在（%d条），跳过通知初始化", noticeCount)
+		return
+	}
+
+	var detailIDs []uint
+	DB.Model(&models.CompDetail{}).Order("id ASC").Limit(3).Pluck("id", &detailIDs)
+
+	getDetailID := func(index int) uint {
+		if index >= 0 && index < len(detailIDs) {
+			return detailIDs[index]
+		}
+		return 0
+	}
+
+	notices := []models.Notice{
+		{
+			Title:               "关于举办2026年校级程序设计竞赛的通知",
+			Content:             "请各学院按要求组织报名，具体时间安排见赛事系统。",
+			CompetitionDetailID: getDetailID(0),
+			Status:              1,
+			PublishTime:         baseTime.AddDate(0, 0, -12).Format("2006-01-02 15:04:05"),
+			Attachment:          "/static/notices/programming_notice_2026.pdf",
+		},
+		{
+			Title:               "关于开展2026年度学科竞赛报名工作的通知",
+			Content:             "各学院请在报名截止前完成团队信息提交，逾期不再受理。",
+			CompetitionDetailID: getDetailID(1),
+			Status:              1,
+			PublishTime:         baseTime.AddDate(0, 0, -7).Format("2006-01-02 15:04:05"),
+			Attachment:          "/static/notices/enroll_guide_2026.docx",
+		},
+		{
+			Title:               "蓝桥杯校赛赛前培训安排通知",
+			Content:             "培训面向参赛学生开放，请按通知时间参加线上答疑。",
+			CompetitionDetailID: getDetailID(2),
+			Status:              1,
+			PublishTime:         baseTime.AddDate(0, 0, -3).Format("2006-01-02 15:04:05"),
+			Attachment:          "/static/notices/lanqiao_training_2026.pdf",
+		},
+		{
+			Title:               "2026年大学生创新创业训练计划申报提醒",
+			Content:             "项目负责人请尽快完善申报材料，系统将于月底关闭。",
+			CompetitionDetailID: getDetailID(0),
+			Status:              0,
+			PublishTime:         "",
+			Attachment:          "",
+		},
+		{
+			Title:               "关于竞赛材料归档规范的补充说明",
+			Content:             "请按统一模板上传材料，文件命名需包含学院与队伍名称。",
+			CompetitionDetailID: getDetailID(1),
+			Status:              1,
+			PublishTime:         baseTime.AddDate(0, 0, -1).Format("2006-01-02 15:04:05"),
+			Attachment:          "/static/notices/archive_rule_2026.pdf",
+		},
+	}
+
+	if err := DB.Create(&notices).Error; err != nil {
+		log.Printf("❌ 初始化通知数据失败: %v", err)
+		return
+	}
+
+	log.Printf("✅ 初始化通知数据: %d 条", len(notices))
+}
+
 // InitData 扩展版测试数据初始化
 // 功能：
 // 1. 扩充竞赛数据（新增更多竞赛信息）
@@ -21,6 +127,8 @@ func InitData() {
 	DB.Model(&models.User{}).Count(&count)
 	if count > 0 {
 		log.Println("数据库已有数据，跳过初始化...")
+		seedNotices(time.Date(2026, 1, 23, 0, 0, 0, 0, time.Local))
+		ensureNoticeManagePermissions()
 		return
 	}
 
@@ -47,6 +155,7 @@ func InitData() {
 	compSub := models.Permission{Name: "竞赛目录", Code: "comp", Type: 1, ParentID: competitionDir.ID, Description: "竞赛基础数据管理"}
 	declareSub := models.Permission{Name: "赛事申报", Code: "declare", Type: 1, ParentID: competitionDir.ID, Description: "赛事申报审核管理"}
 	awardSub := models.Permission{Name: "获奖管理", Code: "award", Type: 1, ParentID: competitionDir.ID, Description: "获奖信息导入和管理"}
+	summarySub := models.Permission{Name: "赛事总结", Code: "summary", Type: 1, ParentID: competitionDir.ID, Description: "赛事总结填写与归档"}
 
 	// 报名管理下的子分类
 	regConfigSub := models.Permission{Name: "报名配置", Code: "reg:config", Type: 1, ParentID: registrationDir.ID, Description: "报名时间、规则配置"}
@@ -60,6 +169,7 @@ func InitData() {
 	DB.Create(&compSub)
 	DB.Create(&declareSub)
 	DB.Create(&awardSub)
+	DB.Create(&summarySub)
 	DB.Create(&regConfigSub)
 	DB.Create(&regAuditSub)
 	DB.Create(&regSubmitSub)
@@ -80,6 +190,11 @@ func InitData() {
 		{Name: "查看竞赛年份", Code: "comp:years:list", Type: 3, ParentID: compSub.ID, Description: "查看竞赛年份列表"},
 		{Name: "查看赛事负责人", Code: "manager:list", Type: 3, ParentID: compSub.ID, Description: "查看赛事负责人列表"},
 
+		// 赛事总结权限 (parent: summarySub)
+		{Name: "查看总结列表", Code: "summary:list", Type: 3, ParentID: summarySub.ID, Description: "查看赛事总结列表"},
+		{Name: "查看总结详情", Code: "summary:detail", Type: 3, ParentID: summarySub.ID, Description: "查看赛事总结详情"},
+		{Name: "编辑赛事总结", Code: "summary:edit", Type: 3, ParentID: summarySub.ID, Description: "填写/归档赛事总结"},
+
 		// 赛事申报权限 (parent: declareSub)
 		{Name: "创建申报", Code: "declare:create", Type: 3, ParentID: declareSub.ID, Description: "创建新的赛事申报"},
 		{Name: "查看申报详情", Code: "declare:get", Type: 3, ParentID: declareSub.ID, Description: "查看申报信息详情"},
@@ -94,7 +209,6 @@ func InitData() {
 		// 获奖管理权限 (parent: awardSub)
 		{Name: "查看获奖赛事列表", Code: "award:list", Type: 3, ParentID: awardSub.ID, Description: "查看获奖赛事列表"},
 		{Name: "查看赛事获奖信息", Code: "award:comp:list", Type: 3, ParentID: awardSub.ID, Description: "查看具体赛事的获奖信息"},
-		{Name: "导出获奖模板", Code: "award:export:template", Type: 3, ParentID: awardSub.ID, Description: "导出获奖信息模板"},
 		{Name: "导入获奖信息", Code: "award:import", Type: 3, ParentID: awardSub.ID, Description: "导入获奖信息"},
 
 		// 报名配置权限 (parent: regConfigSub)
@@ -164,14 +278,15 @@ func InitData() {
 		// 大分类（目录权限）
 		"competition", "registration", "notice", "system",
 		// 子分类（目录权限）
-		"comp", "declare", "award", "reg:config", "reg:audit", "basic",
+		"comp", "declare", "award", "summary", "reg:config", "reg:audit", "basic",
 		// 具体权限
 		"comp:list", "comp:years:list", "manager:list",
 		"declare:get", "declare:list", "declare:pending-list", "declare:audit", "declare:all-declares",
 		"award:list", "award:comp:list",
+		"summary:list", "summary:detail",
 		"reg:config:view",
 		"reg:audit:list", "reg:audit:detail", "reg:audit:update",
-		"notice:list", "notice:detail",
+		"notice:list", "notice:detail", "notice:create", "notice:publish", "notice:delete",
 		"college:list",
 	}).Find(&collegePerms)
 	DB.Model(&collegeAdminRole).Association("Permissions").Append(&collegePerms)
@@ -182,19 +297,21 @@ func InitData() {
 		// 大分类
 		"competition", "registration", "notice",
 		// 子分类
-		"comp", "declare", "award", "reg:config", "reg:audit", "reg:submit",
+		"comp", "declare", "award", "summary", "reg:config", "reg:audit", "reg:submit",
 		// 竞赛目录（全权限）
 		"comp:list", "comp:create", "comp:batch-import", "comp:delete", "comp:batch-delete", "comp:restore", "comp:years:list", "manager:list",
 		// 赛事申报（除删除外）
 		"declare:create", "declare:get", "declare:update", "declare:submit", "declare:list", "declare:pending-list", "declare:audit", "declare:all-declares",
 		// 获奖管理
-		"award:list", "award:comp:list", "award:export:template", "award:import",
+		"award:list", "award:comp:list", "award:import",
+		// 赛事总结
+		"summary:list", "summary:detail", "summary:edit",
 		// 报名配置（全权限）
 		"reg:config:edit", "reg:config:view",
 		// 报名审核（全权限）
 		"reg:audit:list", "reg:audit:detail", "reg:audit:update",
-		// 通知查看
-		"notice:list", "notice:detail",
+		// 通知管理
+		"notice:list", "notice:detail", "notice:create", "notice:publish", "notice:delete",
 		// 基础数据
 		"college:list", "upload:file",
 	}).Find(&managerPerms)
@@ -233,6 +350,8 @@ func InitData() {
 		"notice:list", "notice:detail",
 	}).Find(&expertPerms)
 	DB.Model(&expertRole).Association("Permissions").Append(&expertPerms)
+
+	ensureNoticeManagePermissions()
 
 	// --- F. 访客：无特殊权限 ---
 	// 不分配任何权限
@@ -1192,7 +1311,6 @@ func InitData() {
 	}
 
 	// 按CompCode逐个创建竞赛详情
-	// 按CompCode逐个创建竞赛详情
 	detailCount := 0
 	failedComps := []string{}
 
@@ -1233,6 +1351,158 @@ func InitData() {
 	if len(failedComps) > 0 {
 		log.Printf("❌ 失败的竞赛: %v", failedComps)
 	}
+
+	// ==========================================
+	// 6. 初始化报名与获奖数据
+	// ==========================================
+	var student1, student2 models.User
+	DB.Where("username = ?", "S2024001").First(&student1)
+	DB.Where("username = ?", "S2024002").First(&student2)
+
+	getCompByCode := func(code string) *models.CompDirectory {
+		var comp models.CompDirectory
+		if err := DB.Where("comp_code = ?", code).First(&comp).Error; err != nil {
+			log.Printf("⚠️  查询竞赛 %s 失败: %v", code, err)
+			return nil
+		}
+		return &comp
+	}
+
+	compNCD := getCompByCode("NCD-2026")
+	compLQB := getCompByCode("LQB-2026")
+	compMCM := getCompByCode("MCM-2026")
+
+	if compNCD != nil && compLQB != nil && compMCM != nil {
+		regList := []models.Register{
+			{
+				CompID:        compNCD.ID,
+				LeaderID:      student1.ID,
+				TeamName:      "智创先锋队",
+				Status:        1,
+				AttachmentUrl: "/static/reg_attachments/demo_reg_1.pdf",
+			},
+			{
+				CompID:         compNCD.ID,
+				LeaderID:       student2.ID,
+				TeamName:       "云智团队",
+				Status:         3,
+				SupplementTime: func() *time.Time { t := baseTime.AddDate(0, 0, -1); return &t }(),
+				AttachmentUrl:  "/static/reg_attachments/demo_reg_2.pdf",
+			},
+			{
+				CompID:        compLQB.ID,
+				LeaderID:      student1.ID,
+				TeamName:      "",
+				Status:        1,
+				AttachmentUrl: "",
+			},
+			{
+				CompID:        compMCM.ID,
+				LeaderID:      student2.ID,
+				TeamName:      "数模三人组",
+				Status:        1,
+				AttachmentUrl: "/static/reg_attachments/demo_reg_3.pdf",
+			},
+		}
+
+		if err := DB.Create(&regList).Error; err != nil {
+			log.Printf("❌ 创建报名数据失败: %v", err)
+		} else {
+			log.Printf("✅ 创建报名数据: %d 条", len(regList))
+		}
+
+		// 绑定成员（包含队长）
+		members := []models.RegMember{}
+		if len(regList) >= 1 {
+			members = append(members,
+				models.RegMember{RegID: regList[0].ID, Name: student1.Realname, StudentID: student1.Username, Phone: "13800000001", Email: "linxm@example.com", College: student1.College, IsLeader: true, Year: "2024"},
+				models.RegMember{RegID: regList[0].ID, Name: "王小明", StudentID: "S2024010", Phone: "13800000010", Email: "wxm@example.com", College: "计算机科学与网络工程学院", IsLeader: false, Year: "2024"},
+			)
+		}
+		if len(regList) >= 2 {
+			members = append(members,
+				models.RegMember{RegID: regList[1].ID, Name: student2.Realname, StudentID: student2.Username, Phone: "13800000002", Email: "css@example.com", College: student2.College, IsLeader: true, Year: "2024"},
+				models.RegMember{RegID: regList[1].ID, Name: "赵一", StudentID: "S2024020", Phone: "13800000020", Email: "zy@example.com", College: "计算机科学与网络工程学院", IsLeader: false, Year: "2024"},
+			)
+		}
+		if len(regList) >= 3 {
+			members = append(members,
+				models.RegMember{RegID: regList[2].ID, Name: student1.Realname, StudentID: student1.Username, Phone: "13800000001", Email: "linxm@example.com", College: student1.College, IsLeader: true, Year: "2024"},
+			)
+		}
+		if len(regList) >= 4 {
+			members = append(members,
+				models.RegMember{RegID: regList[3].ID, Name: student2.Realname, StudentID: student2.Username, Phone: "13800000002", Email: "css@example.com", College: student2.College, IsLeader: true, Year: "2024"},
+				models.RegMember{RegID: regList[3].ID, Name: "孙二", StudentID: "S2024021", Phone: "13800000021", Email: "se@example.com", College: "数学学院", IsLeader: false, Year: "2024"},
+				models.RegMember{RegID: regList[3].ID, Name: "钱三", StudentID: "S2024022", Phone: "13800000022", Email: "qs@example.com", College: "数学学院", IsLeader: false, Year: "2024"},
+			)
+		}
+
+		if len(members) > 0 {
+			if err := DB.Create(&members).Error; err != nil {
+				log.Printf("❌ 创建报名成员失败: %v", err)
+			}
+		}
+
+		// 创建获奖数据（含导入与补录）
+		awards := []models.Award{}
+		if len(regList) >= 1 {
+			awards = append(awards, models.Award{
+				CompID:     compNCD.ID,
+				RegID:      regList[0].ID,
+				AwardLevel: "国家级一等奖",
+				AwardName:  "金奖",
+				Status:     "approved",
+				Source:     "import",
+				LevelRank:  1,
+			})
+		}
+		if len(regList) >= 2 {
+			awards = append(awards, models.Award{
+				CompID:     compNCD.ID,
+				RegID:      regList[1].ID,
+				AwardLevel: "国家级二等奖",
+				AwardName:  "银奖",
+				Status:     "draft",
+				Source:     "supplement",
+				ProofUrl:   "/static/award_proofs/demo_award_1.png",
+				LevelRank:  2,
+			})
+		}
+		if len(regList) >= 3 {
+			awards = append(awards, models.Award{
+				CompID:       compLQB.ID,
+				RegID:        regList[2].ID,
+				AwardLevel:   "省级二等奖",
+				AwardName:    "二等奖",
+				Status:       "rejected",
+				Source:       "import",
+				RejectReason: "证书信息不清晰",
+				LevelRank:    3,
+			})
+		}
+		if len(regList) >= 4 {
+			awards = append(awards, models.Award{
+				CompID:     compMCM.ID,
+				RegID:      regList[3].ID,
+				AwardLevel: "国家级三等奖",
+				AwardName:  "三等奖",
+				Status:     "approved",
+				Source:     "import",
+				LevelRank:  3,
+			})
+		}
+
+		if len(awards) > 0 {
+			if err := DB.Create(&awards).Error; err != nil {
+				log.Printf("❌ 创建获奖数据失败: %v", err)
+			} else {
+				log.Printf("✅ 创建获奖数据: %d 条", len(awards))
+			}
+		}
+	}
+
+	seedNotices(baseTime)
 
 	log.Println("🎉 树形权限与竞赛测试数据初始化完成！")
 	log.Println("================================")

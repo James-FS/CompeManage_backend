@@ -13,9 +13,10 @@ type Award struct {
 	Status   string `gorm:"type:varchar(20);default:'draft';comment:申报状态(draft/待审核 approved/通过 rejected/驳回)" json:"status"`
 	ProofUrl string `gorm:"type:varchar(255);comment:获奖证明文件URL" json:"proof_url"`
 
-	AuditorID    uint      `gorm:"comment:审核人ID" json:"auditor_id"`
-	AuditTime    time.Time `gorm:"comment:审核时间" json:"audit_time"`
-	RejectReason string    `gorm:"type:varchar(200);comment:驳回理由" json:"reject_reason"`
+	Source       string     `gorm:"type:varchar(20);default:'import';comment:奖项来源 import-系统导入 supplement-学生补录" json:"source"`
+	AuditorID    *uint      `gorm:"comment:审核人ID" json:"auditor_id"`
+	AuditTime    *time.Time `gorm:"comment:审核时间" json:"audit_time"`
+	RejectReason string     `gorm:"type:varchar(200);comment:驳回理由" json:"reject_reason"`
 	// 关联关系
 	Auditor  User     `gorm:"foreignKey:AuditorID" json:"auditor,omitempty"` // 审核人信息
 	Register Register `gorm:"foreignKey:RegID" json:"register"`
