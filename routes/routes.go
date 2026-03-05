@@ -89,6 +89,12 @@ func SetupRoutes(r *gin.Engine) {
 		comp.GET("/years",
 			controllers.GetCompetitionYears,
 			middleware.RequirePermission("comp:years:list"))
+		comp.GET("/:id",
+			middleware.RequirePermission("comp:detail"),
+			controllers.GetCompetitionDetail)
+		comp.PUT("/:id",
+			controllers.UpdateCompetition,
+			middleware.RequirePermission("comp:update"))
 	}
 
 	// 赛事申报接口（院级管理员申报）
@@ -214,5 +220,10 @@ func SetupRoutes(r *gin.Engine) {
 			controllers.SaveSummary,
 		// middleware.RequirePermission("summary:edit")
 		)
+	}
+
+	statistics := r.Group("/api/statistics", middleware.AuthRequired())
+	{
+		statistics.GET("/dashboard", controllers.GetStatisticsDashboard)
 	}
 }

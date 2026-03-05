@@ -46,6 +46,39 @@ func ensureNoticeManagePermissions() {
 	grantRolePermissionsByCode("school_admin", noticeManagePerms)
 }
 
+func ensureCompetitionCorePermissions() {
+	var compParent models.Permission
+	if err := DB.Where("code = ?", "comp").First(&compParent).Error; err != nil {
+		log.Printf("未找到权限目录 comp，跳过竞赛核心权限补齐: %v", err)
+		return
+	}
+
+	ensurePerm := func(code, name, desc string) {
+		var existed models.Permission
+		if err := DB.Where("code = ?", code).First(&existed).Error; err == nil {
+			return
+		}
+
+		perm := models.Permission{
+			Name:        name,
+			Code:        code,
+			Type:        3,
+			ParentID:    compParent.ID,
+			Description: desc,
+		}
+		if err := DB.Create(&perm).Error; err != nil {
+			log.Printf("补齐权限失败(%s): %v", code, err)
+		}
+	}
+
+	ensurePerm("comp:detail", "查看竞赛详情", "查看竞赛详情")
+	ensurePerm("comp:update", "编辑竞赛", "更新竞赛信息")
+
+	grantRolePermissionsByCode("school_admin", []string{"comp:detail", "comp:update"})
+	grantRolePermissionsByCode("college_admin", []string{"comp:detail"})
+	grantRolePermissionsByCode("competition_manager", []string{"comp:detail", "comp:update"})
+}
+
 func seedNotices(baseTime time.Time) {
 	var noticeCount int64
 	DB.Model(&models.Notice{}).Count(&noticeCount)
@@ -129,6 +162,7 @@ func InitData() {
 		log.Println("数据库已有数据，跳过初始化...")
 		seedNotices(time.Date(2026, 1, 23, 0, 0, 0, 0, time.Local))
 		ensureNoticeManagePermissions()
+		ensureCompetitionCorePermissions()
 		return
 	}
 
@@ -187,6 +221,8 @@ func InitData() {
 		{Name: "删除竞赛", Code: "comp:delete", Type: 3, ParentID: compSub.ID, Description: "删除竞赛信息"},
 		{Name: "批量删除竞赛", Code: "comp:batch-delete", Type: 3, ParentID: compSub.ID, Description: "批量删除竞赛"},
 		{Name: "恢复竞赛", Code: "comp:restore", Type: 3, ParentID: compSub.ID, Description: "恢复已删除的竞赛"},
+		{Name: "查看竞赛详情", Code: "comp:detail", Type: 3, ParentID: compSub.ID, Description: "查看竞赛详情"},
+		{Name: "编辑竞赛", Code: "comp:update", Type: 3, ParentID: compSub.ID, Description: "更新竞赛信息"},
 		{Name: "查看竞赛年份", Code: "comp:years:list", Type: 3, ParentID: compSub.ID, Description: "查看竞赛年份列表"},
 		{Name: "查看赛事负责人", Code: "manager:list", Type: 3, ParentID: compSub.ID, Description: "查看赛事负责人列表"},
 
@@ -280,7 +316,7 @@ func InitData() {
 		// 子分类（目录权限）
 		"comp", "declare", "award", "summary", "reg:config", "reg:audit", "basic",
 		// 具体权限
-		"comp:list", "comp:years:list", "manager:list",
+		"comp:list", "comp:detail", "comp:years:list", "manager:list",
 		"declare:get", "declare:list", "declare:pending-list", "declare:audit", "declare:all-declares",
 		"award:list", "award:comp:list",
 		"summary:list", "summary:detail",
@@ -299,7 +335,7 @@ func InitData() {
 		// 子分类
 		"comp", "declare", "award", "summary", "reg:config", "reg:audit", "reg:submit",
 		// 竞赛目录（全权限）
-		"comp:list", "comp:create", "comp:batch-import", "comp:delete", "comp:batch-delete", "comp:restore", "comp:years:list", "manager:list",
+		"comp:list", "comp:create", "comp:batch-import", "comp:delete", "comp:batch-delete", "comp:restore", "comp:detail", "comp:update", "comp:years:list", "manager:list",
 		// 赛事申报（除删除外）
 		"declare:create", "declare:get", "declare:update", "declare:submit", "declare:list", "declare:pending-list", "declare:audit", "declare:all-declares",
 		// 获奖管理
@@ -352,6 +388,7 @@ func InitData() {
 	DB.Model(&expertRole).Association("Permissions").Append(&expertPerms)
 
 	ensureNoticeManagePermissions()
+	ensureCompetitionCorePermissions()
 
 	// --- F. 访客：无特殊权限 ---
 	// 不分配任何权限
