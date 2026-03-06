@@ -160,7 +160,7 @@ func InitData() {
 	DB.Model(&models.User{}).Count(&count)
 	if count > 0 {
 		log.Println("数据库已有数据，跳过初始化...")
-		seedNotices(time.Date(2026, 1, 23, 0, 0, 0, 0, time.Local))
+		seedNotices(time.Date(2026, 2, 23, 0, 0, 0, 0, time.Local))
 		ensureNoticeManagePermissions()
 		ensureCompetitionCorePermissions()
 		return
@@ -317,7 +317,7 @@ func InitData() {
 		"comp", "declare", "award", "summary", "reg:config", "reg:audit", "basic",
 		// 具体权限
 		"comp:list", "comp:detail", "comp:years:list", "manager:list",
-		"declare:get", "declare:list", "declare:pending-list", "declare:audit", "declare:all-declares",
+		"declare:create", "declare:get", "declare:update", "declare:submit", "declare:list", "declare:delete", "declare:pending-list", "declare:audit", "declare:all-declares",
 		"award:list", "award:comp:list",
 		"summary:list", "summary:detail",
 		"reg:config:view",
@@ -327,17 +327,17 @@ func InitData() {
 	}).Find(&collegePerms)
 	DB.Model(&collegeAdminRole).Association("Permissions").Append(&collegePerms)
 
-	// --- C. 赛事负责人：竞赛管理、申报管理、报名配置、报名审核 ---
+	// --- C. 赛事负责人：竞赛目录/赛事申报仅查看，其他模块保持原有权限 ---
 	var managerPerms []models.Permission
 	DB.Where("code IN ?", []string{
 		// 大分类
 		"competition", "registration", "notice",
 		// 子分类
 		"comp", "declare", "award", "summary", "reg:config", "reg:audit", "reg:submit",
-		// 竞赛目录（全权限）
-		"comp:list", "comp:create", "comp:batch-import", "comp:delete", "comp:batch-delete", "comp:restore", "comp:detail", "comp:update", "comp:years:list", "manager:list",
-		// 赛事申报（除删除外）
-		"declare:create", "declare:get", "declare:update", "declare:submit", "declare:list", "declare:pending-list", "declare:audit", "declare:all-declares",
+		// 竞赛目录（仅查看）
+		"comp:list", "comp:detail", "comp:years:list", "manager:list",
+		// 赛事申报（仅查看）
+		"declare:get", "declare:list", "declare:pending-list", "declare:all-declares",
 		// 获奖管理
 		"award:list", "award:comp:list", "award:import",
 		// 赛事总结
@@ -445,9 +445,16 @@ func InitData() {
 
 	// 初始化学院数据
 	colleges := []models.College{
-		{ID: 1, Name: "计算机学院"},
+		{ID: 1, Name: "计算机科学与网络工程学院"},
 		{ID: 2, Name: "数学学院"},
 		{ID: 3, Name: "机械工程学院"},
+		{ID: 4, Name: "电子信息工程学院"},
+		{ID: 5, Name: "经济管理学院"},
+		{ID: 6, Name: "外国语学院"},
+		{ID: 7, Name: "法学院"},
+		{ID: 8, Name: "艺术学院"},
+		{ID: 9, Name: "体育学院"},
+		{ID: 10, Name: "生命科学学院"},
 	}
 
 	// 这里建议用 Save，如果 ID 已存在则更新，不存在则创建
@@ -488,12 +495,12 @@ func InitData() {
 		// 状态=1 (已发布) - 正在报名中
 		// ==========================================
 		{
-			CompCode:   "NCD-2026",
+			CompCode:   "G2026001",
 			CompName:   "2026年全国大学生计算机设计大赛",
 			CompType:   "A类",
 			CompLevel:  "国家级",
 			Organizer:  "教育部计算机相关教指委",
-			Undertaker: "厦门大学",
+			Undertaker: "广州大学",
 			CollegeID:  1,
 			Year:       2026,
 			ManagerID:  teacherUser.ID,
@@ -514,12 +521,12 @@ func InitData() {
 			},
 		},
 		{
-			CompCode:   "LQB-2026",
+			CompCode:   "S2026001",
 			CompName:   "第十七届蓝桥杯全国软件和信息技术专业人才大赛",
 			CompType:   "B类",
 			CompLevel:  "省级",
-			Organizer:  "工信部人才交流中心",
-			Undertaker: "本校教务处",
+			Organizer:  "广东省教育厅",
+			Undertaker: "广州大学",
 			CollegeID:  1,
 			Year:       2026,
 			ManagerID:  teacherUser.ID,
@@ -540,7 +547,7 @@ func InitData() {
 			},
 		},
 		{
-			CompCode:   "MCM-2026",
+			CompCode:   "I2026001",
 			CompName:   "2026年美国大学生数学建模竞赛(MCM/ICM)",
 			CompType:   "A类",
 			CompLevel:  "国际级",
@@ -566,12 +573,12 @@ func InitData() {
 			},
 		},
 		{
-			CompCode:   "HUAWEI-2026",
+			CompCode:   "G2026002",
 			CompName:   "2026年华为ICT大赛",
 			CompType:   "B类",
 			CompLevel:  "国家级",
 			Organizer:  "华为技术有限公司",
-			Undertaker: "计算机学院",
+			Undertaker: "广州大学计算机科学与网络工程学院",
 			CollegeID:  1,
 			Year:       2026,
 			ManagerID:  teacherUser.ID,
@@ -592,12 +599,12 @@ func InitData() {
 			},
 		},
 		{
-			CompCode:   "CHALLENGE-2026",
+			CompCode:   "G2026003",
 			CompName:   "2026年中国高校计算机大赛-网络技术挑战赛",
 			CompType:   "A类",
 			CompLevel:  "国家级",
 			Organizer:  "全国高等学校计算机教育研究会",
-			Undertaker: "杭州电子科技大学",
+			Undertaker: "广州大学",
 			CollegeID:  1,
 			Year:       2026,
 			ManagerID:  teacherUser.ID,
@@ -622,12 +629,12 @@ func InitData() {
 		// 状态=1 (已发布) - 报名即将开始
 		// ==========================================
 		{
-			CompCode:   "ACM-2026",
+			CompCode:   "I2026002",
 			CompName:   "2026年ACM-ICPC亚洲区域赛选拔",
 			CompType:   "A类",
 			CompLevel:  "国际级",
-			Organizer:  "ACM",
-			Undertaker: "计算机学院ACM俱乐部",
+			Organizer:  "国际大学生程序设计竞赛亚洲区域赛组委会",
+			Undertaker: "计算机科学与网络工程学院ACM",
 			CollegeID:  1,
 			Year:       2026,
 			ManagerID:  teacherUser.ID,
@@ -648,12 +655,12 @@ func InitData() {
 			},
 		},
 		{
-			CompCode:   "CTFCHAMP-2026",
+			CompCode:   "G2026004",
 			CompName:   "2026年全国大学生信息安全竞赛-创新实践能力赛",
 			CompType:   "A类",
 			CompLevel:  "国家级",
 			Organizer:  "教育部高等学校信息安全专业教指委",
-			Undertaker: "西安电子科技大学",
+			Undertaker: "广州大学",
 			CollegeID:  1,
 			Year:       2026,
 			ManagerID:  teacherUser.ID,
@@ -674,12 +681,12 @@ func InitData() {
 			},
 		},
 		{
-			CompCode:   "ENGMATH-2026",
+			CompCode:   "G2026005",
 			CompName:   "2026年全国大学生工程数学竞赛",
 			CompType:   "B类",
 			CompLevel:  "国家级",
 			Organizer:  "中国工业与应用数学学会",
-			Undertaker: "数学学院",
+			Undertaker: "广州大学数学学院",
 			CollegeID:  2,
 			Year:       2026,
 			ManagerID:  teacherWang.ID,
@@ -704,7 +711,7 @@ func InitData() {
 		// 状态=1 (已发布) - 报名已结束，比赛进行中
 		// ==========================================
 		{
-			CompCode:   "ROBOCON-2026",
+			CompCode:   "G2026006",
 			CompName:   "2026年全国大学生机器人大赛RoboMaster",
 			CompType:   "A类",
 			CompLevel:  "国家级",
@@ -730,7 +737,7 @@ func InitData() {
 			},
 		},
 		{
-			CompCode:   "MECHDESIGN-2026",
+			CompCode:   "G2026007",
 			CompName:   "2026年全国大学生机械创新设计大赛",
 			CompType:   "A类",
 			CompLevel:  "国家级",
@@ -760,7 +767,7 @@ func InitData() {
 		// 状态=2 (已结束)
 		// ==========================================
 		{
-			CompCode:   "CUMCM-2025",
+			CompCode:   "G2025001",
 			CompName:   "2025年全国大学生数学建模竞赛",
 			CompType:   "A类",
 			CompLevel:  "国家级",
@@ -786,7 +793,7 @@ func InitData() {
 			},
 		},
 		{
-			CompCode:   "CCPC-2025",
+			CompCode:   "G2025002",
 			CompName:   "2025年中国大学生程序设计竞赛(CCPC)总决赛",
 			CompType:   "A类",
 			CompLevel:  "国家级",
@@ -812,12 +819,12 @@ func InitData() {
 			},
 		},
 		{
-			CompCode:   "BIGDATA-2025",
+			CompCode:   "G2025003",
 			CompName:   "2025年全国高校大数据挑战赛",
 			CompType:   "B类",
 			CompLevel:  "国家级",
 			Organizer:  "阿里云",
-			Undertaker: "计算机学院",
+			Undertaker: "计算机科学与网络工程学院",
 			CollegeID:  1,
 			Year:       2025,
 			ManagerID:  teacherUser.ID,
@@ -838,7 +845,7 @@ func InitData() {
 			},
 		},
 		{
-			CompCode:   "ROBOT-2025",
+			CompCode:   "G2025004",
 			CompName:   "2025年中国机器人大赛暨RoboCup机器人世界杯中国赛",
 			CompType:   "A类",
 			CompLevel:  "国家级",
@@ -868,11 +875,11 @@ func InitData() {
 		// 状态=0 (草稿)
 		// ==========================================
 		{
-			CompCode:   "ICPC-SCHOOL-2026",
+			CompCode:   "X2026001",
 			CompName:   "2026校内程序设计天梯赛（草稿）",
 			CompType:   "C类",
 			CompLevel:  "校级",
-			Organizer:  "计算机学院",
+			Organizer:  "计算机科学与网络工程学院",
 			Undertaker: "ACM俱乐部",
 			CollegeID:  1,
 			Year:       2026,
@@ -894,12 +901,12 @@ func InitData() {
 			},
 		},
 		{
-			CompCode:   "AI-2026",
+			CompCode:   "S2026002",
 			CompName:   "2026年人工智能创新应用大赛（草稿）",
 			CompType:   "B类",
 			CompLevel:  "省级",
 			Organizer:  "省教育厅",
-			Undertaker: "人工智能学院",
+			Undertaker: "计算机科学与网络工程学院",
 			CollegeID:  1,
 			Year:       2026,
 			ManagerID:  teacherUser2.ID, // 李华作为负责人
@@ -920,12 +927,12 @@ func InitData() {
 			},
 		},
 		{
-			CompCode:   "IOT-2026",
+			CompCode:   "G2026008",
 			CompName:   "2026年物联网设计竞赛（草稿）",
 			CompType:   "B类",
 			CompLevel:  "国家级",
 			Organizer:  "教育部高等学校计算机类专业教指委",
-			Undertaker: "待定",
+			Undertaker: "广州大学",
 			CollegeID:  3,
 			Year:       2026,
 			ManagerID:  teacherLi.ID,
@@ -946,12 +953,12 @@ func InitData() {
 			},
 		},
 		{
-			CompCode:   "BLOCKCHAIN-2026",
-			CompName:   "2026年全国高校区块链应用创新大赛（草稿）",
+			CompCode:   "G2026009",
+			CompName:   "2026年全国高校区块链应用创新大赛",
 			CompType:   "B类",
 			CompLevel:  "国家级",
 			Organizer:  "中国区块链技术协会",
-			Undertaker: "计算机学院",
+			Undertaker: "广州大学计算机科学与网络工程学院",
 			CollegeID:  1,
 			Year:       2026,
 			ManagerID:  teacherUser.ID,
@@ -972,7 +979,7 @@ func InitData() {
 			},
 		},
 		{
-			CompCode:   "SMARTCAR-2026",
+			CompCode:   "G2026010",
 			CompName:   "2026年全国大学生智能汽车竞赛（草稿）",
 			CompType:   "A类",
 			CompLevel:  "国家级",
@@ -998,7 +1005,7 @@ func InitData() {
 			},
 		},
 		{
-			CompCode:   "MATHMODEL-SCHOOL-2026",
+			CompCode:   "X2026002",
 			CompName:   "2026校内数学建模选拔赛（草稿）",
 			CompType:   "C类",
 			CompLevel:  "校级",
@@ -1045,7 +1052,7 @@ func InitData() {
 	// 单独创建竞赛详情，确保CompID正确对应
 	// 注意：这里需要根据CompCode来匹配并创建详情
 	detailUpdates := map[string]models.CompDetail{
-		"NCD-2026": {
+		"G2026001": {
 			RegStartTime:       baseTime.AddDate(0, 0, -10),
 			RegEndTime:         baseTime.AddDate(0, 1, 0),
 			CompStartTime:      baseTime.AddDate(0, 2, 0),
@@ -1060,7 +1067,7 @@ func InitData() {
 			NeedAttachment:     2,
 			NeedAdvisor:        2,
 		},
-		"LQB-2026": {
+		"S2026001": {
 			RegStartTime:       baseTime.AddDate(0, 0, -20),
 			RegEndTime:         baseTime.AddDate(0, 0, 10),
 			CompStartTime:      baseTime.AddDate(0, 1, 15),
@@ -1075,7 +1082,7 @@ func InitData() {
 			NeedAttachment:     0,
 			NeedAdvisor:        0,
 		},
-		"MCM-2026": {
+		"I2026001": {
 			RegStartTime:       baseTime.AddDate(0, 0, -5),
 			RegEndTime:         baseTime.AddDate(0, 0, 20),
 			CompStartTime:      baseTime.AddDate(0, 1, 0),
@@ -1090,7 +1097,7 @@ func InitData() {
 			NeedAttachment:     1,
 			NeedAdvisor:        2,
 		},
-		"HUAWEI-2026": {
+		"G2026002": {
 			RegStartTime:       baseTime.AddDate(0, 0, -15),
 			RegEndTime:         baseTime.AddDate(0, 0, 15),
 			CompStartTime:      baseTime.AddDate(0, 1, 20),
@@ -1105,7 +1112,7 @@ func InitData() {
 			NeedAttachment:     0,
 			NeedAdvisor:        0,
 		},
-		"CHALLENGE-2026": {
+		"G2026003": {
 			RegStartTime:       baseTime.AddDate(0, 0, -8),
 			RegEndTime:         baseTime.AddDate(0, 0, 25),
 			CompStartTime:      baseTime.AddDate(0, 2, 10),
@@ -1120,7 +1127,7 @@ func InitData() {
 			NeedAttachment:     2,
 			NeedAdvisor:        1,
 		},
-		"ACM-2026": {
+		"I2026002": {
 			RegStartTime:       baseTime.AddDate(0, 0, 30),
 			RegEndTime:         baseTime.AddDate(0, 2, 0),
 			CompStartTime:      baseTime.AddDate(0, 3, 0),
@@ -1135,7 +1142,7 @@ func InitData() {
 			NeedAttachment:     0,
 			NeedAdvisor:        1,
 		},
-		"CTFCHAMP-2026": {
+		"G2026004": {
 			RegStartTime:       baseTime.AddDate(0, 1, 0),
 			RegEndTime:         baseTime.AddDate(0, 2, 15),
 			CompStartTime:      baseTime.AddDate(0, 3, 10),
@@ -1150,7 +1157,7 @@ func InitData() {
 			NeedAttachment:     1,
 			NeedAdvisor:        1,
 		},
-		"ENGMATH-2026": {
+		"G2026005": {
 			RegStartTime:       baseTime.AddDate(0, 1, 15),
 			RegEndTime:         baseTime.AddDate(0, 2, 20),
 			CompStartTime:      baseTime.AddDate(0, 3, 15),
@@ -1165,7 +1172,7 @@ func InitData() {
 			NeedAttachment:     0,
 			NeedAdvisor:        0,
 		},
-		"ROBOCON-2026": {
+		"G2026006": {
 			RegStartTime:       baseTime.AddDate(0, -2, 0),
 			RegEndTime:         baseTime.AddDate(0, -1, 0),
 			CompStartTime:      baseTime.AddDate(0, 0, -5),
@@ -1180,7 +1187,7 @@ func InitData() {
 			NeedAttachment:     2,
 			NeedAdvisor:        2,
 		},
-		"MECHDESIGN-2026": {
+		"G2026007": {
 			RegStartTime:       baseTime.AddDate(0, -3, 0),
 			RegEndTime:         baseTime.AddDate(0, -1, 15),
 			CompStartTime:      baseTime.AddDate(0, 0, -10),
@@ -1195,7 +1202,7 @@ func InitData() {
 			NeedAttachment:     2,
 			NeedAdvisor:        2,
 		},
-		"CUMCM-2025": {
+		"G2025001": {
 			RegStartTime:       time.Date(2025, 7, 1, 0, 0, 0, 0, time.Local),
 			RegEndTime:         time.Date(2025, 8, 31, 23, 59, 59, 0, time.Local),
 			CompStartTime:      time.Date(2025, 9, 14, 8, 0, 0, 0, time.Local),
@@ -1210,7 +1217,7 @@ func InitData() {
 			NeedAttachment:     2,
 			NeedAdvisor:        2,
 		},
-		"CCPC-2025": {
+		"G2025002": {
 			RegStartTime:       time.Date(2025, 10, 1, 0, 0, 0, 0, time.Local),
 			RegEndTime:         time.Date(2025, 11, 15, 23, 59, 59, 0, time.Local),
 			CompStartTime:      time.Date(2025, 12, 10, 9, 0, 0, 0, time.Local),
@@ -1225,7 +1232,7 @@ func InitData() {
 			NeedAttachment:     0,
 			NeedAdvisor:        1,
 		},
-		"BIGDATA-2025": {
+		"G2025003": {
 			RegStartTime:       time.Date(2025, 3, 1, 0, 0, 0, 0, time.Local),
 			RegEndTime:         time.Date(2025, 4, 15, 0, 0, 0, 0, time.Local),
 			CompStartTime:      time.Date(2025, 5, 1, 0, 0, 0, 0, time.Local),
@@ -1240,7 +1247,7 @@ func InitData() {
 			NeedAttachment:     2,
 			NeedAdvisor:        1,
 		},
-		"ROBOT-2025": {
+		"G2025004": {
 			RegStartTime:       time.Date(2025, 4, 1, 0, 0, 0, 0, time.Local),
 			RegEndTime:         time.Date(2025, 5, 31, 0, 0, 0, 0, time.Local),
 			CompStartTime:      time.Date(2025, 7, 15, 0, 0, 0, 0, time.Local),
@@ -1255,7 +1262,7 @@ func InitData() {
 			NeedAttachment:     2,
 			NeedAdvisor:        2,
 		},
-		"ICPC-SCHOOL-2026": {
+		"X2026001": {
 			RegStartTime:       baseTime.AddDate(0, 1, 0),
 			RegEndTime:         baseTime.AddDate(0, 2, 0),
 			CompStartTime:      baseTime.AddDate(0, 2, 15),
@@ -1270,7 +1277,7 @@ func InitData() {
 			NeedAttachment:     0,
 			NeedAdvisor:        0,
 		},
-		"AI-2026": {
+		"S2026002": {
 			RegStartTime:       baseTime.AddDate(0, 2, 0),
 			RegEndTime:         baseTime.AddDate(0, 3, 0),
 			CompStartTime:      baseTime.AddDate(0, 4, 0),
@@ -1285,7 +1292,7 @@ func InitData() {
 			NeedAttachment:     2,
 			NeedAdvisor:        1,
 		},
-		"IOT-2026": {
+		"G2026008": {
 			RegStartTime:       baseTime.AddDate(0, 3, 0),
 			RegEndTime:         baseTime.AddDate(0, 4, 0),
 			CompStartTime:      baseTime.AddDate(0, 5, 0),
@@ -1300,7 +1307,7 @@ func InitData() {
 			NeedAttachment:     1,
 			NeedAdvisor:        1,
 		},
-		"BLOCKCHAIN-2026": {
+		"G2026009": {
 			RegStartTime:       baseTime.AddDate(0, 2, 15),
 			RegEndTime:         baseTime.AddDate(0, 3, 15),
 			CompStartTime:      baseTime.AddDate(0, 4, 10),
@@ -1315,7 +1322,7 @@ func InitData() {
 			NeedAttachment:     2,
 			NeedAdvisor:        1,
 		},
-		"SMARTCAR-2026": {
+		"G2026010": {
 			RegStartTime:       baseTime.AddDate(0, 2, 0),
 			RegEndTime:         baseTime.AddDate(0, 3, 30),
 			CompStartTime:      baseTime.AddDate(0, 5, 0),
@@ -1330,7 +1337,7 @@ func InitData() {
 			NeedAttachment:     2,
 			NeedAdvisor:        2,
 		},
-		"MATHMODEL-SCHOOL-2026": {
+		"X2026002": {
 			RegStartTime:       baseTime.AddDate(0, 3, 0),
 			RegEndTime:         baseTime.AddDate(0, 4, 0),
 			CompStartTime:      baseTime.AddDate(0, 4, 15),
@@ -1405,9 +1412,9 @@ func InitData() {
 		return &comp
 	}
 
-	compNCD := getCompByCode("NCD-2026")
-	compLQB := getCompByCode("LQB-2026")
-	compMCM := getCompByCode("MCM-2026")
+	compNCD := getCompByCode("G2026001")
+	compLQB := getCompByCode("S2026001")
+	compMCM := getCompByCode("I2026001")
 
 	if compNCD != nil && compLQB != nil && compMCM != nil {
 		regList := []models.Register{
