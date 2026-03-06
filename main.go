@@ -5,7 +5,9 @@ import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/middleware"
 	"CompeManage_backend/routes"
+	"CompeManage_backend/utils"
 	"log"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -31,7 +33,7 @@ func main() {
 
 	// 注册路由
 	routes.SetupRoutes(r)
-
+	utils.StartCompStatusScheduler(5 * time.Minute)
 	// 启动服务
 	port := config.GetString("server.port")
 	log.Printf("服务器启动：http://localhost:%s", port)
