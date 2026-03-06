@@ -4,6 +4,7 @@ import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/models"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,6 +16,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+const MaxPageSize = 100
 
 // ConfigReq 前端提交的数据结构
 type ConfigReq struct {
@@ -85,6 +88,10 @@ type UserListResp struct {
 	Grade    string `json:"grade"`    // 年级（可选）
 }
 
+func isValidTime(t time.Time) bool {
+	return !t.IsZero() && t.Year() > 1970
+}
+
 // removeUploadedFile 根据前端传来的 URL 删除本地文件
 // 例如 url: "/static/reg_attachments/xxx.pdf" -> 删除 "./static/reg_attachments/xxx.pdf"
 func removeUploadedFile(fileUrl string) {
@@ -121,11 +128,11 @@ func SaveRegConfig(c *gin.Context) {
 	}
 
 	userIDVal, exists := c.Get("user_id")
-	userID := userIDVal.(uint)
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "未登录"})
 		return
 	}
+	userID := userIDVal.(uint)
 
 	var comp models.CompDirectory
 	db := database.DB.Model(&models.CompDirectory{}).Where("id = ?", req.CompID)
@@ -174,23 +181,28 @@ func SaveRegConfig(c *gin.Context) {
 
 	if req.SubmitStartTime != nil {
 		detail.SubmitStartTime = *req.SubmitStartTime
+	} else {
+		// 前端传 null，用一个 MySQL 能接受的合法零值占位
+		detail.SubmitStartTime = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 	}
 
 	if req.SubmitEndTime != nil {
 		detail.SubmitEndTime = *req.SubmitEndTime
+	} else {
+		// 前端传 null，用一个 MySQL 能接受的合法零值占位
+		detail.SubmitEndTime = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 	}
 
-	if detail.CompStartTime.IsZero() {
-		detail.CompStartTime = *req.RegStartTime
+	// CompStartTime直接设置为报名开始时间
+	detail.CompStartTime = *req.RegStartTime
+
+	// CompEndTime：取 reg_end_time 和 submit_end_time 中更晚的那个
+	if req.SubmitEndTime != nil && req.SubmitEndTime.After(*req.RegEndTime) {
+		detail.CompEndTime = *req.SubmitEndTime
+	} else {
+		detail.CompEndTime = *req.RegEndTime
 	}
 
-	if detail.CompEndTime.IsZero() {
-		if req.SubmitEndTime != nil {
-			detail.CompEndTime = *req.SubmitEndTime
-		} else {
-			detail.CompEndTime = *req.RegEndTime
-		}
-	}
 	//  执行数据库操作
 	if err == gorm.ErrRecordNotFound {
 		// 情况 A: 记录不存在 -> 创建 (Create)
@@ -225,11 +237,20 @@ func GetRegConfig(c *gin.Context) {
 		return
 	}
 
+	id, err := strconv.ParseUint(compID, 10, 32) // 转换为 uint64，基数为 10
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code": 400,
+			"msg":  "comp_id 参数格式错误，必须是正整数",
+		})
+		return
+	}
+
 	// 2. 查询数据库
 	var comp models.CompDirectory
 
 	// 1. 查询赛事主表，同时预加载 Detail
-	if err := database.DB.Preload("Detail").First(&comp, compID).Error; err != nil {
+	if err := database.DB.Preload("Detail").First(&comp, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"code": 404, "msg": "赛事不存在"})
 		return
 	}
@@ -274,10 +295,10 @@ func GetRegConfig(c *gin.Context) {
 		regEndTime = &detail.RegEndTime
 	}
 
-	if !detail.SubmitStartTime.IsZero() {
+	if isValidTime(detail.SubmitStartTime) {
 		submitStartTime = &detail.SubmitStartTime
 	}
-	if !detail.SubmitEndTime.IsZero() {
+	if isValidTime(detail.SubmitEndTime) {
 		submitEndTime = &detail.SubmitEndTime
 	}
 
@@ -319,12 +340,17 @@ func SubmitRegistration(c *gin.Context) {
 	uid := userID.(uint)
 
 	var comp models.CompDirectory
+
 	if err := database.DB.Preload("Detail").First(&comp, req.CompID).Error; err != nil {
 		c.JSON(404, gin.H{"code": 404, "msg": "赛事不存在"})
-		fmt.Println("截止时间:", comp.Detail.RegEndTime)
 		return
 	}
 
+	if comp.Detail.ID == 0 {
+		removeUploadedFile(req.AttachmentUrl)
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "赛事配置未完成，暂不接受报名"})
+		return
+	}
 	now := time.Now() // 获取服务器当前时间
 
 	// 校验 A: 还没开始
@@ -342,7 +368,6 @@ func SubmitRegistration(c *gin.Context) {
 	}
 	// 检验是否带有必传附件
 	if comp.Detail.NeedAttachment == 2 && req.AttachmentUrl == "" {
-		removeUploadedFile(req.AttachmentUrl)
 		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "该赛事要求必须上传报名附件/项目文档"})
 		return
 	}
@@ -351,19 +376,6 @@ func SubmitRegistration(c *gin.Context) {
 		removeUploadedFile(req.AttachmentUrl)
 		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "该赛事要求必须填写指导老师"})
 		return
-	}
-
-	//  防重复报名校验
-	if err := database.DB.Create(&models.Register{}).Error; err != nil {
-
-		errStr := strings.ToLower(err.Error())
-
-		// 判断是不是 "Duplicate entry" (唯一索引冲突)
-		if strings.Contains(errStr, "duplicate") || strings.Contains(errStr, "unique") {
-			c.JSON(http.StatusConflict, gin.H{"code": 409, "msg": "您已报名过该赛事，请勿重复提交"})
-			return
-		}
-
 	}
 
 	register := models.Register{
@@ -433,8 +445,20 @@ func checkUserIsAdmin(userID uint) bool {
 // 支持：赛事名模糊搜索、邮箱筛选、动态权限过滤
 func GetRegList(c *gin.Context) {
 	// 1. 获取参数
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("size", "10"))
+	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if err != nil || page < 1 {
+		page = 1
+	}
+
+	pageSize, err := strconv.Atoi(c.DefaultQuery("size", "10"))
+	if err != nil || pageSize < 1 {
+		pageSize = 10
+	}
+
+	// 限制最大页码大小
+	if pageSize > MaxPageSize {
+		pageSize = MaxPageSize
+	}
 
 	keyword := c.Query("keyword") // 搜负责人姓名 或 队伍名
 	email := c.Query("email")     // 搜邮箱
@@ -476,31 +500,44 @@ func GetRegList(c *gin.Context) {
 	if status != "" {
 		query = query.Where("registers.status = ?", status)
 	}
-	// 搜赛制（个人/团队）
+
+	// 3. 搜赛制（个人/团队）
 	if pType != "" {
 		query = query.Where("comp_details.participant_type = ?", pType)
 	}
 
-	// 3. 搜 队伍名 或 负责人姓名
+	//  4. 判断是否需要 JOIN users 表（keyword、email、phone 任一不为空都需要）
+	needUserJoin := keyword != "" || email != ""
+	if needUserJoin {
+		query = query.Joins("LEFT JOIN users ON users.id = registers.leader_id")
+	}
+
+	//  5. 搜队伍名或负责人姓名
 	if keyword != "" {
-		// 注意：这里手动 Join users 表用于搜索，GORM 的 Preload 只是为了取值，不能用于 Where 条件
-		query = query.Joins("LEFT JOIN users ON users.id = registers.leader_id").
-			Where("registers.team_name LIKE ? OR users.realname LIKE ? OR users.username LIKE ?",
-				"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
+		query = query.Where(
+			"registers.team_name LIKE ? OR users.realname LIKE ? OR users.username LIKE ?",
+			"%"+keyword+"%",
+			"%"+keyword+"%",
+			"%"+keyword+"%",
+		)
 	}
 
-	// 4. 搜邮箱
+	//  6. 搜邮箱（使用 EXISTS 子查询）
 	if email != "" {
-		// 防止重复 Join (如果 keyword 为空，上面没 Join 过，这里需要 Join)
-		if keyword == "" {
-			query = query.Joins("LEFT JOIN users ON users.id = registers.leader_id")
-		}
-		query = query.Where("EXISTS (SELECT 1 FROM reg_members WHERE reg_members.reg_id = registers.id AND reg_members.email LIKE ? AND reg_members.is_leader = ?)", "%"+email+"%", true)
+		query = query.Where(
+			"EXISTS (SELECT 1 FROM reg_members WHERE reg_members.reg_id = registers.id AND reg_members.email LIKE ? AND reg_members.is_leader = ?)",
+			"%"+email+"%",
+			true,
+		)
 	}
 
+	//  7. 搜电话（使用 EXISTS 子查询）
 	if phone != "" {
-		// 使用 EXISTS 子查询来搜 members 表里的电话
-		query = query.Where("EXISTS (SELECT 1 FROM reg_members WHERE reg_members.reg_id = registers.id AND reg_members.phone LIKE ? AND reg_members.is_leader = ?)", "%"+phone+"%", true)
+		query = query.Where(
+			"EXISTS (SELECT 1 FROM reg_members WHERE reg_members.reg_id = registers.id AND reg_members.phone LIKE ? AND reg_members.is_leader = ?)",
+			"%"+phone+"%",
+			true,
+		)
 	}
 	// --- 分页执行 ---
 	var total int64
@@ -541,13 +578,6 @@ func GetRegList(c *gin.Context) {
 		stuID := ""
 		leaderEmail := "" // 最终显示的邮箱
 		leaderPhone := "" // 最终显示的电话
-		//if item.Leader.ID != 0 {
-		//	leaderName = item.Leader.Realname
-		//	if leaderName == "" {
-		//		leaderName = item.Leader.Username
-		//	}
-		//	stuID = item.Leader.Username
-		//}
 
 		for _, m := range item.Members {
 			if m.IsLeader {
@@ -594,17 +624,21 @@ func GetRegDetail(c *gin.Context) {
 		c.JSON(400, gin.H{"code": 400, "msg": "缺少 id 参数"})
 		return
 	}
-
+	regid, err := strconv.Atoi(regID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "id 参数格式错误，必须是正整数"})
+		return
+	}
 	userIDVal, _ := c.Get("user_id")
 	userID := userIDVal.(uint)
 
 	// 2. 数据库查询 (关联赛事、负责人User表、成员表)
 	var reg models.Register
-	err := database.DB.
+	err = database.DB.
 		Preload("Competition"). // 为了拿 CompName 和 ManagerID
 		Preload("Leader").      // 为了拿 User 表里的真实姓名/邮箱
 		Preload("Members").     // 为了拿队员列表
-		First(&reg, regID).Error
+		First(&reg, regid).Error
 
 	if err != nil {
 		c.JSON(404, gin.H{"code": 404, "msg": "报名记录不存在"})
@@ -639,9 +673,7 @@ func GetRegDetail(c *gin.Context) {
 		if m.IsLeader {
 			phone = m.Phone
 			// 如果 User 表里没填真实姓名，用报名表里的名字兜底
-			if email == "" {
-				email = m.Email
-			}
+			email = m.Email
 
 			if reg.Leader.Realname == "" {
 				leaderName = m.Name
@@ -665,6 +697,7 @@ func GetRegDetail(c *gin.Context) {
 			"update_time":    reg.UpdatedAt.Format("2006-01-02 15:04:05"),
 			"status":         reg.Status,
 			"attachment_url": reg.AttachmentUrl,
+			"work_url":       reg.WorkAttachmentUrl,
 			"members":        reg.Members,
 			"reject_reason":  reg.RejectReason,
 		},
@@ -745,10 +778,28 @@ func AuditRegister(c *gin.Context) {
 }
 
 func GetMyRegStatus(c *gin.Context) {
-	compID := c.Query("comp_id")
-	userIDVal, _ := c.Get("user_id")
-	userID := userIDVal.(uint)
+	compid := c.Query("comp_id")
+	if compid == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "缺少 comp_id 参数"})
+		return
+	}
+	compID, err := strconv.ParseUint(compid, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "comp_id 参数格式错误"})
+		return
+	}
 
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "未登录"})
+		return
+	}
+
+	userID, ok := userIDVal.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "用户信息异常"})
+		return
+	}
 	var user models.User
 	if err := database.DB.Select("username").First(&user, userID).Error; err != nil {
 		c.JSON(500, gin.H{"code": 500, "msg": "获取用户信息失败"})
@@ -757,36 +808,41 @@ func GetMyRegStatus(c *gin.Context) {
 	studentID := user.Username
 
 	// 先查 RegMember 表，找出该学生参与的报名
-	var member models.RegMember
-	err := database.DB.
-		Where("reg_id IN (SELECT id FROM registers WHERE comp_id = ?) AND username = ?", compID, studentID).
-		First(&member).Error
-
-	if err != nil {
-		// 没查到，说明该学生没有参加这场报名
-		c.JSON(200, gin.H{"code": 200, "data": nil})
-		return
-	}
-
 	var reg models.Register
-	if err := database.DB.
+	err = database.DB.
 		Preload("Members").
 		Preload("Leader").
-		Where("id = ?", member.RegID).
-		First(&reg).Error; err != nil {
-		c.JSON(200, gin.H{"code": 200, "data": nil})
+		Joins("INNER JOIN reg_members ON reg_members.reg_id = registers.id").
+		Where("registers.comp_id = ? AND reg_members.username = ?", compID, studentID).
+		First(&reg).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// 学生没有参加这场报名，返回 200 但 data 为 nil
+			c.JSON(http.StatusOK, gin.H{
+				"code": 200,
+				"msg":  "获取成功",
+				"data": nil,
+			})
+		} else {
+			// 数据库错误，返回 500
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"code": 500,
+				"msg":  "查询失败",
+			})
+		}
 		return
 	}
 
 	type MemberResp struct {
-		ID        uint   `json:"id"`
-		Name      string `json:"name"`
-		StudentID string `json:"stu_id"`   // 统一用 student_id
-		Username  string `json:"username"` // 同时提供 username
-		Phone     string `json:"phone"`
-		Email     string `json:"email"`
-		College   string `json:"college"`
-		IsLeader  bool   `json:"is_leader"`
+		ID   uint   `json:"id"`
+		Name string `json:"name"`
+		//StudentID string `json:"stu_id"`   // 统一用 student_id
+		Username string `json:"username"` // 同时提供 username
+		Phone    string `json:"phone"`
+		Email    string `json:"email"`
+		College  string `json:"college"`
+		IsLeader bool   `json:"is_leader"`
 	}
 
 	var membersResp []MemberResp
@@ -803,7 +859,7 @@ func GetMyRegStatus(c *gin.Context) {
 		})
 	}
 
-	// 查到了，返回详细信息供回显
+	// 返回详细信息供回显
 	c.JSON(200, gin.H{
 		"code": 200,
 		"msg":  "获取成功",
@@ -828,8 +884,17 @@ func ResubmitRegistration(c *gin.Context) {
 		return
 	}
 
-	userIDVal, _ := c.Get("user_id")
-	userID := userIDVal.(uint)
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "未登录"})
+		return
+	}
+
+	userID, ok := userIDVal.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "用户信息异常"})
+		return
+	}
 
 	var reg models.Register
 	// 查找原记录
@@ -838,28 +903,53 @@ func ResubmitRegistration(c *gin.Context) {
 		return
 	}
 
-	// 🔒 只有 "已驳回(2)" 或 "待审核(0)" 允许修改，"已通过(1)" 禁止修改
+	//  只有 "已驳回(2)" 或 "待审核(0)" 允许修改，"已通过(1)" 禁止修改
 	if reg.Status == 1 {
 		c.JSON(403, gin.H{"code": 403, "msg": "审核已通过，无法修改信息"})
 		return
 	}
 
 	var detail models.CompDetail
-	if err := database.DB.Where("comp_id = ?", req.CompID).First(&detail).Error; err == nil {
-		// 必传附件检查
-		if detail.NeedAttachment == 2 && req.AttachmentUrl == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "该赛事要求必须上传报名附件，请勿删除附件"})
-			return
+	if err := database.DB.Where("comp_id = ?", req.CompID).First(&detail).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "赛事配置不存在"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询赛事配置失败"})
 		}
-		// 必填指导老师检查
-		if detail.NeedAdvisor == 2 && req.AdvisorID == nil {
-			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "该赛事要求必须填写指导老师"})
-			return
-		}
+		return
 	}
+
+	now := time.Now()
+	if now.Before(detail.RegStartTime) {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "报名尚未开始"})
+		return
+	}
+
+	if now.After(detail.RegEndTime) {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "报名已截止，无法重新提交"})
+		return
+	}
+
+	// 必传附件检查
+	if detail.NeedAttachment == 2 && req.AttachmentUrl == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "该赛事要求必须上传报名附件，请勿删除附件"})
+		return
+	}
+	// 必填指导老师检查
+	if detail.NeedAdvisor == 2 && req.AdvisorID == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "该赛事要求必须填写指导老师"})
+		return
+	}
+
 	// 开启事务
 	tx := database.DB.Begin()
 
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			fmt.Println("事务发生回滚 ", r)
+		}
+	}()
 	// 1. 更新主表
 	reg.TeamName = req.TeamName
 	reg.AttachmentUrl = req.AttachmentUrl
@@ -911,7 +1001,16 @@ func ResubmitRegistration(c *gin.Context) {
 		return
 	}
 
-	tx.Commit()
+	if err := tx.Commit().Error; err != nil {
+		// Commit 失败，自动回滚
+		fmt.Println("事务提交失败:", err)
+		c.JSON(500, gin.H{
+			"code":  500,
+			"msg":   "提交失败，请重试",
+			"error": err.Error(),
+		})
+		return
+	}
 	c.JSON(200, gin.H{"code": 200, "msg": "重新提交成功"})
 }
 
@@ -936,6 +1035,15 @@ func GetMyRegList(c *gin.Context) {
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("size", "10"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 10
+	}
+	if pageSize > MaxPageSize { // 限制最大页码
+		pageSize = MaxPageSize
+	}
 	offset := (page - 1) * pageSize
 
 	var regs []models.Register
@@ -974,10 +1082,10 @@ func GetMyRegList(c *gin.Context) {
 		if r.Competition.ID != 0 {
 			compName = r.Competition.CompName
 			if r.Competition.Detail.ID != 0 {
-				if !r.Competition.Detail.SubmitStartTime.IsZero() {
+				if isValidTime(r.Competition.Detail.SubmitStartTime) {
 					submitStartStr = r.Competition.Detail.SubmitStartTime.Format("2006-01-02 15:04:05")
 				}
-				if !r.Competition.Detail.SubmitEndTime.IsZero() {
+				if isValidTime(r.Competition.Detail.SubmitEndTime) {
 					submitEndStr = r.Competition.Detail.SubmitEndTime.Format("2006-01-02 15:04:05")
 				}
 			}
@@ -1053,11 +1161,19 @@ func SubmitWork(c *gin.Context) {
 		return
 	}
 
+	if reg.Status != 1 { // 1 = 已通过审核
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code": 400,
+			"msg":  "您的报名未通过审核，无法提交作品",
+		})
+		return
+	}
+
 	// 时间校验
 	now := time.Now()
 	detail := reg.Competition.Detail
 
-	if detail.SubmitStartTime.IsZero() || detail.SubmitEndTime.IsZero() {
+	if !isValidTime(detail.SubmitStartTime) || !isValidTime(detail.SubmitEndTime) {
 		c.JSON(403, gin.H{"code": 403, "msg": "该赛事暂未开放作品提交"})
 		return
 	}
