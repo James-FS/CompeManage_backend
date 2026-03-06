@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +45,12 @@ type AwardAuditDetailResp struct {
 	SubmitTime    string  `json:"submit_time"`
 	Status        int     `json:"status"`
 	RejectReason  string  `json:"reject_reason"`
+}
+
+type CompSearchResp struct {
+	ID       uint   `json:"id"`
+	CompName string `json:"comp_name"`
+	Year     int    `json:"year"`
 }
 
 func mapAwardStatusToInt(status string) int {
@@ -205,6 +212,7 @@ func ExportAwardTemplate(c *gin.Context) {
 		fmt.Println("导出流写入中断:", err)
 	}
 }
+
 func ImportAward(c *gin.Context) {
 	compIDStr := c.Query("comp_id")
 	if compIDStr == "" {
@@ -335,7 +343,46 @@ func ImportAward(c *gin.Context) {
 	c.JSON(200, resp)
 }
 
-// 4. 获取获奖公示详情 (只读列表)
+func SearchCompetition(c *gin.Context) {
+	keyword := c.Query("keyword")
+	if keyword == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "关键词不能为空"})
+		return
+	}
+
+	pageSize := c.DefaultQuery("page_size", "20")
+	size := 20
+	if ps, err := strconv.Atoi(pageSize); err == nil && ps > 0 && ps <= 100 {
+		size = ps
+	}
+
+	var list []models.CompDirectory
+	if err := database.DB.Model(&models.CompDirectory{}).
+		Where("comp_name LIKE ?", "%"+keyword+"%").
+		Select("id", "comp_name", "year").
+		Order("create_time DESC").
+		Limit(size).
+		Find(&list).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询失败"})
+		return
+	}
+
+	var results []CompSearchResp
+	for _, item := range list {
+		results = append(results, CompSearchResp{
+			ID:       item.ID,
+			CompName: item.CompName,
+			Year:     item.Year,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 200,
+		"msg":  "获取成功",
+		"data": results,
+	})
+
+} // 4. 获取获奖公示详情 (只读列表)
 func GetCompAwards(c *gin.Context) {
 	compID := c.Query("comp_id")
 
