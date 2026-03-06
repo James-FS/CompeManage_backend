@@ -349,7 +349,6 @@ func GetManagerList(c *gin.Context) {
 }
 
 // GetCompetitionYears 获取赛事中存在的所有年份（用于往年复用的年份选择）
-// SQL: SELECT DISTINCT year FROM comp_directories WHERE year > 0 ORDER BY year DESC
 func GetCompetitionYears(c *gin.Context) {
 	var years []int
 	if err := database.DB.
@@ -458,4 +457,85 @@ func BatchDeleteCompetition(c *gin.Context) {
 			"deleted_count": result.RowsAffected,
 		},
 	})
+}
+
+// GetCompetitionDetail 获取赛事详情（包含报名时间、参赛类型等信息）
+func GetCompetitionDetail(c *gin.Context) {
+	id := c.Param("id")
+	var comp models.CompDirectory
+
+	if err := database.DB.Preload("Manager").Preload("CollegeInfo").First(&comp, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"code": 404, "msg": "赛事不存在"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 200,
+		"msg":  "获取成功",
+		"data": comp,
+	})
+
+}
+
+// UpdateCompetitionReq 更新赛事目录请求参数
+type UpdateCompetitionReq struct {
+	CompName   string `json:"comp_name" binding:"required"`  // 竞赛名称
+	CompLevel  string `json:"comp_level" binding:"required"` // 竞赛级别
+	CompType   string `json:"comp_type"`                     // 竞赛类别
+	Organizer  string `json:"organizer"`                     // 主办方
+	Undertaker string `json:"undertaker"`                    // 承办方
+	ManagerID  uint   `json:"manager_id" binding:"required"` // 赛事负责人ID
+	College    string `json:"college" binding:"required"`    // 所属学院
+	Desc       string `json:"desc"`                          // 描述说明
+	Year       string `json:"year"`                          // 举办年份
+}
+
+// UpdateCompetition 更新赛事目录
+func UpdateCompetition(c *gin.Context) {
+	id := c.Param("id")
+	var req UpdateCompetitionReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "参数错误", "error": err.Error()})
+		return
+	}
+
+	// 查找要更新的赛事
+	var comp models.CompDirectory
+	if err := database.DB.First(&comp, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"code": 404, "msg": "赛事不存在"})
+		return
+	}
+
+	// 获取学院ID
+	var college models.College
+	if err := database.DB.Where("name = ?", req.College).First(&college).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "学院不存在"})
+		return
+	}
+
+	year := 0
+	if req.Year != "" {
+		fmt.Sscanf(req.Year, "%d", &year)
+	}
+
+	// 更新字段
+	updates := map[string]interface{}{
+		"comp_name":  req.CompName,
+		"comp_level": req.CompLevel,
+		"comp_type":  req.CompType,
+		"organizer":  req.Organizer,
+		"undertaker": req.Undertaker,
+		"manager_id": req.ManagerID,
+		"college_id": college.ID,
+		"year":       year,
+		"desc":       req.Desc,
+	}
+
+	if err := database.DB.Model(&comp).Updates(updates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "更新失败", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"code": 200, "msg": "更新成功"})
+
 }
