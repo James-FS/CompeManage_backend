@@ -31,18 +31,21 @@ type ConfigReq struct {
 	SubmitEndTime    *time.Time `json:"submit_end_time"`
 	GradeRequirement []int      `json:"grade_requirement"`
 	AwardHierarchy   []string   `json:"award_hierarchy"`
+	Track            []string   `json:"track"`
 	NeedAdvisor      int        `json:"need_advisor"`
 	NeedAttachment   int        `json:"need_attachment"`
 }
 
 // ApplicationReq 学生提交的报名数据
 type ApplicationReq struct {
-	CompID        uint        `json:"comp_id" binding:"required"`
-	TeamName      string      `json:"team_name"` // 队伍名称
-	Leader        MemberReq   `json:"leader"`
-	Members       []MemberReq `json:"members"` // 队员列表 (不包含队长)
-	AdvisorID     *uint       `json:"advisor_id"`
-	AttachmentUrl string      `json:"attachment_url"` // 附件地址
+	CompID        uint                `json:"comp_id" binding:"required"`
+	TeamName      string              `json:"team_name"` // 队伍名称
+	Leader        MemberReq           `json:"leader"`
+	Members       []MemberReq         `json:"members"` // 队员列表 (不包含队长)
+	AdvisorID     *uint               `json:"advisor_id"`
+	AdvisorInfo   *models.AdvisorInfo `json:"advisor_info"`
+	AttachmentUrl string              `json:"attachment_url"` // 附件地址
+	Track         string              `json:"track"`          //选择的赛道
 }
 
 // MemberReq 队员信息子结构
@@ -158,6 +161,12 @@ func SaveRegConfig(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "奖项信息处理失败"})
 		return
 	}
+
+	trackJson, err := json.Marshal(req.Track)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "赛道数据处理失败"})
+		return
+	}
 	// 4. 查询 Detail 表中是否已存在记录 (Upsert 逻辑)
 	var detail models.CompDetail
 	err = database.DB.Where("comp_id = ?", req.CompID).First(&detail).Error
@@ -171,6 +180,7 @@ func SaveRegConfig(c *gin.Context) {
 	detail.NeedAttachment = req.NeedAttachment
 	detail.GradeRequirement = string(gradeJson) // 存入转换后的字符串
 	detail.AwardHierarchy = string(hierarchyJson)
+	detail.Track = string(trackJson)
 	// 时间字段判空处理 (防止空指针崩溃)
 	if req.RegStartTime != nil {
 		detail.RegStartTime = *req.RegStartTime
@@ -286,6 +296,14 @@ func GetRegConfig(c *gin.Context) {
 	} else {
 		awardHierarchy = []string{}
 	}
+
+	var track []string
+	if detail.Track != "" {
+		_ = json.Unmarshal([]byte(detail.Track), &track)
+	} else {
+		track = []string{}
+	}
+
 	// 4. 数据处理：时间零值处理 (Go 的 0001-01-01 给前端会显示乱码)
 	var regStartTime, regEndTime, submitStartTime, submitEndTime *time.Time
 	if !detail.RegStartTime.IsZero() {
@@ -318,6 +336,7 @@ func GetRegConfig(c *gin.Context) {
 			"submit_start_time": submitStartTime,
 			"submit_end_time":   submitEndTime,
 			"award_hierarchy":   awardHierarchy,
+			"track":             track,
 		},
 	})
 }
@@ -372,7 +391,7 @@ func SubmitRegistration(c *gin.Context) {
 		return
 	}
 	// 检验是否含有指导老师
-	if comp.Detail.NeedAdvisor == 2 && req.AdvisorID == nil {
+	if comp.Detail.NeedAdvisor == 2 && req.AdvisorInfo == nil {
 		removeUploadedFile(req.AttachmentUrl)
 		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "该赛事要求必须填写指导老师"})
 		return
@@ -385,6 +404,16 @@ func SubmitRegistration(c *gin.Context) {
 		AttachmentUrl: req.AttachmentUrl,
 		Status:        0, // 默认 0:待审核
 		Members:       make([]models.RegMember, 0),
+		Track:         req.Track,
+	}
+
+	if req.AdvisorInfo != nil {
+		advisorJSON, err := json.Marshal(req.AdvisorInfo)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "指导老师信息处理失败"})
+			return
+		}
+		register.AdvisorInfo = string(advisorJSON)
 	}
 
 	leaderMember := models.RegMember{
@@ -569,6 +598,7 @@ func GetRegList(c *gin.Context) {
 		Status        int8               `json:"status"`
 		AttachmentUrl string             `json:"attachment_url"`
 		Members       []models.RegMember `json:"members"`
+		AdvisorInfo   string             `json:"advisor_info"`
 	}
 
 	var respList []AuditListResp
@@ -605,6 +635,7 @@ func GetRegList(c *gin.Context) {
 			Status:        item.Status,
 			AttachmentUrl: item.AttachmentUrl,
 			Members:       item.Members,
+			AdvisorInfo:   item.AdvisorInfo,
 		})
 	}
 
@@ -699,6 +730,7 @@ func GetRegDetail(c *gin.Context) {
 			"attachment_url": reg.AttachmentUrl,
 			"work_url":       reg.WorkAttachmentUrl,
 			"members":        reg.Members,
+			"advisor_info":   reg.AdvisorInfo,
 			"reject_reason":  reg.RejectReason,
 		},
 	})
@@ -870,6 +902,7 @@ func GetMyRegStatus(c *gin.Context) {
 			"reject_reason":  reg.RejectReason, // 驳回理由
 			"attachment_url": reg.AttachmentUrl,
 			"members":        membersResp, //这里包含队长和队员
+			"advisor_info":   reg.AdvisorInfo,
 			"advisor_id":     reg.AdvisorID,
 		},
 	})
@@ -936,7 +969,7 @@ func ResubmitRegistration(c *gin.Context) {
 		return
 	}
 	// 必填指导老师检查
-	if detail.NeedAdvisor == 2 && req.AdvisorID == nil {
+	if detail.NeedAdvisor == 2 && req.AdvisorInfo == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "该赛事要求必须填写指导老师"})
 		return
 	}
@@ -954,6 +987,15 @@ func ResubmitRegistration(c *gin.Context) {
 	reg.TeamName = req.TeamName
 	reg.AttachmentUrl = req.AttachmentUrl
 	reg.AdvisorID = req.AdvisorID
+	reg.Track = req.Track
+	if req.AdvisorInfo != nil {
+		advisorJSON, err := json.Marshal(req.AdvisorInfo)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "指导老师信息处理失败"})
+			return
+		}
+		reg.AdvisorInfo = string(advisorJSON) //  直接转换为 string
+	}
 	reg.Status = 0        // 状态重置为待审核
 	reg.RejectReason = "" // 清空驳回理由
 

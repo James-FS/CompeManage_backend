@@ -22,6 +22,7 @@ type CompDetail struct {
 	NeedAdvisor        int       `gorm:"column:need_advisor;default:0;comment:是否需要指导老师,0:无需 1:可选 2:必须" json:"need_advisor"`
 	AttachmentTemplate string    `gorm:"column:attachment_template;type:varchar(255);comment:附件模板地址" json:"attachment_template"`
 	AwardHierarchy     string    `gorm:"column:award_hierarchy;type:json;comment:奖项等级排序配置" json:"award_hierarchy"`
+	Track              string    `gorm:"column:track;type:json;comment:赛道设置" json:"track"`
 	BaseModel
 }
 
