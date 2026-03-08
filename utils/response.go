@@ -10,7 +10,7 @@ import (
 
 // 定义业务错误码（与HTTP状态码分离）
 const (
-	SuccessCode        = 0    // 成功（行业惯例用0表示）
+	SuccessCode        = 200  // 成功（行业惯例用0表示）
 	BadRequestCode     = 400  // 参数错误
 	UnauthorizedCode   = 401  // 未授权
 	ForbiddenCode      = 403  // 禁止访问
