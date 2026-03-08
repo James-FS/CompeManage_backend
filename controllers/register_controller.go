@@ -732,6 +732,7 @@ func GetRegDetail(c *gin.Context) {
 			"members":        reg.Members,
 			"advisor_info":   reg.AdvisorInfo,
 			"reject_reason":  reg.RejectReason,
+			"track":          reg.Track,
 		},
 	})
 }
@@ -904,6 +905,7 @@ func GetMyRegStatus(c *gin.Context) {
 			"members":        membersResp, //这里包含队长和队员
 			"advisor_info":   reg.AdvisorInfo,
 			"advisor_id":     reg.AdvisorID,
+			"track":          reg.Track,
 		},
 	})
 }
