@@ -514,42 +514,42 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 	// 1. 获取当前登录学生ID
 	userIDVal, exists := c.Get("user_id")
 	if !exists {
-		c.JSON(401, gin.H{"code": 401, "msg": "请先登录"})
+		c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "请先登录"})
 		return
 	}
 	leaderID, ok := userIDVal.(uint)
 	if !ok {
-		c.JSON(400, gin.H{"code": 400, "msg": "用户ID格式错误"})
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "用户ID格式错误"})
 		return
 	}
 
-	// 2. 解析并校验请求参数（补录场景证明URL必填）
+	// 2. 解析并校验请求参数
 	var req struct {
 		CompID     uint                   `json:"comp_id" binding:"required"`
 		TeamName   string                 `json:"team_name" binding:"required"`
 		Members    []models.RegMemberInfo `json:"members" binding:"required,dive"`
 		AwardLevel string                 `json:"award_level" binding:"required"`
 		AwardName  string                 `json:"award_name" binding:"required"`
-		ProofURL   string                 `json:"proof_url" binding:"required"` // 补录必须传证明
+		ProofURL   string                 `json:"proof_url" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"code": 400, "msg": "参数错误：" + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "参数错误：" + err.Error()})
 		return
 	}
 
-	// 3. 队员信息强校验（补录场景必填）
+	// 3. 队员信息强校验
 	leaderCount := 0
 	for _, member := range req.Members {
 		if member.IsLeader {
 			leaderCount++
 		}
 		if member.Name == "" || member.StudentID == "" || member.Phone == "" || member.College == "" {
-			c.JSON(400, gin.H{"code": 400, "msg": fmt.Sprintf("队员[%s]的姓名/学号/手机号/学院不能为空", member.Name)})
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": fmt.Sprintf("队员[%s]的姓名/学号/手机号/学院不能为空", member.Name)})
 			return
 		}
 	}
 	if leaderCount == 0 || leaderCount > 1 {
-		c.JSON(400, gin.H{"code": 400, "msg": "队员列表必须且仅能指定1名队长"})
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "队员列表必须且仅能指定1名队长"})
 		return
 	}
 
@@ -557,59 +557,82 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 	var comp models.CompDirectory
 	if err := database.DB.First(&comp, req.CompID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(404, gin.H{"code": 404, "msg": "赛事不存在"})
+			c.JSON(http.StatusNotFound, gin.H{"code": 404, "msg": "赛事不存在"})
 			return
 		}
-		c.JSON(500, gin.H{"code": 500, "msg": "查询赛事失败：" + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询赛事失败"})
 		return
 	}
 
-	// 5. 开启事务
+	// 5.  检查是否已报名过该赛事
+	var existingReg models.Register
+	existsErr := database.DB.Where("comp_id = ? AND leader_id = ?", req.CompID, leaderID).First(&existingReg).Error
+
+	var regID uint // 用来存储报名记录的ID
+
+	// 6. 开启事务
 	tx := database.DB.Begin()
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
+			fmt.Println("事务发生 panic，已回滚:", r)
 		}
 	}()
 
-	// 6. 创建补录报名记录（status=3）
-	now := time.Now()
-	reg := models.Register{
-		CompID:         req.CompID,
-		LeaderID:       leaderID,
-		TeamName:       req.TeamName,
-		Status:         3,    // 补录待审核
-		SupplementTime: &now, // 记录补录时间
-	}
-	if err := tx.Create(&reg).Error; err != nil {
-		tx.Rollback()
-		c.JSON(500, gin.H{"code": 500, "msg": "创建补录报名失败：" + err.Error()})
-		return
-	}
-
-	// 7. 批量存储队员
-	for _, member := range req.Members {
-		regMember := models.RegMember{
-			RegID:     reg.ID,
-			Name:      member.Name,
-			StudentID: member.StudentID,
-			Phone:     member.Phone,
-			Email:     member.Email,
-			College:   member.College,
-			IsLeader:  member.IsLeader,
-			Year:      member.Year,
+	// 7.  根据是否存在报名记录，决定是否创建
+	if errors.Is(existsErr, gorm.ErrRecordNotFound) {
+		//  不存在报名记录 → 创建补录报名
+		now := time.Now()
+		reg := models.Register{
+			CompID:         req.CompID,
+			LeaderID:       leaderID,
+			TeamName:       req.TeamName,
+			Status:         3,    // 补录待审核
+			SupplementTime: &now, // 记录补录时间
 		}
-		if err := tx.Create(&regMember).Error; err != nil {
+		if err := tx.Create(&reg).Error; err != nil {
 			tx.Rollback()
-			c.JSON(500, gin.H{"code": 500, "msg": fmt.Sprintf("存储队员[%s]失败：%s", member.Name, err.Error())})
+			fmt.Printf("创建补录报名失败，compID=%d, leaderID=%d, err=%v\n", req.CompID, leaderID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "创建补录报名失败"})
 			return
 		}
+		regID = reg.ID
+
+		// 8. 批量存储队员
+		for _, member := range req.Members {
+			regMember := models.RegMember{
+				RegID:     reg.ID,
+				Name:      member.Name,
+				StudentID: member.StudentID,
+				Phone:     member.Phone,
+				Email:     member.Email,
+				College:   member.College,
+				IsLeader:  member.IsLeader,
+				Year:      member.Year,
+			}
+			if err := tx.Create(&regMember).Error; err != nil {
+				tx.Rollback()
+				fmt.Printf("存储队员[%s]失败，regID=%d, err=%v\n", member.Name, reg.ID, err)
+				c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": fmt.Sprintf("存储队员[%s]失败", member.Name)})
+				return
+			}
+		}
+	} else if existsErr != nil {
+		//  情况 B：数据库查询出错
+		tx.Rollback()
+		fmt.Printf("查询报名记录失败，err=%v\n", existsErr)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询报名信息失败"})
+		return
+	} else {
+		//  情况 C：已存在报名记录 → 跳过创建报名，直接使用现有的报名ID
+		regID = existingReg.ID
+		fmt.Printf("检测到已存在的报名记录，regID=%d，跳过补录报名创建\n", regID)
 	}
 
-	// 8. 创建补录奖项（标记source=supplement）
+	// 9.  创建奖项（无论是新建报名还是使用现有报名，都要创建奖项）
 	award := models.Award{
 		CompID:     req.CompID,
-		RegID:      reg.ID,
+		RegID:      regID, // 使用新创建或现有的报名ID
 		AwardLevel: req.AwardLevel,
 		AwardName:  req.AwardName,
 		Status:     "draft",
@@ -619,24 +642,28 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 	}
 	if err := tx.Create(&award).Error; err != nil {
 		tx.Rollback()
-		c.JSON(500, gin.H{"code": 500, "msg": "创建补录奖项失败：" + err.Error()})
+		fmt.Printf("创建补录奖项失败，regID=%d, err=%v\n", regID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "创建补录奖项失败"})
 		return
 	}
 
-	// 9. 提交事务
+	// 10.  提交事务（检查错误）
 	if err := tx.Commit().Error; err != nil {
-		tx.Rollback()
-		c.JSON(500, gin.H{"code": 500, "msg": "事务提交失败：" + err.Error()})
+		fmt.Printf("事务提交失败，regID=%d, err=%v\n", regID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code": 500,
+			"msg":  "补录申报失败，请重试",
+		})
 		return
 	}
 
-	// 10. 返回响应
-	c.JSON(200, gin.H{
+	// 11. 返回响应
+	c.JSON(http.StatusOK, gin.H{
 		"code": 200,
+		"msg":  "补录申报成功，待审核",
 		"data": gin.H{
 			"award_id": award.ID,
-			"reg_id":   reg.ID,
-			"msg":      "补录申报成功，待审核",
+			"reg_id":   regID,
 		},
 	})
 }
