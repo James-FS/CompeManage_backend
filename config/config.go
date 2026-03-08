@@ -15,7 +15,7 @@ func Init() {
 	viper.Set("database.host", getEnv("DB_HOST", "localhost"))
 	viper.Set("database.port", getEnv("DB_PORT", "3306"))
 	viper.Set("database.user", getEnv("DB_USER", "root"))
-	viper.Set("database.password", getEnv("DB_PASSWORD", ""))
+	viper.Set("database.password", getEnv("DB_PASSWORD", "123456"))
 	viper.Set("database.name", getEnv("DB_NAME", "CompeManage"))
 
 	// 服务器配置

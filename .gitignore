@@ -39,3 +39,6 @@ public/upload/*
 
 logs/
 *.log
+
+# Docker MySQL data
+mysql_data/

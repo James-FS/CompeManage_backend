@@ -72,12 +72,5 @@ func Login(c *gin.Context) {
 // 辅助函数：校验密码
 func checkPassword(dbPassword, inputPassword string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(dbPassword), []byte(inputPassword))
-	if err == nil {
-		return true
-	}
-	// 兼容明文 (正式上线需删除)
-	if dbPassword == inputPassword {
-		return true
-	}
-	return false
+	return err == nil
 }

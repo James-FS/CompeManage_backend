@@ -3,13 +3,75 @@ package controllers
 import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/models"
+	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+func levelPrefix(level string) (string, bool) {
+	switch strings.TrimSpace(level) {
+	case "国家级":
+		return "G", true
+	case "省级":
+		return "S", true
+	case "校级":
+		return "X", true
+	case "国际级":
+		return "I", true
+	default:
+		return "", false
+	}
+}
+
+func resolveCompetitionYear(yearText string) int {
+	year := 0
+	if strings.TrimSpace(yearText) != "" {
+		fmt.Sscanf(yearText, "%d", &year)
+	}
+	if year <= 0 {
+		year = time.Now().Year()
+	}
+	return year
+}
+
+func nextCompetitionCode(tx *gorm.DB, level string, year int) (string, error) {
+	prefix, ok := levelPrefix(level)
+	if !ok {
+		return "", fmt.Errorf("不支持的竞赛级别: %s", level)
+	}
+
+	base := fmt.Sprintf("%s%04d", prefix, year)
+
+	var latest models.CompDirectory
+	err := tx.Model(&models.CompDirectory{}).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Select("comp_code").
+		Where("comp_code LIKE ?", base+"%").
+		Order("comp_code DESC").
+		Limit(1).
+		Take(&latest).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", err
+	}
+
+	seq := 1
+	lastCode := latest.CompCode
+	if lastCode != "" && len(lastCode) >= len(base)+3 {
+		suffix := lastCode[len(lastCode)-3:]
+		if n, convErr := strconv.Atoi(suffix); convErr == nil {
+			seq = n + 1
+		}
+	}
+
+	return fmt.Sprintf("%s%03d", base, seq), nil
+}
 
 // CompListReq 定义列表查询参数结构体
 type CompListReq struct {
@@ -167,27 +229,39 @@ func CreateCompetition(c *gin.Context) {
 		return
 	}
 
-	// 将年份字符串转换为整数
-	year := 0
-	if req.Year != "" {
-		fmt.Sscanf(req.Year, "%d", &year)
-	}
+	year := resolveCompetitionYear(req.Year)
 
-	// 构造数据库模型
-	compDir := models.CompDirectory{
-		CompName:   req.CompName,
-		CompLevel:  req.CompLevel,
-		CompType:   req.CompType,
-		Organizer:  req.Organizer,
-		Undertaker: req.Undertaker,
-		ManagerID:  req.ManagerID,
-		CollegeID:  college.ID,
-		Year:       year,
-		Desc:       req.Desc,
-		Status:     0, // 0: 草稿状态
-	}
+	var created models.CompDirectory
+	err := database.DB.Transaction(func(tx *gorm.DB) error {
+		compCode, codeErr := nextCompetitionCode(tx, req.CompLevel, year)
+		if codeErr != nil {
+			return codeErr
+		}
 
-	if err := database.DB.Create(&compDir).Error; err != nil {
+		// 构造数据库模型
+		compDir := models.CompDirectory{
+			CompCode:   compCode,
+			CompName:   req.CompName,
+			CompLevel:  req.CompLevel,
+			CompType:   req.CompType,
+			Organizer:  req.Organizer,
+			Undertaker: req.Undertaker,
+			ManagerID:  req.ManagerID,
+			CollegeID:  college.ID,
+			Year:       year,
+			Desc:       req.Desc,
+			Status:     0, // 0: 草稿状态
+		}
+
+		if createErr := tx.Create(&compDir).Error; createErr != nil {
+			return createErr
+		}
+
+		created = compDir
+		return nil
+	})
+
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "创建失败", "error": err.Error()})
 		return
 	}
@@ -195,7 +269,7 @@ func CreateCompetition(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"code": 200,
 		"msg":  "创建成功",
-		"data": compDir,
+		"data": created,
 	})
 }
 
@@ -210,37 +284,46 @@ func BatchImportCompetition(c *gin.Context) {
 		return
 	}
 
-	// 构造批量插入的数据
+	// 批量导入也自动生成竞赛编号，确保规则一致且并发安全
 	var compDirs []models.CompDirectory
-	for _, item := range req.Items {
-		// 获取学院ID
-		var college models.College
-		if err := database.DB.Where("name = ?", item.College).First(&college).Error; err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "学院不存在: " + item.College})
-			return
+	err := database.DB.Transaction(func(tx *gorm.DB) error {
+		for _, item := range req.Items {
+			// 获取学院ID
+			var college models.College
+			if qErr := tx.Where("name = ?", item.College).First(&college).Error; qErr != nil {
+				return fmt.Errorf("学院不存在: %s", item.College)
+			}
+
+			year := resolveCompetitionYear(item.Year)
+			compCode, codeErr := nextCompetitionCode(tx, item.CompLevel, year)
+			if codeErr != nil {
+				return codeErr
+			}
+
+			compDir := models.CompDirectory{
+				CompCode:   compCode,
+				CompName:   item.CompName,
+				CompLevel:  item.CompLevel,
+				CompType:   item.CompType,
+				Organizer:  item.Organizer,
+				Undertaker: item.Undertaker,
+				ManagerID:  item.ManagerID,
+				CollegeID:  college.ID,
+				Year:       year,
+				Desc:       item.Desc,
+				Status:     0, // 0: 草稿状态
+			}
+
+			if createErr := tx.Create(&compDir).Error; createErr != nil {
+				return createErr
+			}
+
+			compDirs = append(compDirs, compDir)
 		}
+		return nil
+	})
 
-		// 将年份字符串转换为整数
-		year := 0
-		if item.Year != "" {
-			fmt.Sscanf(item.Year, "%d", &year)
-		}
-
-		compDirs = append(compDirs, models.CompDirectory{
-			CompName:   item.CompName,
-			CompLevel:  item.CompLevel,
-			CompType:   item.CompType,
-			Organizer:  item.Organizer,
-			Undertaker: item.Undertaker,
-			ManagerID:  item.ManagerID,
-			CollegeID:  college.ID,
-			Year:       year,
-			Desc:       item.Desc,
-			Status:     0, // 0: 草稿状态
-		})
-	}
-
-	if err := database.DB.CreateInBatches(compDirs, 100).Error; err != nil {
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "导入失败"})
 		return
 	}
