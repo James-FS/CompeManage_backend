@@ -17,7 +17,7 @@ type Register struct {
 	Competition       CompDirectory `gorm:"foreignKey:CompID" json:"competition,omitempty"`
 	Leader            User          `gorm:"foreignKey:LeaderID" json:"leader,omitempty"`
 	Advisor           *User         `gorm:"foreignKey:AdvisorID" json:"omitempty"`
-	Track             string        `gorm:"type:json" json:"track"`
+	Track             string        `gorm:"type:varchar(255)" json:"track"`
 	SupplementTime    *time.Time    `gorm:"comment:补录提交时间" json:"supplement_time"`
 	// 一个报名包含多个成员
 	Members []RegMember `gorm:"foreignKey:RegID" json:"members,omitempty"`
