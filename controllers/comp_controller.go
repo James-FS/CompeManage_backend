@@ -73,6 +73,24 @@ func nextCompetitionCode(tx *gorm.DB, level string, year int) (string, error) {
 	return fmt.Sprintf("%s%03d", base, seq), nil
 }
 
+func hasCompetitionStarted(compID uint, now time.Time) (bool, error) {
+	var detail models.CompDetail
+	err := database.DB.Select("comp_id", "comp_start_time").Where("comp_id = ?", compID).First(&detail).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	if detail.CompStartTime.IsZero() {
+		return false, nil
+	}
+
+	// 现在时间 >= 比赛开始时间，视为比赛已开始。
+	return !now.Before(detail.CompStartTime), nil
+}
+
 // CompListReq 定义列表查询参数结构体
 type CompListReq struct {
 	Page      int    `form:"page" binding:"required,min=1"`      // 页码
@@ -208,9 +226,24 @@ type CreateCompetitionReq struct {
 	Organizer  string `json:"organizer"`                     // 主办方
 	Undertaker string `json:"undertaker"`                    // 承办方
 	ManagerID  uint   `json:"manager_id" binding:"required"` // 赛事负责人ID
-	College    string `json:"college" binding:"required"`    // 所属学院
+	College    string `json:"college"`                       // 所属学院(可选)
 	Desc       string `json:"desc"`                          // 描述说明
 	Year       string `json:"year"`                          // 举办年份
+}
+
+func resolveCollegeIDByName(tx *gorm.DB, collegeName string) (*uint, error) {
+	name := strings.TrimSpace(collegeName)
+	if name == "" {
+		return nil, nil
+	}
+
+	var college models.College
+	if err := tx.Where("name = ?", name).First(&college).Error; err != nil {
+		return nil, fmt.Errorf("学院不存在: %s", name)
+	}
+
+	collegeID := college.ID
+	return &collegeID, nil
 }
 
 // CreateCompetition 新增赛事目录
@@ -222,17 +255,15 @@ func CreateCompetition(c *gin.Context) {
 		return
 	}
 
-	// 获取学院ID (根据学院名称查询)
-	var college models.College
-	if err := database.DB.Where("name = ?", req.College).First(&college).Error; err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "学院不存在"})
-		return
-	}
-
 	year := resolveCompetitionYear(req.Year)
 
 	var created models.CompDirectory
 	err := database.DB.Transaction(func(tx *gorm.DB) error {
+		collegeID, collegeErr := resolveCollegeIDByName(tx, req.College)
+		if collegeErr != nil {
+			return collegeErr
+		}
+
 		compCode, codeErr := nextCompetitionCode(tx, req.CompLevel, year)
 		if codeErr != nil {
 			return codeErr
@@ -247,7 +278,7 @@ func CreateCompetition(c *gin.Context) {
 			Organizer:  req.Organizer,
 			Undertaker: req.Undertaker,
 			ManagerID:  req.ManagerID,
-			CollegeID:  college.ID,
+			CollegeID:  collegeID,
 			Year:       year,
 			Desc:       req.Desc,
 			Status:     0, // 0: 草稿状态
@@ -288,10 +319,9 @@ func BatchImportCompetition(c *gin.Context) {
 	var compDirs []models.CompDirectory
 	err := database.DB.Transaction(func(tx *gorm.DB) error {
 		for _, item := range req.Items {
-			// 获取学院ID
-			var college models.College
-			if qErr := tx.Where("name = ?", item.College).First(&college).Error; qErr != nil {
-				return fmt.Errorf("学院不存在: %s", item.College)
+			collegeID, collegeErr := resolveCollegeIDByName(tx, item.College)
+			if collegeErr != nil {
+				return collegeErr
 			}
 
 			year := resolveCompetitionYear(item.Year)
@@ -308,7 +338,7 @@ func BatchImportCompetition(c *gin.Context) {
 				Organizer:  item.Organizer,
 				Undertaker: item.Undertaker,
 				ManagerID:  item.ManagerID,
-				CollegeID:  college.ID,
+				CollegeID:  collegeID,
 				Year:       year,
 				Desc:       item.Desc,
 				Status:     0, // 0: 草稿状态
@@ -468,6 +498,16 @@ func DeleteCompetition(c *gin.Context) {
 		return
 	}
 
+	started, err := hasCompetitionStarted(comp.ID, time.Now())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "校验赛事时间失败", "error": err.Error()})
+		return
+	}
+	if started {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "赛事已开始，不能删除"})
+		return
+	}
+
 	// 执行软删除
 	if err := database.DB.Delete(&comp).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "删除失败", "error": err.Error()})
@@ -526,6 +566,43 @@ func BatchDeleteCompetition(c *gin.Context) {
 		return
 	}
 
+	now := time.Now()
+	var comps []models.CompDirectory
+	if err := database.DB.Select("id", "comp_name").Where("id IN ?", req.IDs).Find(&comps).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询赛事失败", "error": err.Error()})
+		return
+	}
+
+	if len(comps) > 0 {
+		var details []models.CompDetail
+		if err := database.DB.Select("comp_id", "comp_start_time").Where("comp_id IN ?", req.IDs).Find(&details).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "校验赛事时间失败", "error": err.Error()})
+			return
+		}
+
+		startedCompIDs := make(map[uint]bool, len(details))
+		for _, detail := range details {
+			if !detail.CompStartTime.IsZero() && !now.Before(detail.CompStartTime) {
+				startedCompIDs[detail.CompID] = true
+			}
+		}
+
+		startedCompNames := make([]string, 0)
+		for _, comp := range comps {
+			if startedCompIDs[comp.ID] {
+				startedCompNames = append(startedCompNames, comp.CompName)
+			}
+		}
+
+		if len(startedCompNames) > 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code": 400,
+				"msg":  fmt.Sprintf("以下赛事已开始，不能删除：%s", strings.Join(startedCompNames, "、")),
+			})
+			return
+		}
+	}
+
 	// 执行批量软删除
 	result := database.DB.Delete(&models.CompDirectory{}, req.IDs)
 	if result.Error != nil {
@@ -568,7 +645,7 @@ type UpdateCompetitionReq struct {
 	Organizer  string `json:"organizer"`                     // 主办方
 	Undertaker string `json:"undertaker"`                    // 承办方
 	ManagerID  uint   `json:"manager_id" binding:"required"` // 赛事负责人ID
-	College    string `json:"college" binding:"required"`    // 所属学院
+	College    string `json:"college"`                       // 所属学院(可选)
 	Desc       string `json:"desc"`                          // 描述说明
 	Year       string `json:"year"`                          // 举办年份
 }
@@ -589,10 +666,9 @@ func UpdateCompetition(c *gin.Context) {
 		return
 	}
 
-	// 获取学院ID
-	var college models.College
-	if err := database.DB.Where("name = ?", req.College).First(&college).Error; err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "学院不存在"})
+	collegeID, collegeErr := resolveCollegeIDByName(database.DB, req.College)
+	if collegeErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": collegeErr.Error()})
 		return
 	}
 
@@ -609,9 +685,12 @@ func UpdateCompetition(c *gin.Context) {
 		"organizer":  req.Organizer,
 		"undertaker": req.Undertaker,
 		"manager_id": req.ManagerID,
-		"college_id": college.ID,
+		"college_id": nil,
 		"year":       year,
 		"desc":       req.Desc,
+	}
+	if collegeID != nil {
+		updates["college_id"] = *collegeID
 	}
 
 	if err := database.DB.Model(&comp).Updates(updates).Error; err != nil {
