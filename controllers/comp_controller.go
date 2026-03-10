@@ -167,6 +167,11 @@ func GetCompetitionList(c *gin.Context) {
 
 	if req.IsReg {
 		query = query.Preload("Detail")
+		if !req.IsMy {
+			query = query.Where("EXISTS (SELECT 1 FROM " +
+				"comp_details WHERE comp_details.comp_id = comp_directories.id " +
+				"AND YEAR(comp_details.reg_start_time) > 1970 AND YEAR(comp_details.reg_end_time) > 1970)")
+		}
 	}
 
 	// 计算总数 (用于分页)
