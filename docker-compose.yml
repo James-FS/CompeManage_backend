@@ -1,0 +1,17 @@
+
+services:
+  mysql-db:
+    image: mysql:8.0
+    container_name: compemanage_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456        # 设置数据库的 root 密码（此处设为 root）
+      MYSQL_DATABASE: CompeManage        # 与你 config.go 中的默认 DB_NAME 保持一致
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"                      # 映射到你本地的 3306 端口
+    volumes:
+      - ./mysql_data:/var/lib/mysql      # 数据持久化目录
+    command: 
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
