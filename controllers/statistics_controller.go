@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type levelDistributionItem struct {
@@ -54,69 +55,84 @@ func GetStatisticsDashboard(c *gin.Context) {
 		months = 6
 	}
 
-	compBase := database.DB.Model(&models.CompDirectory{})
-	if !isAdmin {
-		compBase = compBase.Where("manager_id = ?", userID)
+	newCompBase := func() *gorm.DB {
+		q := database.DB.Model(&models.CompDirectory{})
+		if !isAdmin {
+			q = q.Where("manager_id = ?", userID)
+		}
+		return q
 	}
 
-	regBase := database.DB.Model(&models.Register{}).
-		Joins("JOIN comp_directories ON comp_directories.id = registers.comp_id")
-	if !isAdmin {
-		regBase = regBase.Where("comp_directories.manager_id = ?", userID)
+	newRegBase := func() *gorm.DB {
+		q := database.DB.Model(&models.Register{}).
+			Joins("JOIN comp_directories ON comp_directories.id = registers.comp_id")
+		if !isAdmin {
+			q = q.Where("comp_directories.manager_id = ?", userID)
+		}
+		return q
 	}
 
-	awardBase := database.DB.Model(&models.Award{}).
-		Joins("JOIN registers ON registers.id = awards.reg_id").
-		Joins("JOIN comp_directories ON comp_directories.id = registers.comp_id")
-	if !isAdmin {
-		awardBase = awardBase.Where("comp_directories.manager_id = ?", userID)
+	newAwardBase := func() *gorm.DB {
+		q := database.DB.Model(&models.Award{}).
+			Joins("JOIN registers ON registers.id = awards.reg_id").
+			Joins("JOIN comp_directories ON comp_directories.id = registers.comp_id")
+		if !isAdmin {
+			q = q.Where("comp_directories.manager_id = ?", userID)
+		}
+		return q
 	}
 
-	summaryBase := database.DB.Model(&models.Summary{}).
-		Joins("JOIN comp_directories ON comp_directories.id = summaries.comp_id")
-	if !isAdmin {
-		summaryBase = summaryBase.Where("comp_directories.manager_id = ?", userID)
+	newSummaryBase := func() *gorm.DB {
+		q := database.DB.Model(&models.Summary{}).
+			Joins("JOIN comp_directories ON comp_directories.id = summaries.comp_id")
+		if !isAdmin {
+			q = q.Where("comp_directories.manager_id = ?", userID)
+		}
+		return q
 	}
 
-	declareBase := database.DB.Model(&models.CompDeclaration{})
-	if !isAdmin {
-		declareBase = declareBase.Where("created_by = ?", userID)
+	newDeclareBase := func() *gorm.DB {
+		q := database.DB.Model(&models.CompDeclaration{})
+		if !isAdmin {
+			q = q.Where("created_by = ?", userID)
+		}
+		return q
 	}
 
 	var totalCompetitions int64
-	if err := compBase.Count(&totalCompetitions).Error; err != nil {
+	if err := newCompBase().Count(&totalCompetitions).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询赛事总数失败", "error": err.Error()})
 		return
 	}
 
 	var totalRegistrations int64
-	if err := regBase.Count(&totalRegistrations).Error; err != nil {
+	if err := newRegBase().Count(&totalRegistrations).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询报名总数失败", "error": err.Error()})
 		return
 	}
 
 	var regPending int64
-	_ = regBase.Where("registers.status IN ?", []int{0, 3}).Count(&regPending).Error
+	_ = newRegBase().Where("registers.status IN ?", []int{0, 3}).Count(&regPending).Error
 	var regPassed int64
-	_ = regBase.Where("registers.status IN ?", []int{1, 4}).Count(&regPassed).Error
+	_ = newRegBase().Where("registers.status IN ?", []int{1, 4}).Count(&regPassed).Error
 
 	var declarePending int64
-	_ = declareBase.Where("declare_status = ?", 1).Count(&declarePending).Error
+	_ = newDeclareBase().Where("declare_status = ?", 1).Count(&declarePending).Error
 	var declareTotal int64
-	_ = declareBase.Count(&declareTotal).Error
+	_ = newDeclareBase().Count(&declareTotal).Error
 
 	var awardPending int64
-	_ = awardBase.Where("awards.status IN ?", []string{"draft", "pending", "0"}).Count(&awardPending).Error
+	_ = newAwardBase().Where("awards.status IN ?", []string{"draft", "pending", "0"}).Count(&awardPending).Error
 	var awardApproved int64
-	_ = awardBase.Where("awards.status IN ?", []string{"approved", "1"}).Count(&awardApproved).Error
+	_ = newAwardBase().Where("awards.status IN ?", []string{"approved", "1"}).Count(&awardApproved).Error
 
 	var summaryArchived int64
-	_ = summaryBase.Where("summaries.status = ?", 1).Count(&summaryArchived).Error
+	_ = newSummaryBase().Where("summaries.status = ?", 1).Count(&summaryArchived).Error
 
 	pendingAudits := declarePending + regPending + awardPending
 
 	levelRows := make([]levelDistributionItem, 0)
-	if err := compBase.Select("COALESCE(comp_level, '未分类') as name, COUNT(*) as value").
+	if err := newCompBase().Select("COALESCE(comp_level, '未分类') as name, COUNT(*) as value").
 		Group("comp_level").
 		Order("value desc").
 		Scan(&levelRows).Error; err != nil {
@@ -124,7 +140,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 	}
 
 	collegeRows := make([]collegeRankItem, 0)
-	if err := regBase.
+	if err := newRegBase().
 		Joins("LEFT JOIN users ON users.id = registers.leader_id").
 		Select("COALESCE(users.college, '未知学院') as name, COUNT(*) as value").
 		Group("users.college").
@@ -153,7 +169,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 	}
 
 	var regMonthRows []monthCount
-	regTrendQuery := regBase.Select("DATE_FORMAT(registers.create_time, '%Y-%m') as month, COUNT(*) as value").
+	regTrendQuery := newRegBase().Select("DATE_FORMAT(registers.create_time, '%Y-%m') as month, COUNT(*) as value").
 		Group("DATE_FORMAT(registers.create_time, '%Y-%m')")
 	_ = regTrendQuery.Scan(&regMonthRows).Error
 	for _, item := range regMonthRows {
@@ -163,7 +179,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 	}
 
 	var awardMonthRows []monthCount
-	awardTrendQuery := awardBase.Select("DATE_FORMAT(awards.create_time, '%Y-%m') as month, COUNT(*) as value").
+	awardTrendQuery := newAwardBase().Select("DATE_FORMAT(awards.create_time, '%Y-%m') as month, COUNT(*) as value").
 		Group("DATE_FORMAT(awards.create_time, '%Y-%m')")
 	_ = awardTrendQuery.Scan(&awardMonthRows).Error
 	for _, item := range awardMonthRows {

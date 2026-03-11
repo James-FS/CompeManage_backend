@@ -86,6 +86,37 @@ func ensureCompetitionCorePermissions() {
 	grantRolePermissionsByCode("competition_manager", []string{"comp:detail", "comp:update"})
 }
 
+func ensureAwardStudentPermissions() {
+	var awardParent models.Permission
+	if err := DB.Where("code = ?", "award").First(&awardParent).Error; err != nil {
+		log.Printf("未找到权限目录 award，跳过学生获奖权限补齐: %v", err)
+		return
+	}
+
+	ensurePerm := func(code, name, desc string) {
+		var existed models.Permission
+		if err := DB.Where("code = ?", code).First(&existed).Error; err == nil {
+			return
+		}
+
+		perm := models.Permission{
+			Name:        name,
+			Code:        code,
+			Type:        3,
+			ParentID:    awardParent.ID,
+			Description: desc,
+		}
+		if err := DB.Create(&perm).Error; err != nil {
+			log.Printf("补齐权限失败(%s): %v", code, err)
+		}
+	}
+
+	ensurePerm("award:student:my-list", "查看我的获奖", "学生查看个人获奖申报列表")
+	ensurePerm("award:student:supplement", "学生补录获奖", "学生提交获奖补录")
+
+	grantRolePermissionsByCode("student", []string{"award:student:my-list", "award:student:supplement"})
+}
+
 // ensureCompetitionRegConfigForAll 为已有赛事补齐报名设置的关键字段：
 // 报名开始/结束时间 + 个人赛/团队赛(ParticipantType)。
 // InitData 扩展版测试数据初始化
@@ -102,6 +133,7 @@ func InitData() {
 		log.Println("数据库已有数据，跳过初始化...")
 		ensureNoticeManagePermissions()
 		ensureCompetitionCorePermissions()
+		ensureAwardStudentPermissions()
 		return
 	}
 
@@ -185,6 +217,8 @@ func InitData() {
 		{Name: "查看获奖赛事列表", Code: "award:list", Type: 3, ParentID: awardSub.ID, Description: "查看获奖赛事列表"},
 		{Name: "查看赛事获奖信息", Code: "award:comp:list", Type: 3, ParentID: awardSub.ID, Description: "查看具体赛事的获奖信息"},
 		{Name: "导入获奖信息", Code: "award:import", Type: 3, ParentID: awardSub.ID, Description: "导入获奖信息"},
+		{Name: "查看我的获奖", Code: "award:student:my-list", Type: 3, ParentID: awardSub.ID, Description: "学生查看个人获奖申报列表"},
+		{Name: "学生补录获奖", Code: "award:student:supplement", Type: 3, ParentID: awardSub.ID, Description: "学生提交获奖补录"},
 
 		// 报名配置权限 (parent: regConfigSub)
 		{Name: "编辑报名配置", Code: "reg:config:edit", Type: 3, ParentID: regConfigSub.ID, Description: "编辑报名时间和规则配置"},
@@ -316,11 +350,13 @@ func InitData() {
 	var studentPerms []models.Permission
 	DB.Where("code IN ?", []string{
 		// 大分类
-		"registration", "notice",
+		"competition", "registration", "notice",
 		// 子分类
-		"reg:submit",
+		"award", "reg:submit",
 		// 报名提交权限
 		"reg:config:submit", "reg:status", "reg:resubmit", "reg:my-reg", "reg:my-reg:submit", "reg:user:list",
+		// 学生获奖权限
+		"award:student:my-list", "award:student:supplement",
 		// 通知查看
 		"notice:list", "notice:detail",
 		// 基础数据
@@ -348,6 +384,7 @@ func InitData() {
 
 	ensureNoticeManagePermissions()
 	ensureCompetitionCorePermissions()
+	ensureAwardStudentPermissions()
 
 	// --- G. 访客：无特殊权限 ---
 	// 不分配任何权限

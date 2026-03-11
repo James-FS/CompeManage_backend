@@ -191,8 +191,8 @@ func SetupRoutes(r *gin.Engine) {
 		award.GET("/comp/list",
 			controllers.SearchCompetition)
 		award.GET("/student/my-awards",
-			controllers.GetStudentMyAwardList,
-			middleware.RequirePermission("award:student:my-list"))
+			middleware.RequirePermission("award:student:my-list"),
+			controllers.GetStudentMyAwardList)
 		award.POST("/student/supplement",
 			controllers.SubmitStudentAwardSupplement)
 		//middleware.RequirePermission("award:student:supplement") // 权限标识自定义
