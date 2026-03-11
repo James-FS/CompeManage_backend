@@ -351,12 +351,12 @@ func SubmitRegistration(c *gin.Context) {
 	}
 
 	// 2. 获取当前登录用户 (队长/本人)
-	userID, exists := c.Get("user_id")
+	_, exists := c.Get("user_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "未登录"})
 		return
 	}
-	uid := userID.(uint)
+	//uid := userID.(uint)
 
 	var comp models.CompDirectory
 
@@ -397,9 +397,21 @@ func SubmitRegistration(c *gin.Context) {
 		return
 	}
 
+	var leader models.User
+	if err := database.DB.Where("username = ?", req.Leader.StuID).First(&leader).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			removeUploadedFile(req.AttachmentUrl)
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "负责人学号不存在"})
+			return
+		}
+		removeUploadedFile(req.AttachmentUrl)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询负责人信息失败"})
+		return
+	}
+
 	register := models.Register{
 		CompID:        req.CompID,
-		LeaderID:      uid,
+		LeaderID:      leader.ID,
 		TeamName:      req.TeamName,
 		AttachmentUrl: req.AttachmentUrl,
 		Status:        0, // 默认 0:待审核
