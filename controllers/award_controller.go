@@ -382,16 +382,30 @@ func SearchCompetition(c *gin.Context) {
 		"data": results,
 	})
 
-} // 4. 获取获奖公示详情 (只读列表)
+} // GetCompAwards 获取获奖公示详情 (只读列表)
 func GetCompAwards(c *gin.Context) {
 	compID := c.Query("comp_id")
 
+	// 先查赛事信息获取 award_hierarchy（奖项级别列表）
+	var comp models.CompDirectory
+	if err := database.DB.Preload("Detail").First(&comp, compID).Error; err != nil {
+		c.JSON(500, gin.H{"code": 500, "msg": "赛事不存在"})
+		return
+	}
+
+	// 解析奖项等级列表
+	var awardHierarchy []string
+	if err := json.Unmarshal([]byte(comp.Detail.AwardHierarchy), &awardHierarchy); err != nil {
+		awardHierarchy = []string{}
+	}
+
 	var awards []models.Award
 
-	// 关联 Register 和 Register.Leader 获取展示信息
 	err := database.DB.
 		Preload("Register").
 		Preload("Register.Leader").
+		Preload("Register.Competition").
+		Preload("Register.Members"). // ✅ 确保预加载成员信息
 		Where("comp_id = ?", compID).
 		Order("level_rank ASC").
 		Find(&awards).Error
@@ -405,20 +419,67 @@ func GetCompAwards(c *gin.Context) {
 	var list []gin.H
 	for _, a := range awards {
 		leaderName := "未知"
+		leaderCollege := ""
+
 		if a.Register.Leader.ID != 0 {
 			leaderName = a.Register.Leader.Realname
+			leaderCollege = a.Register.Leader.College
+		}
+
+		// 从 RegMember 中获取队长的学院（兜底）
+		if leaderCollege == "" {
+			for _, m := range a.Register.Members {
+				if m.IsLeader {
+					leaderCollege = m.College
+					break
+				}
+			}
+		}
+
+		// 从 Register.AdvisorInfo 解析指导老师信息
+		advisorName := ""
+		if a.Register.AdvisorInfo != "" {
+			var advisorInfo models.AdvisorInfo
+			if err := json.Unmarshal([]byte(a.Register.AdvisorInfo), &advisorInfo); err == nil {
+				advisorName = advisorInfo.Name
+			}
+		}
+
+		// ✅ 新增：构建成员信息列表（不包括队长）
+		var members []gin.H
+		for _, m := range a.Register.Members {
+			if !m.IsLeader { // 只返回非队长成员
+				members = append(members, gin.H{
+					"name":       m.Name,
+					"student_id": m.StudentID,
+					"phone":      m.Phone,
+					"email":      m.Email,
+					"college":    m.College,
+				})
+			}
 		}
 
 		list = append(list, gin.H{
-			"id":          a.ID,
-			"team_name":   a.Register.TeamName,
-			"leader_name": leaderName,
-			"award_level": a.AwardLevel,
-			"award_name":  a.AwardName,
+			"id":             a.ID,
+			"team_name":      a.Register.TeamName,
+			"leader_name":    leaderName,
+			"leader_college": leaderCollege,
+			"award_level":    a.AwardLevel,
+			"award_name":     a.AwardName,
+			"comp_level":     a.Register.Competition.CompLevel,
+			"advisor_name":   advisorName,
+			"members":        members, // ✅ 新增：成员列表
 		})
 	}
 
-	c.JSON(200, gin.H{"code": 200, "data": list})
+	// 返回结构，data 包含 award_hierarchy 和 list
+	c.JSON(200, gin.H{
+		"code": 200,
+		"data": gin.H{
+			"award_hierarchy": awardHierarchy,
+			"list":            list,
+		},
+	})
 }
 
 // GetStudentMyAwardList 学生端：获取本人已申报的获奖列表（我的奖项）
