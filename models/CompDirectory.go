@@ -9,7 +9,7 @@ type CompDirectory struct {
 	CompLevel  string `gorm:"column:comp_level;type:varchar(100);comment:竞赛级别(如:国家级,省级)" json:"comp_level"`
 	Organizer  string `gorm:"column:organizer;type:varchar(255);comment:主办方" json:"organizer"`
 	Undertaker string `gorm:"column:undertaker;type:varchar(255);comment:承办方" json:"undertaker"`
-	CollegeID  uint   `gorm:"column:college_id;index;comment:所属学院ID" json:"college_id"`
+	CollegeID  *uint  `gorm:"column:college_id;index;comment:所属学院ID" json:"college_id"`
 	Year       int    `gorm:"column:year;comment:举办年份" json:"year"`
 	ManagerID  uint   `gorm:"column:manager_id;index;comment:负责人ID(关联用户表)" json:"manager_id"`
 	Status     int8   `gorm:"column:status;type:tinyint;default:0;comment:状态(0:草稿 1:发布 2:结束)" json:"status"`

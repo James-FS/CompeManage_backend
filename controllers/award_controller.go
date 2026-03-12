@@ -293,12 +293,16 @@ func ImportAward(c *gin.Context) {
 		var award models.Award
 		err = tx.Where("reg_id = ?", reg.ID).First(&award).Error
 		if err != nil {
+			now := time.Now()
 			newAward := models.Award{
 				CompID:     uint(compID),
 				RegID:      reg.ID,
 				LevelRank:  levelRank,
 				AwardLevel: awardLevel,
 				AwardName:  awardName,
+				Status:     "approved",
+				Source:     "import",
+				AuditTime:  &now,
 			}
 			if err := tx.Create(&newAward).Error; err == nil {
 				successCount++
@@ -307,9 +311,14 @@ func ImportAward(c *gin.Context) {
 				failReasons = append(failReasons, fmt.Sprintf("第%d行：创建奖项失败 - %s", i+1, err.Error()))
 			}
 		} else {
+			now := time.Now()
 			award.LevelRank = levelRank
 			award.AwardLevel = awardLevel
 			award.AwardName = awardName
+			award.Status = "approved"
+			award.Source = "import"
+			award.AuditTime = &now
+			award.RejectReason = ""
 			if err := tx.Save(&award).Error; err == nil {
 				successCount++
 			} else {
@@ -516,7 +525,7 @@ func GetStudentMyAwardList(c *gin.Context) {
 	dbQuery := database.DB.Model(&models.Award{}).
 		Preload("Register").                                     // 关联报名记录（获取团队名称）
 		Preload("Register.Leader").                              // 关联负责人信息（获取学生姓名/学号）
-		Preload("Register.CompDirectory").                       // 关联赛事信息（获取赛事名称/年份）
+		Preload("Register.Competition").                         // 关联赛事信息（获取赛事名称/年份）
 		Joins("JOIN registers ON awards.reg_id = registers.id"). // 关联报名表，通过leader_id筛选学生
 		Where("registers.leader_id = ?", studentID)              // 核心筛选：仅当前学生的申报
 

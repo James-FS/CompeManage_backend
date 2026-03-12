@@ -523,6 +523,7 @@ func AuditDeclare(c *gin.Context) {
 
 	switch req.AuditStatus {
 	case 2: // 审核通过
+		collegeID := declaration.CollegeID
 		// 创建赛事目录
 		newComp := models.CompDirectory{
 			CompName:   declaration.CompName,
@@ -530,7 +531,7 @@ func AuditDeclare(c *gin.Context) {
 			CompType:   declaration.CompType,
 			Organizer:  declaration.Organizer,
 			Undertaker: declaration.Undertaker,
-			CollegeID:  declaration.CollegeID,
+			CollegeID:  &collegeID,
 			ManagerID:  declaration.ManagerID,
 			Year:       declaration.Year,
 			Desc:       declaration.Desc,
