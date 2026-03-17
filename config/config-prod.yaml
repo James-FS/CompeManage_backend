@@ -1,0 +1,8 @@
+logger:
+  level: "info"
+  filename: logs/prod.log
+  max_size: 100
+  max_backups: 30
+  max_age: 30
+  compress: true
+  show_line: false

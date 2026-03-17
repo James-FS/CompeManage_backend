@@ -9,7 +9,7 @@ import (
 )
 
 // 定义加密的密钥
-// 在正式环境，这个值应该从配置文件(config.yaml)读取
+// 在正式环境，这个值应该从配置文件(config-dev.yaml)读取
 func getJwtSecret() []byte {
 	return []byte(config.GetString("jwt.secret"))
 }
