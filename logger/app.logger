@@ -1,0 +1,136 @@
+{"time":"2026-03-17T15:00:10.295652+08:00","level":"INFO","msg":"数据库连接成功"}
+{"time":"2026-03-17T15:00:10.6433595+08:00","level":"INFO","msg":"数据库自动迁移成功"}
+{"time":"2026-03-17T15:00:10.64399+08:00","level":"INFO","msg":"数据库已有数据，跳过初始化..."}
+{"time":"2026-03-17T15:00:10.6533258+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-03-17T15:00:10.6570797+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-03-17T15:00:10.659939+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-03-17T15:00:10.6644692+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-03-17T15:00:10.6748452+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-03-17T15:00:10.6786294+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-03-17T15:00:10.6819731+08:00","level":"INFO","msg":"已补齐角色 student 的通知权限"}
+{"time":"2026-03-17T15:00:10.6850694+08:00","level":"INFO","msg":"服务器启动：http://localhost:8080"}
+{"time":"2026-03-17T15:00:10.6891353+08:00","level":"INFO","msg":"[Scheduler] 已将 1 个竞赛状态更新为已结束"}
+{"time":"2026-03-17T15:00:32.2218065+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":46},"msg":"接口响应成功","path":"/api/notice/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:08:56.3981981+08:00","level":"INFO","msg":"数据库连接成功"}
+{"time":"2026-03-17T15:08:56.5340921+08:00","level":"INFO","msg":"数据库自动迁移成功"}
+{"time":"2026-03-17T15:08:56.5340921+08:00","level":"INFO","msg":"数据库已有数据，跳过初始化..."}
+{"time":"2026-03-17T15:08:56.5391619+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-03-17T15:08:56.5434906+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-03-17T15:08:56.5463018+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-03-17T15:08:56.5498616+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-03-17T15:08:56.5527488+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-03-17T15:08:56.5549703+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-03-17T15:08:56.5597421+08:00","level":"INFO","msg":"已补齐角色 student 的通知权限"}
+{"time":"2026-03-17T15:08:56.5623712+08:00","level":"INFO","msg":"服务器启动：http://localhost:8080"}
+{"time":"2026-03-17T15:09:08.1938192+08:00","level":"ERROR","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":37},"msg":"接口响应错误","path":"/api/reg/submit","method":"POST","biz_code":409,"msg":"您已报名过该赛事，请勿重复提交","ip":"::1"}
+{"time":"2026-03-17T15:21:03.4690064+08:00","level":"ERROR","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":37},"msg":"接口响应错误","path":"/api/reg/submit","method":"POST","biz_code":409,"msg":"您已报名过该赛事，请勿重复提交","ip":"::1"}
+{"time":"2026-03-17T15:21:23.9633652+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":46},"msg":"接口响应成功","path":"/api/notice/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:21:32.0883683+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":46},"msg":"接口响应成功","path":"/api/reg/my-reg","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:21:40.1240124+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":46},"msg":"接口响应成功","path":"/api/reg/user/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:21:48.4034895+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":46},"msg":"接口响应成功","path":"/api/reg/user/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:23:17.4503418+08:00","level":"INFO","msg":"数据库连接成功"}
+{"time":"2026-03-17T15:23:17.6301845+08:00","level":"INFO","msg":"数据库自动迁移成功"}
+{"time":"2026-03-17T15:23:17.6301845+08:00","level":"INFO","msg":"数据库已有数据，跳过初始化..."}
+{"time":"2026-03-17T15:23:17.6343328+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-03-17T15:23:17.6376346+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-03-17T15:23:17.6416101+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-03-17T15:23:17.6454362+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-03-17T15:23:17.6495571+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-03-17T15:23:17.6529725+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-03-17T15:23:17.6591333+08:00","level":"INFO","msg":"已补齐角色 student 的通知权限"}
+{"time":"2026-03-17T15:23:17.6612038+08:00","level":"INFO","msg":"服务器启动：http://localhost:8080"}
+{"time":"2026-03-17T15:23:21.3269504+08:00","level":"WARN","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":37},"msg":"接口响应错误","path":"/api/award/student/supplement","method":"POST","biz_code":500,"msg":"服务器内部错误，请稍后重试","ip":"::1"}
+{"time":"2026-03-17T15:26:51.1844755+08:00","level":"INFO","msg":"数据库连接成功"}
+{"time":"2026-03-17T15:26:51.4523893+08:00","level":"INFO","msg":"数据库自动迁移成功"}
+{"time":"2026-03-17T15:26:51.4529905+08:00","level":"INFO","msg":"数据库已有数据，跳过初始化..."}
+{"time":"2026-03-17T15:26:51.4590519+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-03-17T15:26:51.464341+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-03-17T15:26:51.4693482+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-03-17T15:26:51.4750997+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-03-17T15:26:51.4815208+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-03-17T15:26:51.4863993+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-03-17T15:26:51.4923203+08:00","level":"INFO","msg":"已补齐角色 student 的通知权限"}
+{"time":"2026-03-17T15:26:51.4981643+08:00","level":"INFO","msg":"服务器启动：http://localhost:8080"}
+{"time":"2026-03-17T15:27:13.2688768+08:00","level":"WARN","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":37},"msg":"接口响应错误","path":"/api/award/student/supplement","method":"POST","biz_code":500,"msg":"服务器内部错误，请稍后重试","ip":"::1"}
+{"time":"2026-03-17T15:28:43.3507711+08:00","level":"INFO","msg":"数据库连接成功"}
+{"time":"2026-03-17T15:28:43.4891989+08:00","level":"INFO","msg":"数据库自动迁移成功"}
+{"time":"2026-03-17T15:28:43.4897298+08:00","level":"INFO","msg":"数据库已有数据，跳过初始化..."}
+{"time":"2026-03-17T15:28:43.4953919+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-03-17T15:28:43.4997275+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-03-17T15:28:43.5027333+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-03-17T15:28:43.5073509+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-03-17T15:28:43.5117312+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-03-17T15:28:43.5192494+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-03-17T15:28:43.5254048+08:00","level":"INFO","msg":"已补齐角色 student 的通知权限"}
+{"time":"2026-03-17T15:28:43.5288345+08:00","level":"INFO","msg":"服务器启动：http://localhost:8080"}
+{"time":"2026-03-17T15:28:45.1121582+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/award/student/supplement","method":"POST","biz_code":200}
+{"time":"2026-03-17T15:28:47.1745079+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/reg/my-reg","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:28:56.2726572+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/login","method":"POST","biz_code":200}
+{"time":"2026-03-17T15:28:56.3197121+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:28:56.3272158+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/notice/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:28:56.3277696+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:28:56.3330499+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:28:59.3891477+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/award/audit/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:00.4955104+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/award/audit/detail/2","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:35.9247819+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/login","method":"POST","biz_code":200}
+{"time":"2026-03-17T15:29:35.9742555+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/notice/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:35.9764916+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:35.9776473+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:35.982014+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:36.6242857+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/reg/my-reg","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:38.7548295+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/reg/status","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:45.9327021+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/login","method":"POST","biz_code":200}
+{"time":"2026-03-17T15:29:45.9881317+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/notice/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:45.9921875+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:45.997957+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:46.0026149+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:48.9341298+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/login","method":"POST","biz_code":200}
+{"time":"2026-03-17T15:29:48.9804121+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/notice/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:48.9836667+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:48.9836667+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:48.9878787+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:58.8519601+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/login","method":"POST","biz_code":200}
+{"time":"2026-03-17T15:29:58.896809+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/notice/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:58.9061516+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:58.9066785+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:29:58.910952+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:30:03.7145776+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/login","method":"POST","biz_code":200}
+{"time":"2026-03-17T15:30:03.7601725+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/notice/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:30:03.76228+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:30:03.76228+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:30:03.7678258+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:30:04.329534+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/reg/my-reg","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:30:05.985446+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/reg/config/get","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:30:05.9860483+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/reg/status","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:30:25.8420653+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/reg/my-reg","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:30:32.4171192+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/reg/config/get","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:30:32.4201054+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/reg/status","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:30:34.5765192+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/reg/my-reg","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:30:35.3231136+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/reg/config/get","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:30:35.3236373+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/reg/status","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:30:36.7844361+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/reg/my-reg","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:30:43.3202552+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:30:48.5005607+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/reg/my-reg","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:30:50.4309063+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"E:/CompeManage_backend/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/award/student/my-awards","method":"GET","biz_code":200}
+{"time":"2026-03-17T15:57:25.8524953+08:00","level":"INFO","msg":"数据库连接成功"}
+{"time":"2026-03-17T15:57:25.9843457+08:00","level":"INFO","msg":"数据库自动迁移成功"}
+{"time":"2026-03-17T15:57:25.9850621+08:00","level":"INFO","msg":"数据库已有数据，跳过初始化..."}
+{"time":"2026-03-17T15:57:25.9902841+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-03-17T15:57:25.9944279+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-03-17T15:57:25.9966659+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-03-17T15:57:26.0012563+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-03-17T15:57:26.0042295+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-03-17T15:57:26.0064618+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-03-17T15:57:26.0102218+08:00","level":"INFO","msg":"已补齐角色 student 的通知权限"}
+{"time":"2026-03-17T15:57:26.0124035+08:00","level":"INFO","msg":"服务器启动：http://localhost:8080"}
+{"time":"2026-03-17T16:06:00.1735271+08:00","level":"INFO","msg":"数据库连接成功"}
+{"time":"2026-03-17T16:06:00.2955839+08:00","level":"INFO","msg":"数据库自动迁移成功"}
+{"time":"2026-03-17T16:06:00.2955839+08:00","level":"INFO","msg":"数据库已有数据，跳过初始化..."}
+{"time":"2026-03-17T16:06:00.3002171+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-03-17T16:06:00.3032116+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-03-17T16:06:00.3060099+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-03-17T16:06:00.3095319+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-03-17T16:06:00.312272+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-03-17T16:06:00.3149063+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-03-17T16:06:00.3184692+08:00","level":"INFO","msg":"已补齐角色 student 的通知权限"}
+{"time":"2026-03-17T16:06:00.3205855+08:00","level":"INFO","msg":"服务器启动：http://localhost:8080"}

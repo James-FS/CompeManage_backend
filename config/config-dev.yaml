@@ -1,0 +1,9 @@
+# 日志配置
+logger:
+  level: "debug"              # 日志级别: debug, info, warn, error
+  filename: "./logger/app.logger"  # 日志存储路径
+  max_size: 100               # 每个日志文件最大 100MB
+  max_backups: 5              # 保留最近 5 个日志文件
+  max_age: 30                 # 日志保留 30 天
+  compress: true              # 是否压缩旧日志
+  show_line: true             # 是否在日志中显示代码行号
