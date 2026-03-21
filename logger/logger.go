@@ -73,3 +73,22 @@ func SetupLogger() {
 	handler := slog.NewJSONHandler(multiWriter, &slog.HandlerOptions{Level: level, AddSource: cfg.ShowLine})
 	slog.SetDefault(slog.New(handler))
 }
+
+// Info 封装，支持更强的语义
+func Info(msg string, args ...any) {
+	slog.Default().Info(msg, args...)
+}
+
+// Error 封装，自动处理 error 对象
+func Error(msg string, args ...any) {
+	slog.Default().Error(msg, args...)
+}
+
+func Debug(msg string, args ...any) {
+	slog.Default().Error(msg, args...)
+}
+
+func Fatal(msg string, args ...any) {
+	slog.Default().Error(msg, args...)
+	os.Exit(1)
+}

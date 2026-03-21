@@ -2,8 +2,13 @@ package controllers
 
 import (
 	"CompeManage_backend/database"
+	"CompeManage_backend/logger"
+	"CompeManage_backend/middleware"
 	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
+	"context"
+	"crypto/md5"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -14,6 +19,15 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+func clearCompListCache() {
+	rdb := middleware.GetRedisClient()
+	ctx := context.Background()
+	iter := rdb.Scan(ctx, 0, "cache:comp_list:*", 0).Iterator()
+	for iter.Next(ctx) {
+		rdb.Del(ctx, iter.Val())
+	}
+}
 
 func levelPrefix(level string) (string, bool) {
 	switch strings.TrimSpace(level) {
@@ -109,7 +123,21 @@ func GetCompetitionList(c *gin.Context) {
 		utils.BadRequest(c, "参数错误")
 		return
 	}
+	reqBytes, _ := json.Marshal(req)
+	cacheKey := fmt.Sprintf("cache:comp_list:%x", md5.Sum(reqBytes))
+	rdb := middleware.GetRedisClient()
+	ctx := c.Request.Context()
 
+	cacheData, err := rdb.Get(ctx, cacheKey).Result()
+	if err == nil {
+		var resp gin.H
+		if json.Unmarshal([]byte(cacheData), &resp) == nil {
+			logger.Info("赛事列表缓存命中", "cache_key", cacheKey)
+			utils.Success(c, resp)
+			return
+		}
+	}
+	logger.Debug("赛事列表缓存未命中", "cache_key", cacheKey)
 	query := database.DB.Model(&models.CompDirectory{})
 
 	if req.CompName != "" {
@@ -187,13 +215,18 @@ func GetCompetitionList(c *gin.Context) {
 		utils.InternalServerError(c, "查询数据失败", err)
 		return
 	}
-
-	utils.Success(c, gin.H{
+	responseData := gin.H{
 		"list":  list,
 		"total": total,
 		"page":  req.Page,
 		"size":  req.PageSize,
-	})
+	}
+	go func() {
+		data, _ := json.Marshal(responseData)
+		rdb.Set(context.Background(), cacheKey, data, 5*time.Minute).Result()
+	}()
+	utils.Success(c, responseData)
+
 }
 
 type CreateCompetitionReq struct {
@@ -270,7 +303,7 @@ func CreateCompetition(c *gin.Context) {
 		utils.InternalServerError(c, "创建失败", err)
 		return
 	}
-
+	clearCompListCache()
 	utils.SuccessWithMessage(c, "创建成功", created)
 }
 
@@ -451,7 +484,7 @@ func DeleteCompetition(c *gin.Context) {
 		utils.InternalServerError(c, "删除失败", err)
 		return
 	}
-
+	clearCompListCache()
 	utils.SuccessWithMessage(c, "删除成功", nil)
 }
 
@@ -477,7 +510,7 @@ func RestoreCompetition(c *gin.Context) {
 		utils.InternalServerError(c, "恢复失败", err)
 		return
 	}
-
+	clearCompListCache()
 	utils.SuccessWithMessage(c, "恢复成功", nil)
 }
 
@@ -531,7 +564,7 @@ func BatchDeleteCompetition(c *gin.Context) {
 		utils.InternalServerError(c, "删除失败", result.Error)
 		return
 	}
-
+	clearCompListCache()
 	utils.Success(c, gin.H{"deleted_count": result.RowsAffected})
 }
 
@@ -603,6 +636,6 @@ func UpdateCompetition(c *gin.Context) {
 		utils.InternalServerError(c, "更新失败", err)
 		return
 	}
-
+	clearCompListCache()
 	utils.SuccessWithMessage(c, "更新成功", nil)
 }
