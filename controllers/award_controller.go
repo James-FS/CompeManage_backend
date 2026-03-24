@@ -2,8 +2,11 @@ package controllers
 
 import (
 	"CompeManage_backend/database"
+	"CompeManage_backend/logger"
+	"CompeManage_backend/middleware"
 	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,6 +78,13 @@ func mapAwardStatusFromInt(status int) string {
 	}
 }
 
+func clearAwardCache(compID interface{}) {
+	rdb := middleware.GetRedisClient()
+	ctx := context.Background()
+	// 清除该赛事对应的奖项缓存
+	cacheKey := fmt.Sprintf("cache:awards:%v", compID)
+	rdb.Del(ctx, cacheKey)
+}
 func getLeaderMember(members []models.RegMember, fallback models.User) (string, string, string, string) {
 	for _, m := range members {
 		if m.IsLeader {
@@ -323,6 +333,7 @@ func ImportAward(c *gin.Context) {
 	if len(failReasons) > 0 {
 		resp["fail_reasons"] = failReasons
 	}
+	clearAwardCache(compID)
 	utils.SuccessWithMessage(c, fmt.Sprintf("成功处理 %d 条，失败 %d 条", successCount, failCount), resp)
 }
 
@@ -364,6 +375,24 @@ func SearchCompetition(c *gin.Context) {
 
 func GetCompAwards(c *gin.Context) {
 	compID := c.Query("comp_id")
+	if compID == "" {
+		utils.BadRequest(c, "缺少赛事ID")
+		return
+	}
+
+	cacheKey := fmt.Sprintf("cache:awards:%s", compID)
+	rdb := middleware.GetRedisClient()
+	ctx := c.Request.Context()
+
+	catchData, err := rdb.Get(ctx, cacheKey).Result()
+	if err == nil {
+		var resp gin.H
+		if json.Unmarshal([]byte(catchData), &resp) == nil {
+			logger.Info("获奖列表缓存命中", "cache_key", cacheKey)
+			utils.Success(c, resp)
+			return
+		}
+	}
 
 	var comp models.CompDirectory
 	if err := database.DB.Preload("Detail").First(&comp, compID).Error; err != nil {
@@ -378,7 +407,7 @@ func GetCompAwards(c *gin.Context) {
 
 	var awards []models.Award
 
-	err := database.DB.
+	err = database.DB.
 		Preload("Register").
 		Preload("Register.Leader").
 		Preload("Register.Competition").
@@ -444,7 +473,10 @@ func GetCompAwards(c *gin.Context) {
 			"members":        members,
 		})
 	}
-
+	go func() {
+		data, _ := json.Marshal(list)
+		rdb.Set(context.Background(), cacheKey, data, 30*time.Minute).Result()
+	}()
 	utils.Success(c, gin.H{
 		"award_hierarchy": awardHierarchy,
 		"list":            list,
@@ -656,6 +688,7 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 		return
 	}
 
+	clearAwardCache(req.CompID)
 	utils.SuccessWithMessage(c, "补录申报成功，待审核", gin.H{
 		"award_id": award.ID,
 		"reg_id":   regID,
@@ -853,10 +886,10 @@ func PassAwardAudit(c *gin.Context) {
 	}
 
 	if err := tx.Commit().Error; err != nil {
-		utils.InternalServerError(c, "事务提交失���", err)
+		utils.InternalServerError(c, "事务提交失败", err)
 		return
 	}
-
+	clearAwardCache(id)
 	utils.SuccessWithMessage(c, "审核已通过", nil)
 }
 

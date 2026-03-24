@@ -2,7 +2,13 @@ package controllers
 
 import (
 	"CompeManage_backend/database"
+	"CompeManage_backend/logger"
+	"CompeManage_backend/middleware"
 	"CompeManage_backend/models"
+	"CompeManage_backend/utils"
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -49,7 +55,19 @@ func GetStatisticsDashboard(c *gin.Context) {
 	}
 	userID := userIDVal.(uint)
 	isAdmin := checkUserIsAdmin(userID)
+	cacheKey := fmt.Sprintf("cache:stats:dashboard:%v:%t", userID, isAdmin)
+	rdb := middleware.GetRedisClient()
+	ctx := c.Request.Context()
 
+	cacheData, err := rdb.Get(ctx, cacheKey).Result()
+	if err == nil {
+		var cachedResp gin.H
+		if json.Unmarshal([]byte(cacheData), &cachedResp) == nil {
+			logger.Info("统计看板缓存命中", "cache_key", cacheKey)
+			c.JSON(http.StatusOK, cachedResp)
+			return
+		}
+	}
 	months, _ := strconv.Atoi(c.DefaultQuery("months", "6"))
 	if months <= 0 || months > 24 {
 		months = 6
@@ -213,7 +231,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 		{Title: "总结待归档", Value: maxInt64(totalCompetitions-summaryArchived, 0), Path: "/summary/summary-list"},
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	responseData := gin.H{
 		"code": 200,
 		"msg":  "获取成功",
 		"data": gin.H{
@@ -237,7 +255,17 @@ func GetStatisticsDashboard(c *gin.Context) {
 			"funnel": funnel,
 			"todos":  todos,
 		},
-	})
+	}
+
+	// 4. 异步写入 Redis，设置 10 分钟过期
+	go func() {
+		data, _ := json.Marshal(responseData)
+		// 使用 context.Background() 确保请求结束后写入依然能完成
+		rdb.Set(context.Background(), cacheKey, data, 10*time.Minute)
+		// 现在只有定时清理缓存，没有其他函数主动删除的逻辑，更新后可能会导致和实际数据不一致
+	}()
+
+	utils.Success(c, responseData)
 }
 
 func maxInt64(a int64, b int64) int64 {
