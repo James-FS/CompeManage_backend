@@ -4,6 +4,17 @@ import (
 	"time"
 )
 
+// 新增：赛题结构体（对应前端questions数组）
+type Question struct {
+	Title string `json:"title"` // 赛题名称
+	Score string `json:"score"` // 赛题分值（兼容前端string类型输入）
+}
+
+type Track struct {
+	TrackName string     `json:"trackName"` // 赛道名称（和前端字段完全一致）
+	Questions []Question `json:"questions"` // 该赛道下的赛题列表
+}
+
 type CompDetail struct {
 	ID                 uint      `gorm:"primaryKey;autoIncrement;comment:主键ID" json:"id"`
 	CompID             uint      `gorm:"column:comp_id;not null;index;comment:关联竞赛目录ID" json:"comp_id"`
@@ -22,6 +33,7 @@ type CompDetail struct {
 	NeedAdvisor        int       `gorm:"column:need_advisor;default:0;comment:是否需要指导老师,0:无需 1:可选 2:必须" json:"need_advisor"`
 	AttachmentTemplate string    `gorm:"column:attachment_template;type:varchar(255);comment:附件模板地址" json:"attachment_template"`
 	AwardHierarchy     string    `gorm:"column:award_hierarchy;type:json;comment:奖项等级排序配置" json:"award_hierarchy"`
+	Track              string    `gorm:"column:track;type:json;comment:赛道+赛题配置" json:"track"`
 	BaseModel
 }
 
