@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"CompeManage_backend/config"
 	"errors"
 	"time"
 
@@ -8,8 +9,10 @@ import (
 )
 
 // 定义加密的密钥
-// 在正式环境，这个值应该从配置文件(config.yaml)读取
-var jwtSecret = []byte("compe_manage_secret_key_2026")
+// 在正式环境，这个值应该从配置文件(config-dev.yaml)读取
+func getJwtSecret() []byte {
+	return []byte(config.GetString("jwt.secret"))
+}
 
 // MyClaims 自定义载荷
 type MyClaims struct {
@@ -22,7 +25,7 @@ type MyClaims struct {
 // GenerateToken 生成JWT令牌
 // 参数：用户ID, 用户名, 角色标识
 func GenerateToken(userID uint, username string, roleCode string) (string, error) {
-	expirationTime := time.Now().Add(7 * 24 * time.Hour)
+	expirationTime := time.Now().Add(24 * time.Hour)
 
 	claims := &MyClaims{
 		UserID:   userID,
@@ -37,7 +40,8 @@ func GenerateToken(userID uint, username string, roleCode string) (string, error
 
 	// 使用 HS256 算法进行签名
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
+	// 使用动态密钥
+	return token.SignedString(getJwtSecret())
 }
 
 // ParseToken 解析并验证 JWT 令牌
@@ -48,7 +52,8 @@ func ParseToken(tokenString string) (*MyClaims, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errors.New("unexpected signing method")
 		}
-		return jwtSecret, nil
+		// 使用动态密钥
+		return getJwtSecret(), nil
 	})
 
 	if err != nil {
