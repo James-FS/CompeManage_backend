@@ -18,6 +18,15 @@ import (
 	"gorm.io/gorm"
 )
 
+type competitionStatItem struct {
+	ID            uint   `json:"id"`
+	CompName      string `json:"comp_name"`
+	CompLevel     string `json:"comp_level"`
+	RegCount      int64  `json:"reg_count"`      // 报名人数
+	AwardCount    int64  `json:"award_count"`    // 获奖人数
+	SummaryStatus int8   `json:"summary_status"` // 总结状态：0未归档 1已归档
+}
+
 type levelDistributionItem struct {
 	Name  string `json:"name"`
 	Value int64  `json:"value"`
@@ -231,6 +240,20 @@ func GetStatisticsDashboard(c *gin.Context) {
 		{Title: "总结待归档", Value: maxInt64(totalCompetitions-summaryArchived, 0), Path: "/summary/summary-list"},
 	}
 
+	var compStats []competitionStatItem
+	// 这里通过子查询或 Join 来获取每个赛事的报名数和获奖数
+	err = newCompBase().
+		Select("comp_directories.id, comp_directories.comp_name, comp_directories.comp_level, " +
+			"(SELECT COUNT(*) FROM registers WHERE registers.comp_id = comp_directories.id) as reg_count, " +
+			"(SELECT COUNT(*) FROM awards JOIN registers ON awards.reg_id = registers.id WHERE registers.comp_id = comp_directories.id AND (awards.status = '1' OR awards.status = 'approved')) as award_count, " +
+			"COALESCE((SELECT status FROM summaries WHERE summaries.comp_id = comp_directories.id LIMIT 1), 0) as summary_status").
+		Scan(&compStats).Error
+
+	if err != nil {
+		logger.Error("查询单项赛事统计失败", "error", err)
+		compStats = []competitionStatItem{}
+	}
+
 	responseData := gin.H{
 		"code": 200,
 		"msg":  "获取成功",
@@ -252,8 +275,9 @@ func GetStatisticsDashboard(c *gin.Context) {
 				"registrations": regSeries,
 				"awards":        awardSeries,
 			},
-			"funnel": funnel,
-			"todos":  todos,
+			"funnel":            funnel,
+			"todos":             todos,
+			"competition_stats": compStats,
 		},
 	}
 
