@@ -252,6 +252,24 @@ func SaveRegConfig(c *gin.Context) {
 		}
 	}
 
+	now := time.Now()
+	newStatus := 0
+	if !detail.RegStartTime.After(now) {
+		newStatus = 1
+	}
+	if detail.CompEndTime.Before(now) {
+		newStatus = 2
+	}
+
+	if err := database.DB.Model(&models.CompDirectory{}).
+		Where("id = ?", req.CompID).
+		Update("status", newStatus).Error; err != nil {
+		utils.InternalServerError(c, "更新赛事状态失败", err)
+		return
+	}
+
+	clearCompListCache()
+
 	utils.SuccessWithMessage(c, "报名设置保存成功", detail)
 }
 
