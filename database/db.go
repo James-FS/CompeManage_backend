@@ -16,14 +16,15 @@ var DB *gorm.DB // 全局DB实例
 // Init 初始化数据库连接
 func Init() {
 	// 拼接DSN（MySQL连接字符串）
-	dsn := "%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local"
-	dsn = fmt.Sprintf(
-		dsn,
-		config.GetString("database.user"),
-		config.GetString("database.password"),
-		config.GetString("database.host"),
-		config.GetString("database.port"),
-		config.GetString("database.name"),
+	c := config.AppConfig.Database
+
+	// 调试打印：确认拿到的数据是否正确
+	fmt.Printf("[DEBUG] 数据库配置: 用户=%s, 密码=%s, 地址=%s:%d, 库名=%s\n",
+		c.User, "******", c.Host, c.Port, c.Dbname)
+
+	// 拼接DSN
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&allowNativePasswords=true",
+		c.User, c.Password, c.Host, c.Port, c.Dbname,
 	)
 
 	// 连接数据库
