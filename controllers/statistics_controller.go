@@ -1,3 +1,4 @@
+// statistics_controller.go
 package controllers
 
 import (
@@ -50,7 +51,7 @@ func calcPercent(numerator int64, denominator int64) float64 {
 func GetStatisticsDashboard(c *gin.Context) {
 	userIDVal, exists := c.Get("user_id")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "未登录"})
+		utils.Unauthorized(c, "未登录")
 		return
 	}
 	userID := userIDVal.(uint)
@@ -119,13 +120,13 @@ func GetStatisticsDashboard(c *gin.Context) {
 
 	var totalCompetitions int64
 	if err := newCompBase().Count(&totalCompetitions).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询赛事总数失败", "error": err.Error()})
+		utils.InternalServerError(c, "查询赛事总数失败", err)
 		return
 	}
 
 	var totalRegistrations int64
 	if err := newRegBase().Count(&totalRegistrations).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询报名总数失败", "error": err.Error()})
+		utils.InternalServerError(c, "查询报名总数失败", err)
 		return
 	}
 
