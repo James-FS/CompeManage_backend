@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,6 +17,19 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+type Question struct {
+	Title string `json:"title"`
+	Score string `json:"score"`
+}
+
+// 新增：赛道结构体（和前端/模型层对应）
+type Track struct {
+	TrackName string     `json:"trackName"`
+	Questions []Question `json:"questions"`
+}
+
+// ConfigReq 前端提交的数据结构
 
 const MaxPageSize = 100
 
@@ -30,9 +44,9 @@ type ConfigReq struct {
 	SubmitEndTime    *time.Time `json:"submit_end_time"`
 	GradeRequirement []int      `json:"grade_requirement"`
 	AwardHierarchy   []string   `json:"award_hierarchy"`
-	Track            []TrackReq `json:"track"`
 	NeedAdvisor      int        `json:"need_advisor"`
 	NeedAttachment   int        `json:"need_attachment"`
+	Track            []Track    `json:"track"`
 }
 
 type TrackReq struct {
@@ -179,7 +193,34 @@ func SaveRegConfig(c *gin.Context) {
 	detail.NeedAttachment = req.NeedAttachment
 	detail.GradeRequirement = string(gradeJson)
 	detail.AwardHierarchy = string(hierarchyJson)
+
+	// 1. 依然保留你的转换逻辑（确保数据模型一致）
+	var modelTracks []models.Track
+	for _, t := range req.Track {
+		var modelQuestions []models.Question
+		for _, q := range t.Questions {
+			modelQuestions = append(modelQuestions, models.Question{
+				Title: q.Title,
+				Score: q.Score,
+			})
+		}
+		modelTracks = append(modelTracks, models.Track{
+			TrackName: t.TrackName,
+			Questions: modelQuestions,
+		})
+	}
+
+	trackJson, err = json.Marshal(modelTracks)
+	if err != nil {
+		c.JSON(500, gin.H{"code": 500, "msg": "赛道数据序列化失败"})
+		return
+	}
+
+	// 3. 将字符串赋值给 detail 对象的 Track 字段（注意：detail.Track 在模型里应该是 string 类型）
+	// 如果你的 models.CompDetail 定义里 Track 是 string，就这样写：
 	detail.Track = string(trackJson)
+
+	// 时间字段判空处理 (防止空指针崩溃)
 
 	if req.RegStartTime != nil {
 		detail.RegStartTime = *req.RegStartTime
@@ -315,20 +356,32 @@ func GetRegConfig(c *gin.Context) {
 		submitEndTime = &detail.SubmitEndTime
 	}
 
-	utils.Success(c, gin.H{
-		"comp_name":         comp.CompName,
-		"participant_type":  detail.ParticipantType,
-		"min_team_member":   detail.MinTeamMember,
-		"max_team_member":   detail.MaxTeamMember,
-		"grade_requirement": grades,
-		"need_advisor":      detail.NeedAdvisor,
-		"need_attachment":   detail.NeedAttachment,
-		"reg_start_time":    regStartTime,
-		"reg_end_time":      regEndTime,
-		"submit_start_time": submitStartTime,
-		"submit_end_time":   submitEndTime,
-		"award_hierarchy":   awardHierarchy,
-		"track":             track,
+	var tracks []models.Track
+	if detail.Track != "" {
+		// 假设数据库存的是 JSON 字符串
+		if err := json.Unmarshal([]byte(detail.Track), &tracks); err != nil {
+			fmt.Println("解析赛道JSON失败:", err)
+			tracks = []models.Track{} // 解析失败则给空数组，防止前端报错
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"code": 200,
+		"msg":  "获取成功",
+		"data": gin.H{
+			"comp_name":         comp.CompName,
+			"participant_type":  detail.ParticipantType,
+			"min_team_member":   detail.MinTeamMember,
+			"max_team_member":   detail.MaxTeamMember,
+			"grade_requirement": grades,
+			"need_advisor":      detail.NeedAdvisor,
+			"need_attachment":   detail.NeedAttachment,
+			"reg_start_time":    regStartTime,
+			"reg_end_time":      regEndTime,
+			"submit_start_time": submitStartTime,
+			"submit_end_time":   submitEndTime,
+			"award_hierarchy":   awardHierarchy,
+			"track":             tracks,
+		},
 	})
 }
 

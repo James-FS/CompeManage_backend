@@ -1,3 +1,4 @@
+// summary_controller.go
 package controllers
 
 import (
@@ -5,7 +6,6 @@ import (
 	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
 	"encoding/json"
-	"net/http"
 	"strconv"
 	"time"
 
@@ -196,6 +196,7 @@ func GetSummaryDetail(c *gin.Context) {
 	}
 	userID := userIDVal.(uint)
 
+	// 1. 查询赛事基本信息
 	var comp models.CompDirectory
 	if err := database.DB.Preload("Detail").Preload("Manager").Preload("CollegeInfo").First(&comp, compID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -206,11 +207,13 @@ func GetSummaryDetail(c *gin.Context) {
 		return
 	}
 
+	// 权限检查
 	if !checkUserIsAdmin(userID) && comp.ManagerID != userID {
 		utils.Forbidden(c, "无权查看该赛事总结")
 		return
 	}
 
+	// 2. 查询总结记录
 	var summary models.Summary
 	summaryFound := true
 	if err := database.DB.Where("comp_id = ?", compID).First(&summary).Error; err != nil {
@@ -222,24 +225,33 @@ func GetSummaryDetail(c *gin.Context) {
 		}
 	}
 
+	// 3. 处理经费和附件
 	expenses := []ExpenseItem{}
 	attachments := []AttachmentItem{}
+	expenseTotal := 0.0
 	if summaryFound {
 		if summary.Expenses != "" {
 			_ = json.Unmarshal([]byte(summary.Expenses), &expenses)
+			// 遍历计算总金额
+			for _, item := range expenses {
+				expenseTotal += item.Amount
+			}
 		}
 		if summary.Attachments != "" {
 			_ = json.Unmarshal([]byte(summary.Attachments), &attachments)
 		}
 	}
 
+	// 4. 统计参赛人数 (status=1 表示审核通过)
 	participantCount := int64(0)
 	_ = database.DB.Table("reg_members").
 		Joins("JOIN registers ON registers.id = reg_members.reg_id").
 		Where("registers.comp_id = ? AND registers.status = ?", compID, 1).
 		Count(&participantCount).Error
 
+	// 5. 统计获奖情况
 	var awardStats []AwardStatItem
+	awardTotal := int64(0) //
 	_ = database.DB.Model(&models.Award{}).
 		Select("award_level as level, count(*) as count, MIN(level_rank) as level_rank").
 		Where("comp_id = ?", compID).
@@ -247,6 +259,12 @@ func GetSummaryDetail(c *gin.Context) {
 		Order("level_rank asc").
 		Scan(&awardStats).Error
 
+	// 计算获奖总数
+	for _, stat := range awardStats {
+		awardTotal += stat.Count
+	}
+
+	// 6. 格式化时间范围和名称
 	timeRange := ""
 	startTime := comp.Detail.CompStartTime
 	endTime := comp.Detail.CompEndTime
@@ -291,10 +309,13 @@ func GetSummaryDetail(c *gin.Context) {
 		"manager":           managerName,
 		"time_range":        timeRange,
 		"participant_count": participantCount,
+		"award_total":       awardTotal,
 		"award_stats":       awardStats,
+		"expense_total":     expenseTotal,
 		"expenses":          expenses,
 		"summary_content":   summaryContent,
 		"attachments":       attachments,
+		"file_count":        len(attachments),
 		"summary_status":    status,
 	})
 }
@@ -403,9 +424,5 @@ func SaveSummary(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 200,
-		"msg":  "保存成功",
-		"data": summary,
-	})
+	utils.SuccessWithMessage(c, "保存成功", summary)
 }
