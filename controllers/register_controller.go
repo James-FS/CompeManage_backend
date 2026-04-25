@@ -30,9 +30,18 @@ type ConfigReq struct {
 	SubmitEndTime    *time.Time `json:"submit_end_time"`
 	GradeRequirement []int      `json:"grade_requirement"`
 	AwardHierarchy   []string   `json:"award_hierarchy"`
-	Track            []string   `json:"track"`
+	Track            []TrackReq `json:"track"`
 	NeedAdvisor      int        `json:"need_advisor"`
 	NeedAttachment   int        `json:"need_attachment"`
+}
+
+type TrackReq struct {
+	TrackName string        `json:"trackName"`
+	SubTrack  []SubTrackReq `json:"subTrack"`
+}
+
+type SubTrackReq struct {
+	Title string `json:"title"`
 }
 
 type ApplicationReq struct {
@@ -273,11 +282,22 @@ func GetRegConfig(c *gin.Context) {
 		awardHierarchy = []string{}
 	}
 
-	var track []string
+	var track []TrackReq
 	if detail.Track != "" {
-		_ = json.Unmarshal([]byte(detail.Track), &track)
+		if err := json.Unmarshal([]byte(detail.Track), &track); err != nil {
+			// 兼容旧数据格式: ["赛道1", "赛道2"]
+			var legacyTrack []string
+			if legacyErr := json.Unmarshal([]byte(detail.Track), &legacyTrack); legacyErr == nil {
+				for _, name := range legacyTrack {
+					track = append(track, TrackReq{
+						TrackName: name,
+						SubTrack:  []SubTrackReq{},
+					})
+				}
+			}
+		}
 	} else {
-		track = []string{}
+		track = []TrackReq{}
 	}
 
 	var regStartTime, regEndTime, submitStartTime, submitEndTime *time.Time
