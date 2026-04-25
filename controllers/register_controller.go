@@ -98,6 +98,22 @@ type UserListResp struct {
 	Grade    string `json:"grade"`
 }
 
+type WorkAuditCompListReq struct {
+	Page     int    `form:"page"`
+	PageSize int    `form:"page_size"`
+	CompName string `form:"comp_name"`
+	Manager  string `form:"manager"`
+	College  string `form:"college"`
+	Status   string `form:"status"`
+}
+
+type WorkAuditStudentListReq struct {
+	CompID   uint   `form:"comp_id" binding:"required"`
+	Page     int    `form:"page"`
+	PageSize int    `form:"page_size"`
+	Keyword  string `form:"keyword"`
+}
+
 func isValidTime(t time.Time) bool {
 	return !t.IsZero() && t.Year() > 1970
 }
@@ -731,6 +747,197 @@ func GetRegDetail(c *gin.Context) {
 		"advisor_info":   reg.AdvisorInfo,
 		"reject_reason":  reg.RejectReason,
 		"track":          reg.Track,
+	})
+}
+
+func GetWorkAuditCompList(c *gin.Context) {
+	var req WorkAuditCompListReq
+	if err := c.ShouldBindQuery(&req); err != nil {
+		utils.BadRequest(c, "参数错误")
+		return
+	}
+
+	if req.Page < 1 {
+		req.Page = 1
+	}
+	if req.PageSize < 1 {
+		req.PageSize = 10
+	}
+	if req.PageSize > MaxPageSize {
+		req.PageSize = MaxPageSize
+	}
+
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		utils.Unauthorized(c, "未登录")
+		return
+	}
+	userID := userIDVal.(uint)
+	now := time.Now()
+
+	buildBaseQuery := func(withRegisterJoin bool) *gorm.DB {
+		query := database.DB.Table("comp_directories").
+			Joins("LEFT JOIN comp_details ON comp_details.comp_id = comp_directories.id").
+			Joins("LEFT JOIN users ON users.id = comp_directories.manager_id").
+			Joins("LEFT JOIN colleges ON colleges.id = comp_directories.college_id").
+			Where("YEAR(comp_details.submit_start_time) > 1970").
+			Where("comp_details.submit_start_time <= ?", now)
+
+		if withRegisterJoin {
+			query = query.Joins("LEFT JOIN registers ON registers.comp_id = comp_directories.id")
+		}
+
+		if !checkUserIsAdmin(userID) {
+			query = query.Where("comp_directories.manager_id = ?", userID)
+		}
+
+		if strings.TrimSpace(req.CompName) != "" {
+			query = query.Where("comp_directories.comp_name LIKE ?", "%"+strings.TrimSpace(req.CompName)+"%")
+		}
+		if strings.TrimSpace(req.Manager) != "" {
+			query = query.Where("users.realname LIKE ?", "%"+strings.TrimSpace(req.Manager)+"%")
+		}
+		if strings.TrimSpace(req.College) != "" {
+			query = query.Where("colleges.name = ?", strings.TrimSpace(req.College))
+		}
+		if strings.TrimSpace(req.Status) != "" {
+			query = query.Where("comp_directories.status = ?", strings.TrimSpace(req.Status))
+		}
+
+		return query
+	}
+
+	var total int64
+	if err := buildBaseQuery(false).Distinct("comp_directories.id").Count(&total).Error; err != nil {
+		utils.InternalServerError(c, "查询作品审核赛事总数失败", err)
+		return
+	}
+
+	type WorkAuditCompResp struct {
+		CompID      uint   `json:"comp_id"`
+		CompName    string `json:"comp_name"`
+		ManagerName string `json:"manager_name"`
+		CollegeName string `json:"college_name"`
+		SubmitCount int64  `json:"submit_count"`
+		Status      int8   `json:"status"`
+	}
+
+	var list []WorkAuditCompResp
+	offset := (req.Page - 1) * req.PageSize
+	if err := buildBaseQuery(true).
+		Select(`
+			comp_directories.id AS comp_id,
+			comp_directories.comp_name AS comp_name,
+			COALESCE(users.realname, '') AS manager_name,
+			COALESCE(colleges.name, '') AS college_name,
+			COALESCE(SUM(CASE WHEN registers.work_attachment_url IS NOT NULL AND registers.work_attachment_url <> '' THEN 1 ELSE 0 END), 0) AS submit_count,
+			comp_directories.status AS status
+		`).
+		Group("comp_directories.id, comp_directories.comp_name, users.realname, colleges.name, comp_directories.status").
+		Order("comp_directories.create_time DESC").
+		Offset(offset).
+		Limit(req.PageSize).
+		Scan(&list).Error; err != nil {
+		utils.InternalServerError(c, "查询作品审核赛事列表失败", err)
+		return
+	}
+
+	utils.Success(c, gin.H{
+		"list":  list,
+		"total": total,
+		"page":  req.Page,
+		"size":  req.PageSize,
+	})
+}
+
+func GetWorkAuditStudentList(c *gin.Context) {
+	var req WorkAuditStudentListReq
+	if err := c.ShouldBindQuery(&req); err != nil {
+		utils.BadRequest(c, "参数错误")
+		return
+	}
+
+	if req.Page < 1 {
+		req.Page = 1
+	}
+	if req.PageSize < 1 {
+		req.PageSize = 10
+	}
+	if req.PageSize > MaxPageSize {
+		req.PageSize = MaxPageSize
+	}
+
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		utils.Unauthorized(c, "未登录")
+		return
+	}
+	userID := userIDVal.(uint)
+
+	var comp models.CompDirectory
+	if err := database.DB.Select("id", "manager_id").Where("id = ?", req.CompID).First(&comp).Error; err != nil {
+		utils.NotFound(c, "赛事不存在")
+		return
+	}
+
+	if !checkUserIsAdmin(userID) && comp.ManagerID != userID {
+		utils.Forbidden(c, "无权查看该赛事提交信息")
+		return
+	}
+
+	query := database.DB.Table("registers").
+		Joins("LEFT JOIN reg_members ON reg_members.reg_id = registers.id AND reg_members.is_leader = ?", true).
+		Where("registers.comp_id = ?", req.CompID).
+		Where("registers.work_attachment_url IS NOT NULL AND registers.work_attachment_url <> ''")
+
+	if strings.TrimSpace(req.Keyword) != "" {
+		kw := "%" + strings.TrimSpace(req.Keyword) + "%"
+		query = query.Where("registers.team_name LIKE ? OR reg_members.name LIKE ? OR reg_members.username LIKE ?", kw, kw, kw)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		utils.InternalServerError(c, "查询提交学生总数失败", err)
+		return
+	}
+
+	type WorkAuditStudentResp struct {
+		RegID      uint   `json:"reg_id"`
+		TeamName   string `json:"team_name"`
+		LeaderName string `json:"leader_name"`
+		StuID      string `json:"stu_id"`
+		College    string `json:"college"`
+		Phone      string `json:"phone"`
+		Email      string `json:"email"`
+		UpdateTime string `json:"update_time"`
+	}
+
+	var list []WorkAuditStudentResp
+	offset := (req.Page - 1) * req.PageSize
+	if err := query.
+		Select(`
+			registers.id AS reg_id,
+			registers.team_name AS team_name,
+			COALESCE(reg_members.name, '') AS leader_name,
+			COALESCE(reg_members.username, '') AS stu_id,
+			COALESCE(reg_members.college, '') AS college,
+			COALESCE(reg_members.phone, '') AS phone,
+			COALESCE(reg_members.email, '') AS email,
+			DATE_FORMAT(registers.update_time, '%Y-%m-%d %H:%i') AS update_time
+		`).
+		Order("registers.update_time DESC").
+		Offset(offset).
+		Limit(req.PageSize).
+		Scan(&list).Error; err != nil {
+		utils.InternalServerError(c, "查询提交学生列表失败", err)
+		return
+	}
+
+	utils.Success(c, gin.H{
+		"list":  list,
+		"total": total,
+		"page":  req.Page,
+		"size":  req.PageSize,
 	})
 }
 
