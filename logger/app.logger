@@ -1442,4 +1442,3 @@
 {"time":"2026-04-22T17:41:56.213618+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
 {"time":"2026-04-22T17:41:57.0168207+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/reg/status","method":"GET","biz_code":200}
 {"time":"2026-04-22T17:41:57.0211037+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/reg/config/get","method":"GET","biz_code":200}
-

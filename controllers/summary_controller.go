@@ -1,3 +1,4 @@
+// summary_controller.go
 package controllers
 
 import (
@@ -5,7 +6,6 @@ import (
 	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
 	"encoding/json"
-	"net/http"
 	"strconv"
 	"time"
 
@@ -424,9 +424,5 @@ func SaveSummary(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 200,
-		"msg":  "保存成功",
-		"data": summary,
-	})
+	utils.SuccessWithMessage(c, "保存成功", summary)
 }

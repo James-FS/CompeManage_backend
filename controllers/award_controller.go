@@ -125,86 +125,58 @@ func GetAwardCompList(c *gin.Context) {
 }
 
 func ExportAwardTemplate(c *gin.Context) {
-	compID := c.Query("comp_id")
-
-	var regs []models.Register
-	if err := database.DB.
-		Preload("Leader").
-		Preload("Members").
-		Where("comp_id = ? AND status = 1", compID).
-		Find(&regs).Error; err != nil {
-		utils.InternalServerError(c, "查询数据失败", err)
-		return
-	}
-
+	// 1. 创建 Excel 实例
 	f := excelize.NewFile()
-	sheet := "获奖录入"
-	f.NewSheet(sheet)
-	f.DeleteSheet("Sheet1")
+	sheet := "Sheet1"
+	f.SetSheetName("Sheet1", sheet)
 
-	headers := []string{
-		"奖项等级", "获奖项目名", "负责人", "学号", "所属学院", "指导老师",
-		"成员1", "学号1",
-		"成员2", "学号2",
-		"成员3", "学号3",
-		"成员4", "学号4",
-		"成员5", "学号5",
-	}
-	for i, h := range headers {
-		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
-		f.SetCellValue(sheet, cell, h)
-	}
+	// 2. 定义美化样式 (蓝色背景、白色粗体)
+	headerStyle, _ := f.NewStyle(&excelize.Style{
+		Fill:      excelize.Fill{Type: "pattern", Color: []string{"4F81BD"}, Pattern: 1},
+		Font:      &excelize.Font{Bold: true, Color: "FFFFFF", Size: 12, Family: "微软雅黑"},
+		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center"},
+		Border: []excelize.Border{
+			{Type: "top", Color: "000000", Style: 1},
+			{Type: "bottom", Color: "000000", Style: 1},
+			{Type: "left", Color: "000000", Style: 1},
+			{Type: "right", Color: "000000", Style: 1},
+		},
+	})
 
-	for i, r := range regs {
-		row := i + 2
+	// 3. 设置表头字段顺序
+	headers := []string{"序号", "获奖项目", "奖项等级", "负责人", "学号", "团队成员", "所属学院", "指导老师"}
+	for i, header := range headers {
+		colName, _ := excelize.ColumnNumberToName(i + 1)
+		f.SetCellValue(sheet, colName+"1", header)
+		f.SetCellStyle(sheet, colName+"1", colName+"1", headerStyle)
 
-		leaderName, leaderStuID, _, _ := getLeaderMember(r.Members, r.Leader)
-
-		college := r.Leader.College
-		if college == "" {
-			for _, m := range r.Members {
-				if m.IsLeader {
-					college = m.College
-					break
-				}
-			}
-		}
-
-		var nonLeaderMembers []models.RegMember
-		for _, m := range r.Members {
-			if !m.IsLeader {
-				nonLeaderMembers = append(nonLeaderMembers, m)
-			}
-		}
-
-		f.SetCellValue(sheet, fmt.Sprintf("A%d", row), "")
-		f.SetCellValue(sheet, fmt.Sprintf("B%d", row), r.TeamName)
-		f.SetCellValue(sheet, fmt.Sprintf("C%d", row), leaderName)
-		f.SetCellValue(sheet, fmt.Sprintf("D%d", row), leaderStuID)
-		f.SetCellValue(sheet, fmt.Sprintf("E%d", row), college)
-		f.SetCellValue(sheet, fmt.Sprintf("F%d", row), "")
-
-		memberCols := []string{"G", "H", "I", "J", "K", "L", "M", "N", "O", "P"}
-		for j := 0; j < 5; j++ {
-			memberName := ""
-			memberStuID := ""
-			if j < len(nonLeaderMembers) {
-				memberName = nonLeaderMembers[j].Name
-				memberStuID = nonLeaderMembers[j].StudentID
-			}
-			f.SetCellValue(sheet, fmt.Sprintf("%s%d", memberCols[j*2], row), memberName)
-			f.SetCellValue(sheet, fmt.Sprintf("%s%d", memberCols[j*2+1], row), memberStuID)
-		}
+		// 设置默认列宽
+		f.SetColWidth(sheet, colName, colName, 18)
 	}
 
-	fileName := fmt.Sprintf("Award_Template_%s.xlsx", compID)
+	// 微调特定列宽
+	f.SetColWidth(sheet, "B", "B", 30) // 获奖项目
+	f.SetColWidth(sheet, "F", "F", 40) // 团队成员
+	f.SetRowHeight(sheet, 1, 25)       // 表头行高
+
+	// 4. 添加一行示例数据 (可选，方便用户参考格式)
+	f.SetCellValue(sheet, "A2", "1")
+	f.SetCellValue(sheet, "B2", "示例：第十届数学建模大赛")
+	f.SetCellValue(sheet, "C2", "一等奖")
+	f.SetCellValue(sheet, "D2", "张三")
+	f.SetCellValue(sheet, "E2", "202100123")
+	f.SetCellValue(sheet, "F2", "张三、李四、王五")
+	f.SetCellValue(sheet, "G2", "计算机学院")
+	f.SetCellValue(sheet, "H2", "王老师")
+
+	// 5. 设置 HTTP 响应头并下载
+	fileName := "获奖名单导入模板.xlsx"
 	c.Header("Content-Type", "application/octet-stream")
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", fileName))
+	c.Header("Content-Disposition", "attachment; filename="+fileName)
 	c.Header("Content-Transfer-Encoding", "binary")
-	c.Header("Cache-Control", "no-cache")
 
 	if err := f.Write(c.Writer); err != nil {
-		fmt.Println("导出流写入中断:", err)
+		utils.InternalServerError(c, "生成模板失败", err)
 	}
 }
 
