@@ -32,6 +32,7 @@ type ConfigReq struct {
 	AwardHierarchy   []string   `json:"award_hierarchy"`
 	NeedAdvisor      int        `json:"need_advisor"`
 	NeedAttachment   int        `json:"need_attachment"`
+	NeedRegAudit     *int       `json:"need_reg_audit"`
 	Track            []TrackReq `json:"track"`
 }
 
@@ -177,6 +178,18 @@ func SaveRegConfig(c *gin.Context) {
 	detail.MaxTeamMember = req.MaxTeamMember
 	detail.NeedAdvisor = req.NeedAdvisor
 	detail.NeedAttachment = req.NeedAttachment
+	needRegAudit := 1
+	if detail.ID != 0 && (detail.NeedRegAudit == 0 || detail.NeedRegAudit == 1) {
+		needRegAudit = detail.NeedRegAudit
+	}
+	if req.NeedRegAudit != nil {
+		if *req.NeedRegAudit != 0 && *req.NeedRegAudit != 1 {
+			utils.BadRequest(c, "need_reg_audit 仅支持 0 或 1")
+			return
+		}
+		needRegAudit = *req.NeedRegAudit
+	}
+	detail.NeedRegAudit = needRegAudit
 	detail.GradeRequirement = string(gradeJson)
 	detail.AwardHierarchy = string(hierarchyJson)
 
@@ -219,6 +232,24 @@ func SaveRegConfig(c *gin.Context) {
 	} else {
 		if err := database.DB.Save(&detail).Error; err != nil {
 			utils.InternalServerError(c, "更新配置失败", err)
+			return
+		}
+	}
+
+	// 首次创建时 NeedRegAudit=0 可能被数据库默认值(default:1)覆盖，强制回写以保证配置立即生效。
+	if err := database.DB.Model(&models.CompDetail{}).
+		Where("comp_id = ?", req.CompID).
+		Update("need_reg_audit", needRegAudit).Error; err != nil {
+		utils.InternalServerError(c, "更新审核开关失败", err)
+		return
+	}
+	detail.NeedRegAudit = needRegAudit
+
+	if detail.NeedRegAudit == 0 {
+		if err := database.DB.Model(&models.Register{}).
+			Where("comp_id = ? AND status IN ?", req.CompID, []int{0, 3}).
+			Update("status", gorm.Expr("CASE WHEN status = 3 THEN 4 ELSE 1 END")).Error; err != nil {
+			utils.InternalServerError(c, "更新报名审核状态失败", err)
 			return
 		}
 	}
@@ -317,6 +348,7 @@ func GetRegConfig(c *gin.Context) {
 		"grade_requirement": grades,
 		"need_advisor":      detail.NeedAdvisor,
 		"need_attachment":   detail.NeedAttachment,
+		"need_reg_audit":    detail.NeedRegAudit,
 		"reg_start_time":    regStartTime,
 		"reg_end_time":      regEndTime,
 		"submit_start_time": submitStartTime,
@@ -397,6 +429,9 @@ func SubmitRegistration(c *gin.Context) {
 		Status:        0,
 		Members:       make([]models.RegMember, 0),
 		Track:         req.Track,
+	}
+	if comp.Detail.NeedRegAudit == 0 {
+		register.Status = 1
 	}
 
 	if req.AdvisorInfo != nil {
@@ -490,6 +525,7 @@ func GetRegList(c *gin.Context) {
 		Joins("LEFT JOIN comp_directories ON comp_directories.id = registers.comp_id").
 		Joins("LEFT JOIN comp_details ON comp_details.comp_id = registers.comp_id").
 		Preload("Competition").
+		Preload("Competition.Detail").
 		Preload("Leader").
 		Preload("Members")
 
@@ -589,16 +625,24 @@ func GetRegList(c *gin.Context) {
 		}
 
 		respList = append(respList, AuditListResp{
-			ID:            item.ID,
-			CompID:        item.CompID,
-			CompName:      item.Competition.CompName,
-			TeamName:      item.TeamName,
-			LeaderName:    leaderName,
-			StuID:         stuID,
-			Email:         leaderEmail,
-			Phone:         leaderPhone,
-			CreateTime:    item.CreatedAt.Format("2006-01-02 15:04"),
-			Status:        item.Status,
+			ID:         item.ID,
+			CompID:     item.CompID,
+			CompName:   item.Competition.CompName,
+			TeamName:   item.TeamName,
+			LeaderName: leaderName,
+			StuID:      stuID,
+			Email:      leaderEmail,
+			Phone:      leaderPhone,
+			CreateTime: item.CreatedAt.Format("2006-01-02 15:04"),
+			Status: func() int8 {
+				if item.Status == 0 && item.Competition.Detail.NeedRegAudit == 0 {
+					return 1
+				}
+				if item.Status == 3 && item.Competition.Detail.NeedRegAudit == 0 {
+					return 4
+				}
+				return item.Status
+			}(),
 			AttachmentUrl: item.AttachmentUrl,
 			Members:       item.Members,
 			AdvisorInfo:   item.AdvisorInfo,
@@ -716,10 +760,18 @@ func AuditRegister(c *gin.Context) {
 	userID := userIDVal.(uint)
 
 	var reg models.Register
-	err := database.DB.Preload("Competition").First(&reg, req.ID).Error
+	err := database.DB.Preload("Competition").Preload("Competition.Detail").First(&reg, req.ID).Error
 
 	if err != nil {
 		utils.NotFound(c, "记录不存在")
+		return
+	}
+
+	if reg.Competition.Detail.NeedRegAudit == 0 {
+		if reg.Status == 0 {
+			_ = database.DB.Model(&reg).Updates(map[string]interface{}{"status": 1, "reject_reason": ""}).Error
+		}
+		utils.BadRequest(c, "该赛事已设置为免审核，报名会自动通过")
 		return
 	}
 
@@ -789,6 +841,8 @@ func GetMyRegStatus(c *gin.Context) {
 	var reg models.Register
 	err = database.DB.
 		Preload("Members").
+		Preload("Competition").
+		Preload("Competition.Detail").
 		Preload("Leader").
 		Joins("INNER JOIN reg_members ON reg_members.reg_id = registers.id").
 		Where("registers.comp_id = ? AND reg_members.username = ?", compID, studentID).
@@ -801,6 +855,11 @@ func GetMyRegStatus(c *gin.Context) {
 			utils.InternalServerError(c, "查询失败", err)
 		}
 		return
+	}
+
+	if reg.Status == 0 && reg.Competition.Detail.NeedRegAudit == 0 {
+		reg.Status = 1
+		_ = database.DB.Model(&models.Register{}).Where("id = ?", reg.ID).Update("status", 1).Error
 	}
 
 	type MemberResp struct {
@@ -924,6 +983,9 @@ func ResubmitRegistration(c *gin.Context) {
 	}
 
 	reg.Status = 0
+	if detail.NeedRegAudit == 0 {
+		reg.Status = 1
+	}
 	reg.RejectReason = ""
 
 	if err := tx.Save(&reg).Error; err != nil {
@@ -1053,10 +1115,18 @@ func GetMyRegList(c *gin.Context) {
 		}
 
 		list = append(list, gin.H{
-			"id":                r.ID,
-			"comp_id":           r.CompID,
-			"comp_name":         compName,
-			"status":            r.Status,
+			"id":        r.ID,
+			"comp_id":   r.CompID,
+			"comp_name": compName,
+			"status": func() int8 {
+				if r.Status == 0 && r.Competition.Detail.NeedRegAudit == 0 {
+					return 1
+				}
+				if r.Status == 3 && r.Competition.Detail.NeedRegAudit == 0 {
+					return 4
+				}
+				return r.Status
+			}(),
 			"reg_url":           regAttachment,
 			"work_url":          r.WorkAttachmentUrl,
 			"submit_start_time": submitStartStr,
@@ -1107,7 +1177,12 @@ func SubmitWork(c *gin.Context) {
 		return
 	}
 
-	if reg.Status != 1 {
+	if reg.Status == 0 && reg.Competition.Detail.NeedRegAudit == 0 {
+		reg.Status = 1
+		_ = database.DB.Model(&reg).Update("status", 1).Error
+	}
+
+	if reg.Status != 1 && reg.Status != 4 {
 		utils.BadRequest(c, "您的报名未通过审核，无法提交作品")
 		return
 	}
