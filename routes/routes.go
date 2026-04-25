@@ -152,6 +152,12 @@ func SetupRoutes(r *gin.Engine) {
 		reg.GET("/list",
 			middleware.RequirePermission("reg:audit:list"),
 			controllers.GetRegList)
+		reg.GET("/work/audit/comp/list",
+			middleware.RequirePermission("reg:audit:list"),
+			controllers.GetWorkAuditCompList)
+		reg.GET("/work/audit/student/list",
+			middleware.RequirePermission("reg:audit:detail"),
+			controllers.GetWorkAuditStudentList)
 		reg.GET("/detail",
 			middleware.RequirePermission("reg:audit:detail"),
 			controllers.GetRegDetail)
