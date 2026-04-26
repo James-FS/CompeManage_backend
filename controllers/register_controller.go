@@ -414,6 +414,44 @@ func SubmitRegistration(c *gin.Context) {
 		return
 	}
 
+	var trackConfig []TrackReq
+	if comp.Detail.Track != "" {
+		if err := json.Unmarshal([]byte(comp.Detail.Track), &trackConfig); err == nil && len(trackConfig) > 0 {
+			// 赛事配置了赛道，必须填写
+			if req.Track == "" {
+				removeUploadedFile(req.AttachmentUrl)
+				utils.BadRequest(c, "该赛事要求必须选择赛道")
+				return
+			}
+
+			// 验证选择的赛道是否存在
+			trackValid := false
+			for _, track := range trackConfig {
+				if req.Track == track.TrackName {
+					trackValid = true
+					break
+				}
+				// 检查是否是 "trackName / subTrackTitle" 格式
+				for _, subTrack := range track.SubTrack {
+					expectedFormat := track.TrackName + " / " + subTrack.Title
+					if req.Track == expectedFormat {
+						trackValid = true
+						break
+					}
+				}
+				if trackValid {
+					break
+				}
+			}
+
+			if !trackValid {
+				removeUploadedFile(req.AttachmentUrl)
+				utils.BadRequest(c, "选择的赛道无效")
+				return
+			}
+		}
+	}
+
 	if comp.Detail.NeedAttachment == 2 && req.AttachmentUrl == "" {
 		utils.BadRequest(c, "该赛事要求必须上传报名附件/项目文档")
 		return
@@ -1156,6 +1194,43 @@ func ResubmitRegistration(c *gin.Context) {
 		return
 	}
 
+	// 验证赛道配置
+	var trackConfig []TrackReq
+	if detail.Track != "" {
+		if err := json.Unmarshal([]byte(detail.Track), &trackConfig); err == nil && len(trackConfig) > 0 {
+			// 赛事配置了赛道，必须填写
+			if req.Track == "" {
+				utils.BadRequest(c, "该赛事要求必须选择赛道")
+				return
+			}
+
+			// 验证选择的赛道是否存在
+			trackValid := false
+			for _, track := range trackConfig {
+				if req.Track == track.TrackName {
+					trackValid = true
+					break
+				}
+				// 检查是否是 "trackName / subTrackTitle" 格式
+				for _, subTrack := range track.SubTrack {
+					expectedFormat := track.TrackName + " / " + subTrack.Title
+					if req.Track == expectedFormat {
+						trackValid = true
+						break
+					}
+				}
+				if trackValid {
+					break
+				}
+			}
+
+			if !trackValid {
+				utils.BadRequest(c, "选择的赛道无效")
+				return
+			}
+		}
+	}
+
 	if detail.NeedAttachment == 2 && req.AttachmentUrl == "" {
 		utils.BadRequest(c, "该赛事要求必须上传报名附件，请勿删除附件")
 		return
@@ -1244,7 +1319,6 @@ func ResubmitRegistration(c *gin.Context) {
 
 	utils.SuccessWithMessage(c, "重新提交成功", nil)
 }
-
 func GetMyRegList(c *gin.Context) {
 	userIDVal, exists := c.Get("user_id")
 	if !exists {
