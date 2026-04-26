@@ -44,3 +44,5 @@ logs/
 # Docker MySQL data
 mysql_data/
 app.logger
+server
+logger/app.logger
