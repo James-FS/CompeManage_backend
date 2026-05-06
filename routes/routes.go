@@ -152,6 +152,12 @@ func SetupRoutes(r *gin.Engine) {
 		reg.GET("/list",
 			middleware.RequirePermission("reg:audit:list"),
 			controllers.GetRegList)
+		reg.GET("/work/audit/comp/list",
+			middleware.RequirePermission("reg:audit:list"),
+			controllers.GetWorkAuditCompList)
+		reg.GET("/work/audit/student/list",
+			middleware.RequirePermission("reg:audit:detail"),
+			controllers.GetWorkAuditStudentList)
 		reg.GET("/detail",
 			middleware.RequirePermission("reg:audit:detail"),
 			controllers.GetRegDetail)
@@ -191,8 +197,8 @@ func SetupRoutes(r *gin.Engine) {
 		award.GET("/comp/list",
 			controllers.SearchCompetition)
 		award.GET("/student/my-awards",
-			controllers.GetStudentMyAwardList,
-			middleware.RequirePermission("award:student:my-list"))
+			middleware.RequirePermission("award:student:my-list"),
+			controllers.GetStudentMyAwardList)
 		award.POST("/student/supplement",
 			controllers.SubmitStudentAwardSupplement)
 		//middleware.RequirePermission("award:student:supplement") // 权限标识自定义

@@ -35,7 +35,12 @@ Thumbs.db
 
 # Project specific
 public/upload/*
-! public/upload/.gitkeep
+!public/upload/.gitkeep
 
 logs/
 *.log
+*.logger
+
+# Docker MySQL data
+mysql_data/
+app.logger

@@ -3,12 +3,14 @@ package main
 import (
 	"CompeManage_backend/config"
 	"CompeManage_backend/database"
+	"CompeManage_backend/logger"
 	"CompeManage_backend/middleware"
 	"CompeManage_backend/routes"
 	"CompeManage_backend/utils"
 	"log"
 	"time"
 
+	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
@@ -21,13 +23,17 @@ func main() {
 
 	// 初始化配置
 	config.Init()
-
+	logger.SetupLogger()
 	// 连接数据库
 	database.Init()
 	database.InitData()
+	// 连接redis
+	middleware.InitRedis()
+	defer middleware.CloseRedis()
 	// 创建Gin引擎（开发环境用gin.Default，生产可改为gin.ReleaseMode）
 	r := gin.Default()
-
+	// 注册pprof
+	pprof.Register(r)
 	// 注册中间件（跨域优先）
 	r.Use(middleware.CORS())
 

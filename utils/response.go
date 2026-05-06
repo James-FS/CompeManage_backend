@@ -2,6 +2,7 @@ package utils
 
 import (
 	"CompeManage_backend/config"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 
 // 定义业务错误码（与HTTP状态码分离）
 const (
-	SuccessCode        = 0    // 成功（行业惯例用0表示）
+	SuccessCode        = 200  // 成功（行业惯例用0表示）
 	BadRequestCode     = 400  // 参数错误
 	UnauthorizedCode   = 401  // 未授权
 	ForbiddenCode      = 403  // 禁止访问
@@ -29,7 +30,35 @@ type Response struct {
 }
 
 // 初始化基础响应（自动填充时间戳）
-func newResponse(code int, message string, data interface{}) Response {
+func newResponse(c *gin.Context, code int, message string, data interface{}) Response {
+	// 1. 记录日志逻辑
+	if code >= 400 {
+		// 错误级别日志
+		slog.Warn("接口响应错误",
+			"path", c.Request.URL.Path,
+			"method", c.Request.Method,
+			"biz_code", code,
+			"msg", message,
+			"ip", c.ClientIP(),
+		)
+	} else if code >= 500 {
+		slog.Warn("接口响应错误",
+			"path", c.Request.URL.Path,
+			"method", c.Request.Method,
+			"biz_code", code,
+			"msg", message,
+			"ip", c.ClientIP(),
+		)
+	} else {
+		// 成功级别日志 (可选，如果不希望日志太多可以删掉这部分)
+		slog.Info("接口响应成功",
+			"path", c.Request.URL.Path,
+			"method", c.Request.Method,
+			"biz_code", code,
+		)
+	}
+
+	// 返回结构体供 c.JSON 使用
 	return Response{
 		Code:      code,
 		Message:   message,
@@ -40,22 +69,22 @@ func newResponse(code int, message string, data interface{}) Response {
 
 // Success 成功响应（默认200 OK）
 func Success(c *gin.Context, data interface{}) {
-	c.JSON(http.StatusOK, newResponse(SuccessCode, "success", data))
+	c.JSON(http.StatusOK, newResponse(c, SuccessCode, "success", data))
 }
 
 // SuccessWithMessage 成功响应带自定义消息
 func SuccessWithMessage(c *gin.Context, message string, data interface{}) {
-	c.JSON(http.StatusOK, newResponse(SuccessCode, message, data))
+	c.JSON(http.StatusOK, newResponse(c, SuccessCode, message, data))
 }
 
 // SuccessCreated 成功创建资源（201 Created）
 func SuccessCreated(c *gin.Context, data interface{}) {
-	c.JSON(http.StatusCreated, newResponse(SuccessCode, "created", data))
+	c.JSON(http.StatusCreated, newResponse(c, SuccessCode, "created", data))
 }
 
 // 内部通用错误响应
 func errorResponse(c *gin.Context, httpStatus int, code int, message string) {
-	resp := newResponse(code, message, nil)
+	resp := newResponse(c, code, message, nil)
 	c.JSON(httpStatus, resp)
 }
 

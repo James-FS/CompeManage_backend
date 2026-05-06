@@ -1,15 +1,33 @@
+// statistics_controller.go
 package controllers
 
 import (
 	"CompeManage_backend/database"
+	"CompeManage_backend/logger"
+	"CompeManage_backend/middleware"
 	"CompeManage_backend/models"
+	"CompeManage_backend/utils"
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
+
+type competitionStatItem struct {
+	ID            uint   `json:"id"`
+	CompName      string `json:"comp_name"`
+	CompLevel     string `json:"comp_level"`
+	CollegeName   string `json:"college_name"`
+	RegCount      int64  `json:"reg_count"`      // 报名人数
+	AwardCount    int64  `json:"award_count"`    // 获奖人数
+	SummaryStatus int8   `json:"summary_status"` // 总结状态：0未归档 1已归档
+}
 
 type levelDistributionItem struct {
 	Name  string `json:"name"`
@@ -43,80 +61,107 @@ func calcPercent(numerator int64, denominator int64) float64 {
 func GetStatisticsDashboard(c *gin.Context) {
 	userIDVal, exists := c.Get("user_id")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "msg": "未登录"})
+		utils.Unauthorized(c, "未登录")
 		return
 	}
 	userID := userIDVal.(uint)
 	isAdmin := checkUserIsAdmin(userID)
+	cacheKey := fmt.Sprintf("cache:stats:dashboard:%v:%t", userID, isAdmin)
+	rdb := middleware.GetRedisClient()
+	ctx := c.Request.Context()
 
+	cacheData, err := rdb.Get(ctx, cacheKey).Result()
+	if err == nil {
+		var cachedResp gin.H
+		if json.Unmarshal([]byte(cacheData), &cachedResp) == nil {
+			logger.Info("统计看板缓存命中", "cache_key", cacheKey)
+			c.JSON(http.StatusOK, cachedResp)
+			return
+		}
+	}
 	months, _ := strconv.Atoi(c.DefaultQuery("months", "6"))
 	if months <= 0 || months > 24 {
 		months = 6
 	}
 
-	compBase := database.DB.Model(&models.CompDirectory{})
-	if !isAdmin {
-		compBase = compBase.Where("manager_id = ?", userID)
+	newCompBase := func() *gorm.DB {
+		q := database.DB.Model(&models.CompDirectory{})
+		if !isAdmin {
+			q = q.Where("manager_id = ?", userID)
+		}
+		return q
 	}
 
-	regBase := database.DB.Model(&models.Register{}).
-		Joins("JOIN comp_directories ON comp_directories.id = registers.comp_id")
-	if !isAdmin {
-		regBase = regBase.Where("comp_directories.manager_id = ?", userID)
+	newRegBase := func() *gorm.DB {
+		q := database.DB.Model(&models.Register{}).
+			Joins("JOIN comp_directories ON comp_directories.id = registers.comp_id")
+		if !isAdmin {
+			q = q.Where("comp_directories.manager_id = ?", userID)
+		}
+		return q
 	}
 
-	awardBase := database.DB.Model(&models.Award{}).
-		Joins("JOIN registers ON registers.id = awards.reg_id").
-		Joins("JOIN comp_directories ON comp_directories.id = registers.comp_id")
-	if !isAdmin {
-		awardBase = awardBase.Where("comp_directories.manager_id = ?", userID)
+	newAwardBase := func() *gorm.DB {
+		q := database.DB.Model(&models.Award{}).
+			Joins("JOIN registers ON registers.id = awards.reg_id").
+			Joins("JOIN comp_directories ON comp_directories.id = registers.comp_id")
+		if !isAdmin {
+			q = q.Where("comp_directories.manager_id = ?", userID)
+		}
+		return q
 	}
 
-	summaryBase := database.DB.Model(&models.Summary{}).
-		Joins("JOIN comp_directories ON comp_directories.id = summaries.comp_id")
-	if !isAdmin {
-		summaryBase = summaryBase.Where("comp_directories.manager_id = ?", userID)
+	newSummaryBase := func() *gorm.DB {
+		q := database.DB.Model(&models.Summary{}).
+			Joins("JOIN comp_directories ON comp_directories.id = summaries.comp_id")
+		if !isAdmin {
+			q = q.Where("comp_directories.manager_id = ?", userID)
+		}
+		return q
 	}
 
-	declareBase := database.DB.Model(&models.CompDeclaration{})
-	if !isAdmin {
-		declareBase = declareBase.Where("created_by = ?", userID)
+	newDeclareBase := func() *gorm.DB {
+		q := database.DB.Model(&models.CompDeclaration{})
+		if !isAdmin {
+			q = q.Where("created_by = ?", userID)
+		}
+		return q
 	}
 
 	var totalCompetitions int64
-	if err := compBase.Count(&totalCompetitions).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询赛事总数失败", "error": err.Error()})
+	if err := newCompBase().Count(&totalCompetitions).Error; err != nil {
+		utils.InternalServerError(c, "查询赛事总数失败", err)
 		return
 	}
 
 	var totalRegistrations int64
-	if err := regBase.Count(&totalRegistrations).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "查询报名总数失败", "error": err.Error()})
+	if err := newRegBase().Count(&totalRegistrations).Error; err != nil {
+		utils.InternalServerError(c, "查询报名总数失败", err)
 		return
 	}
 
 	var regPending int64
-	_ = regBase.Where("registers.status IN ?", []int{0, 3}).Count(&regPending).Error
+	_ = newRegBase().Where("registers.status IN ?", []int{0, 3}).Count(&regPending).Error
 	var regPassed int64
-	_ = regBase.Where("registers.status IN ?", []int{1, 4}).Count(&regPassed).Error
+	_ = newRegBase().Where("registers.status IN ?", []int{1, 4}).Count(&regPassed).Error
 
 	var declarePending int64
-	_ = declareBase.Where("declare_status = ?", 1).Count(&declarePending).Error
+	_ = newDeclareBase().Where("declare_status = ?", 1).Count(&declarePending).Error
 	var declareTotal int64
-	_ = declareBase.Count(&declareTotal).Error
+	_ = newDeclareBase().Count(&declareTotal).Error
 
 	var awardPending int64
-	_ = awardBase.Where("awards.status IN ?", []string{"draft", "pending", "0"}).Count(&awardPending).Error
+	_ = newAwardBase().Where("awards.status IN ?", []string{"draft", "pending", "0"}).Count(&awardPending).Error
 	var awardApproved int64
-	_ = awardBase.Where("awards.status IN ?", []string{"approved", "1"}).Count(&awardApproved).Error
+	_ = newAwardBase().Where("awards.status IN ?", []string{"approved", "1"}).Count(&awardApproved).Error
 
 	var summaryArchived int64
-	_ = summaryBase.Where("summaries.status = ?", 1).Count(&summaryArchived).Error
+	_ = newSummaryBase().Where("summaries.status = ?", 1).Count(&summaryArchived).Error
 
 	pendingAudits := declarePending + regPending + awardPending
 
 	levelRows := make([]levelDistributionItem, 0)
-	if err := compBase.Select("COALESCE(comp_level, '未分类') as name, COUNT(*) as value").
+	if err := newCompBase().Select("COALESCE(comp_level, '未分类') as name, COUNT(*) as value").
 		Group("comp_level").
 		Order("value desc").
 		Scan(&levelRows).Error; err != nil {
@@ -124,7 +169,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 	}
 
 	collegeRows := make([]collegeRankItem, 0)
-	if err := regBase.
+	if err := newRegBase().
 		Joins("LEFT JOIN users ON users.id = registers.leader_id").
 		Select("COALESCE(users.college, '未知学院') as name, COUNT(*) as value").
 		Group("users.college").
@@ -153,7 +198,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 	}
 
 	var regMonthRows []monthCount
-	regTrendQuery := regBase.Select("DATE_FORMAT(registers.create_time, '%Y-%m') as month, COUNT(*) as value").
+	regTrendQuery := newRegBase().Select("DATE_FORMAT(registers.create_time, '%Y-%m') as month, COUNT(*) as value").
 		Group("DATE_FORMAT(registers.create_time, '%Y-%m')")
 	_ = regTrendQuery.Scan(&regMonthRows).Error
 	for _, item := range regMonthRows {
@@ -163,7 +208,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 	}
 
 	var awardMonthRows []monthCount
-	awardTrendQuery := awardBase.Select("DATE_FORMAT(awards.create_time, '%Y-%m') as month, COUNT(*) as value").
+	awardTrendQuery := newAwardBase().Select("DATE_FORMAT(awards.create_time, '%Y-%m') as month, COUNT(*) as value").
 		Group("DATE_FORMAT(awards.create_time, '%Y-%m')")
 	_ = awardTrendQuery.Scan(&awardMonthRows).Error
 	for _, item := range awardMonthRows {
@@ -197,7 +242,22 @@ func GetStatisticsDashboard(c *gin.Context) {
 		{Title: "总结待归档", Value: maxInt64(totalCompetitions-summaryArchived, 0), Path: "/summary/summary-list"},
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	var compStats []competitionStatItem
+	// 这里通过子查询或 Join 来获取每个赛事的报名数和获奖数
+	err = newCompBase().
+		Joins("LEFT JOIN colleges ON colleges.id = comp_directories.college_id").
+		Select("comp_directories.id, comp_directories.comp_name, comp_directories.comp_level, COALESCE(colleges.name, '未知学院') as college_name, " +
+			"(SELECT COUNT(*) FROM registers WHERE registers.comp_id = comp_directories.id) as reg_count, " +
+			"(SELECT COUNT(*) FROM awards JOIN registers ON awards.reg_id = registers.id WHERE registers.comp_id = comp_directories.id AND (awards.status = '1' OR awards.status = 'approved')) as award_count, " +
+			"COALESCE((SELECT status FROM summaries WHERE summaries.comp_id = comp_directories.id LIMIT 1), 0) as summary_status").
+		Scan(&compStats).Error
+
+	if err != nil {
+		logger.Error("查询单项赛事统计失败", "error", err)
+		compStats = []competitionStatItem{}
+	}
+
+	responseData := gin.H{
 		"code": 200,
 		"msg":  "获取成功",
 		"data": gin.H{
@@ -218,10 +278,21 @@ func GetStatisticsDashboard(c *gin.Context) {
 				"registrations": regSeries,
 				"awards":        awardSeries,
 			},
-			"funnel": funnel,
-			"todos":  todos,
+			"funnel":            funnel,
+			"todos":             todos,
+			"competition_stats": compStats,
 		},
-	})
+	}
+
+	// 4. 异步写入 Redis，设置 10 分钟过期
+	go func() {
+		data, _ := json.Marshal(responseData)
+		// 使用 context.Background() 确保请求结束后写入依然能完成
+		rdb.Set(context.Background(), cacheKey, data, 10*time.Minute)
+		// 现在只有定时清理缓存，没有其他函数主动删除的逻辑，更新后可能会导致和实际数据不一致
+	}()
+
+	utils.Success(c, responseData)
 }
 
 func maxInt64(a int64, b int64) int64 {
