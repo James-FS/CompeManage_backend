@@ -3,7 +3,7 @@ package models
 // CompDirectory 竞赛目录表 (主表)
 type CompDirectory struct {
 	ID         uint   `gorm:"primaryKey;autoIncrement;comment:主键ID" json:"id"`
-	CompCode   string `gorm:"column:comp_code;not null;comment:竞赛代码(数字型)" json:"comp_code"`
+	CompCode   string `gorm:"column:comp_code;type:varchar(50);not null;uniqueIndex;comment:竞赛代码(数字型)" json:"comp_code"`
 	CompName   string `gorm:"column:comp_name;type:varchar(255);not null;comment:竞赛名称" json:"comp_name"`
 	CompType   string `gorm:"column:comp_type;type:varchar(100);comment:竞赛类别(如:A类,B类)" json:"comp_type"`
 	CompLevel  string `gorm:"column:comp_level;type:varchar(100);comment:竞赛级别(如:国家级,省级)" json:"comp_level"`

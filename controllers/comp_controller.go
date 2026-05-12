@@ -316,16 +316,16 @@ func BatchImportCompetition(c *gin.Context) {
 
 	var compDirs []models.CompDirectory
 	err := database.DB.Transaction(func(tx *gorm.DB) error {
-		for _, item := range req.Items {
+		for i, item := range req.Items {
 			collegeID, collegeErr := resolveCollegeIDByName(tx, item.College)
 			if collegeErr != nil {
-				return collegeErr
+				return fmt.Errorf("第%d项(%s): %w", i+1, item.CompName, collegeErr)
 			}
 
 			year := resolveCompetitionYear(item.Year)
 			compCode, codeErr := nextCompetitionCode(tx, item.CompLevel, year)
 			if codeErr != nil {
-				return codeErr
+				return fmt.Errorf("第%d项(%s): 生成编号失败: %w", i+1, item.CompName, codeErr)
 			}
 
 			compDir := models.CompDirectory{
@@ -343,7 +343,7 @@ func BatchImportCompetition(c *gin.Context) {
 			}
 
 			if createErr := tx.Create(&compDir).Error; createErr != nil {
-				return createErr
+				return fmt.Errorf("第%d项(%s): 创建失败: %w", i+1, item.CompName, createErr)
 			}
 
 			compDirs = append(compDirs, compDir)
