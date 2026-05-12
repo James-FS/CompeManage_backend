@@ -145,20 +145,17 @@ func GetCompetitionList(c *gin.Context) {
 	}
 
 	if req.Manager != "" {
-		query = query.Where("manager LIKE ?", "%"+req.Manager+"%")
+		query = query.Where("manager_id IN (SELECT id FROM users WHERE realname LIKE ?)", "%"+req.Manager+"%")
 	}
 
 	if req.Status != "" && req.Status != "all" {
-		now := time.Now()
-		query = query.Joins("LEFT JOIN comp_details ON comp_details.comp_id = comp_directories.id")
-
 		switch req.Status {
-		case "upcoming":
-			query = query.Where("comp_details.reg_start_time > ?", now)
-		case "ongoing":
-			query = query.Where("comp_details.reg_start_time <= ? AND comp_details.reg_end_time >= ?", now, now)
-		case "ended":
-			query = query.Where("comp_details.reg_end_time < ?", now)
+		case "upcoming", "未开始":
+			query = query.Where("status = 0")
+		case "ongoing", "进行中":
+			query = query.Where("status = 1")
+		case "ended", "已结束":
+			query = query.Where("status = 2")
 		}
 	}
 
