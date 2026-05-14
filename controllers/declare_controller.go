@@ -467,8 +467,15 @@ func AuditDeclare(c *gin.Context) {
 
 	switch req.AuditStatus {
 	case 2:
+		compCode, codeErr := nextCompetitionCode(database.DB, declaration.CompLevel, declaration.Year)
+		if codeErr != nil {
+			utils.InternalServerError(c, "生成赛事编号失败", codeErr)
+			return
+		}
+
 		collegeID := declaration.CollegeID
 		newComp := models.CompDirectory{
+			CompCode:   compCode,
 			CompName:   declaration.CompName,
 			CompLevel:  declaration.CompLevel,
 			CompType:   declaration.CompType,

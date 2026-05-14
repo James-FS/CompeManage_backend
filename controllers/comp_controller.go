@@ -145,20 +145,17 @@ func GetCompetitionList(c *gin.Context) {
 	}
 
 	if req.Manager != "" {
-		query = query.Where("manager LIKE ?", "%"+req.Manager+"%")
+		query = query.Where("manager_id IN (SELECT id FROM users WHERE realname LIKE ?)", "%"+req.Manager+"%")
 	}
 
 	if req.Status != "" && req.Status != "all" {
-		now := time.Now()
-		query = query.Joins("LEFT JOIN comp_details ON comp_details.comp_id = comp_directories.id")
-
 		switch req.Status {
-		case "upcoming":
-			query = query.Where("comp_details.reg_start_time > ?", now)
-		case "ongoing":
-			query = query.Where("comp_details.reg_start_time <= ? AND comp_details.reg_end_time >= ?", now, now)
-		case "ended":
-			query = query.Where("comp_details.reg_end_time < ?", now)
+		case "upcoming", "未开始":
+			query = query.Where("status = 0")
+		case "ongoing", "进行中":
+			query = query.Where("status = 1")
+		case "ended", "已结束":
+			query = query.Where("status = 2")
 		}
 	}
 
@@ -319,16 +316,16 @@ func BatchImportCompetition(c *gin.Context) {
 
 	var compDirs []models.CompDirectory
 	err := database.DB.Transaction(func(tx *gorm.DB) error {
-		for _, item := range req.Items {
+		for i, item := range req.Items {
 			collegeID, collegeErr := resolveCollegeIDByName(tx, item.College)
 			if collegeErr != nil {
-				return collegeErr
+				return fmt.Errorf("第%d项(%s): %w", i+1, item.CompName, collegeErr)
 			}
 
 			year := resolveCompetitionYear(item.Year)
 			compCode, codeErr := nextCompetitionCode(tx, item.CompLevel, year)
 			if codeErr != nil {
-				return codeErr
+				return fmt.Errorf("第%d项(%s): 生成编号失败: %w", i+1, item.CompName, codeErr)
 			}
 
 			compDir := models.CompDirectory{
@@ -346,7 +343,7 @@ func BatchImportCompetition(c *gin.Context) {
 			}
 
 			if createErr := tx.Create(&compDir).Error; createErr != nil {
-				return createErr
+				return fmt.Errorf("第%d项(%s): 创建失败: %w", i+1, item.CompName, createErr)
 			}
 
 			compDirs = append(compDirs, compDir)

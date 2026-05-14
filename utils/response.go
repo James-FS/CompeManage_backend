@@ -111,6 +111,13 @@ func NotFound(c *gin.Context, message string) {
 // InternalServerError 服务器错误（500 Internal Server Error）
 // 支持传入原始错误，根据环境决定是否展示详情
 func InternalServerError(c *gin.Context, message string, err error) {
+	if err != nil {
+		slog.Error("服务器内部错误",
+			"path", c.Request.URL.Path,
+			"msg", message,
+			"error", err.Error(),
+		)
+	}
 	var showMsg string
 	if config.GetString("app.env") == "development" { // 开发环境显示详细错误
 		showMsg = message + ": " + err.Error()
