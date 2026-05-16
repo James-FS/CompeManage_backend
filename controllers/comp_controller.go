@@ -64,7 +64,7 @@ func nextCompetitionCode(tx *gorm.DB, level string, year int) (string, error) {
 	base := fmt.Sprintf("%s%04d", prefix, year)
 
 	var latest models.CompDirectory
-	err := tx.Model(&models.CompDirectory{}).
+	err := tx.Unscoped().Model(&models.CompDirectory{}).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Select("comp_code").
 		Where("comp_code LIKE ?", base+"%").

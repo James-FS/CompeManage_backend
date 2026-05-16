@@ -8,10 +8,18 @@ import (
 	"github.com/spf13/viper"
 )
 
+type DataHallConfig struct {
+	Key      string `mapstructure:"key"`
+	Secret   string `mapstructure:"secret"`
+	BaseURL  string `mapstructure:"base_url"`
+	MinGrade string `mapstructure:"min_grade"` // 只同步此年级及之后的学生，如 "2022"，为空则全量
+}
+
 type Config struct {
 	Logger   LoggerConfig   `mapstructure:"logger"`
 	Database DatabaseConfig `mapstructure:"database"`
 	Redis    RedisConfig    `mapstructure:"redis"`
+	DataHall DataHallConfig `mapstructure:"datahall"`
 }
 
 type DatabaseConfig struct {
