@@ -51,3 +51,4 @@ logs/
 mysql_data/
 app.logger
 logger/app-2026-05-17T00-57-19.785.logger.gz
+coverage
