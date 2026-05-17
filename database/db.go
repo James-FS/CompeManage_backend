@@ -36,10 +36,10 @@ func Init() {
 		log.Fatalf("数据库连接失败：%v", err)
 	}
 
-	// 可选：获取底层sql.DB，设置连接池
+	// 连接池调优 - 支持更高并发
 	sqlDB, _ := DB.DB()
-	sqlDB.SetMaxIdleConns(10)  // 最大空闲连接
-	sqlDB.SetMaxOpenConns(100) // 最大打开连接
+	sqlDB.SetMaxIdleConns(50)   // 增大空闲连接
+	sqlDB.SetMaxOpenConns(200)   // 增大最大打开连接
 	log.Println("数据库连接成功")
 
 	// 自动迁移数据库表
@@ -65,6 +65,7 @@ func autoMigrate() {
 		&models.CompDeclaration{},
 		&models.Award{},
 		&models.Summary{},
+		&models.FileRecord{},
 	)
 
 	// 重新启用外键检查

@@ -3,7 +3,9 @@ package middleware
 import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/utils"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -44,6 +46,7 @@ func AuthRequired() gin.HandlerFunc {
 
 // RequirePermission
 // 作用：拦截请求，检查当前用户是否拥有指定权限 code
+// 使用 Redis 缓存优化，避免每次请求都查 MySQL
 func RequirePermission(permCode string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, exists := c.Get("user_id")
@@ -52,13 +55,25 @@ func RequirePermission(permCode string) gin.HandlerFunc {
 			return
 		}
 
-		// 2. 核心逻辑：去数据库查一下，这个 Role 到底有没有 permCode 这个权限？
-		// (为了性能，这一步通常走 Redis 缓存，但直接查库也能用)
+		// 1. 先查 Redis 缓存
+		cacheKey := fmt.Sprintf("perm:%d:%s", userID, permCode)
+		ctx := c.Request.Context()
+		rdb := GetRedisClient()
+
+		// 查询缓存中是否存在
+		cached, err := rdb.Exists(ctx, cacheKey).Result()
+		if err == nil && cached > 0 {
+			// 缓存命中，有权限，直接放行
+			c.Next()
+			return
+		}
+
+		// 2. 缓存未命中，查 MySQL
 		var count int64
 		result := database.DB.Table("user_roles").
 			Joins("JOIN role_permissions ON role_permissions.role_id = user_roles.role_id").
 			Joins("JOIN permissions ON permissions.id = role_permissions.permission_id").
-			Where("user_roles.user_id= ? AND permissions.code = ?", userID, permCode).
+			Where("user_roles.user_id = ? AND permissions.code = ?", userID, permCode).
 			Count(&count)
 
 		if result.Error != nil {
@@ -66,11 +81,15 @@ func RequirePermission(permCode string) gin.HandlerFunc {
 			c.AbortWithStatusJSON(500, gin.H{"code": 500, "msg": "权限验证服务异常"})
 			return
 		}
+
+		// 3. 结果写入 Redis (过期时间 5 分钟)
 		if count > 0 {
-			// 有权限，放行
+			// 有权限，缓存结果
+			rdb.Set(ctx, cacheKey, "1", 5*time.Minute)
 			c.Next()
 		} else {
-			// 没权限，直接拦截
+			// 无权限也缓存，避免缓存穿透攻击
+			rdb.Set(ctx, cacheKey, "0", 5*time.Minute)
 			c.AbortWithStatusJSON(403, gin.H{"msg": "权限不足，禁止访问"})
 		}
 	}
