@@ -17,6 +17,7 @@
 
 # Output of the go coverage tool
 *.out
+coverage
 
 # Dependency directories
 vendor/
@@ -50,5 +51,5 @@ logs/
 # Docker MySQL data
 mysql_data/
 app.logger
-logger/app-2026-05-17T00-57-19.785.logger.gz
-coverage
+server
+logger/app.logger

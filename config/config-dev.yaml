@@ -10,16 +10,22 @@ logger:
 
   # Redis 配置
 redis:
-  host: "localhost"           # Redis 主机地址
+  host: "localhost"           # Redis 主机地址 服务器:compemanage-redis
   port: 6379                 # Redis 端口
   password: ""                # Redis 密码（如果有）
   db: 0                       # Redis 数据库编号
   max_retries: 3              # 最大重试次数
   pool_size: 10               # 连接池大小
 
-# 在 redis 配置下方添加
+# 学校数据中台 API 配置
+datahall:
+  key: "2026051118227ee8fb684d1211f18e4a0a3e580ef7931655"        # 在数据中台获取的 App Key
+  secret: "bd6d57fc3e95940c974fb7b37c9ff4d0fe6a7911"  # 在数据中台获取的 App Secret
+  base_url: "https://datahall.gzhu.edu.cn"
+  min_grade: "2022"          # 只同步此年级及之后的学生，为空则全量同步
+
 database:
-  host: "127.0.0.1"
+  host: "127.0.0.1"          # 数据库主机地址 服务器:compemanage_mysql
   port: 3306
   user: "root"
   password: "123456"
