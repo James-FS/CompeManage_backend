@@ -8,7 +8,8 @@
       "Bash(curl -s http://localhost:8080/health)",
       "Bash(go run *)",
       "Bash(mysql -h 127.0.0.1 -P 3306 -u root -p1164657389abc -e \"DELETE t1 FROM comp_directories t1 INNER JOIN comp_directories t2 WHERE t1.id > t2.id AND t1.comp_code = t2.comp_code;\" CompeManage)",
-      "Bash(docker exec *)"
+      "Bash(docker exec *)",
+      "Bash(go test *)"
     ]
   },
   "enabledMcpJsonServers": [
