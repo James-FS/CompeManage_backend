@@ -1,6 +1,6 @@
 services:
   app:
-    image: your-docker-id/compemanage:latest
+    image: ywxx252324/compemanage:latest
     container_name: compemanage_app
     restart: always
     ports:
