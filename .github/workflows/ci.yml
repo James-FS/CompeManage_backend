@@ -16,7 +16,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
+<<<<<<< HEAD
           go-version: '1.24'
+=======
+          go-version: 'stable'
+>>>>>>> 51b32373d1dc9ed1dd2104353c99759f6083f45a
           cache: true
 
       - name: Go Mod Tidy Check
