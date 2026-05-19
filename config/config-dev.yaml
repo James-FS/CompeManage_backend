@@ -19,8 +19,8 @@ redis:
 
 # 学校数据中台 API 配置
 datahall:
-  key: "2026051118227ee8fb684d1211f18e4a0a3e580ef7931655"        # 在数据中台获取的 App Key
-  secret: "bd6d57fc3e95940c974fb7b37c9ff4d0fe6a7911"  # 在数据中台获取的 App Secret
+  key: "2026051118227ee8fb684d1211f18e4a0a3e580ef7931655"        # 在数据中台获取的 App Key（本科生和教职工共用）
+  secret: "bd6d57fc3e95940c974fb7b37c9ff4d0fe6a7911"  # 在数据中台获取的 App Secret（本科生和教职工共用）
   base_url: "https://datahall.gzhu.edu.cn"
   min_grade: "2022"          # 只同步此年级及之后的学生，为空则全量同步
 

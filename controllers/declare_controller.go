@@ -573,6 +573,9 @@ func GetAuditedDeclares(c *gin.Context) {
 
 	query := database.DB.Where("declare_status IN ?", []int{2, 3})
 
+	if req.DeclareStatus != 0 {
+		query = query.Where("declare_status = ?", req.DeclareStatus)
+	}
 	if req.CompName != "" {
 		query = query.Where("comp_name LIKE ?", "%"+req.CompName+"%")
 	}

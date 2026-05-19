@@ -14,6 +14,7 @@ type User struct {
 	MajorCode *string `gorm:"type:varchar(50);comment:专业代码" json:"major_code"`
 	ClassCode *string `gorm:"type:varchar(50);comment:班级代码" json:"class_code"`
 	ClassName *string `gorm:"type:varchar(100);comment:班级名称" json:"class_name"`
+	Title     *string `gorm:"type:varchar(100);comment:职称" json:"title"`
 
 	// 多对多关系：一个用户有多个角色
 	Roles []*Role `gorm:"many2many:user_roles;" json:"roles"`
