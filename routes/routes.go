@@ -113,6 +113,9 @@ func SetupRoutes(r *gin.Engine) {
 		declare.POST("/:id/submit",
 			controllers.SubmitDeclare,
 			middleware.RequirePermission("declare:submit")) // 提交申报
+		declare.POST("/:id/revoke",
+			controllers.RevokeDeclare,
+			middleware.RequirePermission("declare:revoke")) // 撤回申报
 		declare.GET("/my/list",
 			controllers.GetMyDeclares,
 			middleware.RequirePermission("declare:list")) // 获取我的申报列表
@@ -130,6 +133,9 @@ func SetupRoutes(r *gin.Engine) {
 		declare.GET("/pending/list",
 			controllers.GetPendingDeclares,
 			middleware.RequirePermission("declare:pending-list")) // 获取待审核申报
+		declare.GET("/audited/list",
+			controllers.GetAuditedDeclares,
+			middleware.RequirePermission("declare:audited-list")) // 获取已审核申报
 		declare.POST("/audit",
 			controllers.AuditDeclare,
 			middleware.RequirePermission("declare:audit")) // 审核申报
