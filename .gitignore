@@ -5,7 +5,13 @@
 *.so
 *.so.*
 *.dylib
-
+*.png
+*.pdf
+*.xlsx
+*.doc
+*.docx
+*.jpg
+*.logger.gz
 # Test binary, built with `go test -c`
 *.test
 

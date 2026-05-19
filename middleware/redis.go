@@ -30,7 +30,7 @@ func InitRedis() {
 		maxRetries = 3
 	}
 	if poolSize == 0 {
-		poolSize = 10
+		poolSize = 50  // 增大连接池以支持高并发
 	}
 
 	RedisClient = redis.NewClient(&redis.Options{

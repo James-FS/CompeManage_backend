@@ -250,6 +250,71 @@ func PublishNotice(c *gin.Context) {
 	})
 }
 
+// UpdateNotice 修改通知
+func UpdateNotice(c *gin.Context) {
+	// 1. 获取通知ID
+	noticeIDStr := c.Param("id")
+	noticeIDUint, err := strconv.ParseUint(noticeIDStr, 10, 32)
+	if err != nil {
+		utils.BadRequest(c, "通知ID格式错误，必须是数字")
+		return
+	}
+	noticeID := uint(noticeIDUint)
+
+	// 2. 检查通知是否存在
+	var notice models.Notice
+	if err := database.DB.First(&notice, noticeID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.NotFound(c, "该通知不存在")
+		} else {
+			utils.InternalServerError(c, "查询通知失败", err)
+		}
+		return
+	}
+
+	// 3. 解析要修改的字段
+	title := c.PostForm("title")
+	content := c.PostForm("content")
+	compIDStr := c.PostForm("compID")
+	attachmentURL := c.PostForm("attachment")
+
+	// 4. 构建更新字段
+	updates := make(map[string]interface{})
+	if title != "" {
+		updates["title"] = title
+	}
+	if content != "" {
+		updates["content"] = content
+	}
+	if compIDStr != "" {
+		compIDUint64, err := strconv.ParseUint(compIDStr, 10, 32)
+		if err != nil {
+			utils.BadRequest(c, "compID格式错误，必须是数字")
+			return
+		}
+		updates["competition_detail_id"] = uint(compIDUint64)
+	}
+	if attachmentURL != "" {
+		updates["attachment"] = attachmentURL
+	}
+
+	// 5. 如果没有要更新的字段
+	if len(updates) == 0 {
+		utils.BadRequest(c, "没有要修改的字段")
+		return
+	}
+
+	// 6. 执行更新
+	if err := database.DB.Model(&notice).Updates(updates).Error; err != nil {
+		utils.InternalServerError(c, "修改通知失败", err)
+		return
+	}
+
+	// 7. 返回更新后的通知
+	database.DB.First(&notice, noticeID)
+	utils.Success(c, gin.H{"notice": notice})
+}
+
 // DeleteNotice 删除通知（物理删除/逻辑删除可选，这里用GORM软删除）
 func DeleteNotice(c *gin.Context) {
 	// 1. 获取通知ID

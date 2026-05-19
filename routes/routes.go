@@ -45,6 +45,9 @@ func SetupRoutes(r *gin.Engine) {
 		notice.PUT("/:id/publish",
 			controllers.PublishNotice,
 			middleware.RequirePermission("notice:publish"))
+		notice.PUT("/:id",
+			controllers.UpdateNotice,
+			middleware.RequirePermission("notice:update"))
 		notice.DELETE("/:id",
 			controllers.DeleteNotice,
 			middleware.RequirePermission("notice:delete"))
