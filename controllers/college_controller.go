@@ -12,7 +12,7 @@ import (
 func GetCollegeList(c *gin.Context) {
 	var list []models.College
 	// 查询所有学院
-	if err := database.DB.Find(&list).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Find(&list).Error; err != nil {
 		utils.InternalServerError(c, "获取学院数据失败", err)
 		return
 	}

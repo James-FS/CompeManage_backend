@@ -216,13 +216,17 @@ func SetupRoutes(r *gin.Engine) {
 		award.GET("/audit/detail/:id",
 			controllers.GetAwardAuditDetail)
 		award.PUT("/audit/:id/pass",
-			controllers.PassAwardAudit)
+			controllers.PassAwardAudit,
+			middleware.RequirePermission("award:audit"))
 		award.PUT("/audit/:id/reject",
-			controllers.RejectAwardAudit)
+			controllers.RejectAwardAudit,
+			middleware.RequirePermission("award:audit"))
 		award.PUT("/audit/batch/pass",
-			controllers.BatchPassAwardAudit)
+			controllers.BatchPassAwardAudit,
+			middleware.RequirePermission("award:audit"))
 		award.PUT("/audit/batch/reject",
-			controllers.BatchRejectAwardAudit)
+			controllers.BatchRejectAwardAudit,
+			middleware.RequirePermission("award:audit"))
 	}
 
 	summary := r.Group("/api/summary", middleware.AuthRequired())
