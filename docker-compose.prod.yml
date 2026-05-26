@@ -8,6 +8,7 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - APP_ENV=production
+      - JWT_SECRET=4c8b2a9e7f1d3c6a5b0e8d9f2c1a4b7e6d3f0c9a8b5e2d1f4c7a0b9e6d3f2c1a
     depends_on:
       - mysql-db
       - redis
