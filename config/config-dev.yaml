@@ -10,7 +10,7 @@ logger:
 
   # Redis 配置
 redis:
-  host: "localhost"           # Redis 主机地址 服务器:compemanage-redis
+  host: "compemanage-redis"   # Redis 主机地址（本地通过 .env 覆盖为 localhost）
   port: 6379                 # Redis 端口
   password: ""                # Redis 密码（如果有）
   db: 0                       # Redis 数据库编号
@@ -25,7 +25,7 @@ datahall:
   min_grade: "2022"          # 只同步此年级及之后的学生，为空则全量同步
 
 database:
-  host: "127.0.0.1"          # 数据库主机地址 服务器:compemanage_mysql
+  host: "compemanage_mysql"   # 数据库主机地址（本地通过 .env 覆盖为 localhost）
   port: 3306
   user: "root"
   password: "123456"
