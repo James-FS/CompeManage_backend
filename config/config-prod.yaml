@@ -27,3 +27,11 @@ datahall:
   secret: "bd6d57fc3e95940c974fb7b37c9ff4d0fe6a7911"
   base_url: "https://datahall.gzhu.edu.cn"
   min_grade: "2022"
+
+# CAS/OAuth2.0 融合门户统一认证
+cas:
+  server_url: "https://newcas.gzhu.edu.cn/cas"
+  client_id: ""
+  client_secret: ""
+  redirect_uri: "https://xkjs.gzhu.edu.cn/api/cas/callback"
+  frontend_url: "https://xkjs.gzhu.edu.cn"
