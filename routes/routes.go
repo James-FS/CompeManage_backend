@@ -16,6 +16,14 @@ func SetupRoutes(r *gin.Engine) {
 	})
 
 	r.Static("/static", "./static")
+
+	// CAS/OAuth2.0 统一认证接口（公开）
+	cas := r.Group("/api/cas")
+	{
+		cas.GET("/login", controllers.CasLogin)
+		cas.GET("/callback", controllers.CasCallback)
+	}
+
 	upload := r.Group("/api/upload", middleware.AuthRequired())
 	{
 		upload.POST("", controllers.UploadFile)

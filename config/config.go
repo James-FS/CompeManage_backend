@@ -15,11 +15,21 @@ type DataHallConfig struct {
 	MinGrade string `mapstructure:"min_grade"` // 只同步此年级及之后的学生，如 "2022"，为空则全量
 }
 
+// CasConfig CAS/OAuth2.0 融合门户认证配置
+type CasConfig struct {
+	ServerURL    string `mapstructure:"server_url"`    // CAS服务器地址
+	ClientID     string `mapstructure:"client_id"`     // 应用 API Key
+	ClientSecret string `mapstructure:"client_secret"` // 应用 Secret Key
+	RedirectURI  string `mapstructure:"redirect_uri"`  // 授权回调地址
+	FrontendURL  string `mapstructure:"frontend_url"`  // 前端地址，用于最终302跳转
+}
+
 type Config struct {
 	Logger   LoggerConfig   `mapstructure:"logger"`
 	Database DatabaseConfig `mapstructure:"database"`
 	Redis    RedisConfig    `mapstructure:"redis"`
 	DataHall DataHallConfig `mapstructure:"datahall"`
+	Cas      CasConfig      `mapstructure:"cas"`
 }
 
 type DatabaseConfig struct {
@@ -109,6 +119,14 @@ func Init() {
 	viper.BindEnv("server.port", "SERVER_PORT")
 	viper.BindEnv("server.host", "SERVER_HOST")
 	viper.BindEnv("jwt.secret", "JWT_SECRET")
+
+	// CAS/OAuth2.0 统一认证配置（必须在 Unmarshal 之前）
+	viper.BindEnv("cas.client_id", "CAS_CLIENT_ID")
+	viper.BindEnv("cas.client_secret", "CAS_CLIENT_SECRET")
+	viper.BindEnv("cas.redirect_uri", "CAS_REDIRECT_URI")
+	viper.BindEnv("cas.frontend_url", "CAS_FRONTEND_URL")
+	viper.SetDefault("cas.server_url", "https://newcas.gzhu.edu.cn/cas")
+	viper.SetDefault("cas.frontend_url", "http://localhost:5219")
 
 	// 默认值（YAML 没配、env var 也没设时使用）
 	viper.SetDefault("database.host", "localhost")

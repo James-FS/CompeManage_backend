@@ -24,6 +24,14 @@ datahall:
   base_url: "https://datahall.gzhu.edu.cn"
   min_grade: "2022"          # 只同步此年级及之后的学生，为空则全量同步
 
+# CAS/OAuth2.0 融合门户统一认证
+cas:
+  server_url: "https://newcas.gzhu.edu.cn/cas"
+  client_id: ""
+  client_secret: ""
+  redirect_uri: "http://localhost:8080/api/cas/callback"
+  frontend_url: "http://localhost:5219"
+
 database:
   host: "compemanage_mysql"   # 数据库主机地址（本地通过 .env 覆盖为 localhost）
   port: 3306
