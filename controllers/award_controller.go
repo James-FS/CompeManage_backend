@@ -19,6 +19,31 @@ import (
 	"gorm.io/gorm"
 )
 
+// DateOnly 解析日期，支持 "2006-01-02" 和 RFC3339 两种格式
+type DateOnly struct {
+	time.Time
+}
+
+func (d *DateOnly) UnmarshalJSON(data []byte) error {
+	str := strings.Trim(string(data), `"`)
+	if str == "" || str == "null" {
+		return nil
+	}
+	// 先试纯日期格式
+	parsed, err := time.Parse("2006-01-02", str)
+	if err == nil {
+		d.Time = parsed
+		return nil
+	}
+	// 再试 RFC3339
+	parsed, err = time.Parse(time.RFC3339, str)
+	if err == nil {
+		d.Time = parsed
+		return nil
+	}
+	return err
+}
+
 type AwardAuditListItem struct {
 	ID          uint   `json:"id"`
 	StudentName string `json:"student_name"`
@@ -592,6 +617,7 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 		Members    []models.RegMemberInfo `json:"members" binding:"required,dive"`
 		AwardLevel string                 `json:"award_level" binding:"required"`
 		AwardName  string                 `json:"award_name" binding:"required"`
+		AwardDate  DateOnly               `json:"award_date"`
 		ProofURL   string                 `json:"proof_url" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -683,11 +709,17 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 		fmt.Printf("检测到已存在的报名记录，regID=%d，跳过补录报名创建\n", regID)
 	}
 
+	var awardTime *time.Time
+	if req.AwardDate.Year() > 1 {
+		awardTime = &req.AwardDate.Time
+	}
+
 	award := models.Award{
 		CompID:     req.CompID,
 		RegID:      regID,
 		AwardLevel: req.AwardLevel,
 		AwardName:  req.AwardName,
+		AwardTime:  awardTime,
 		Status:     "draft",
 		ProofUrl:   req.ProofURL,
 		Source:     "supplement",
@@ -779,13 +811,18 @@ func GetAwardAuditList(c *gin.Context) {
 			submitTime = a.Register.SupplementTime.Format("2006-01-02 15:04")
 		}
 
+		listAwardDate := "-"
+		if a.AwardTime != nil {
+			listAwardDate = a.AwardTime.Format("2006-01-02")
+		}
+
 		list = append(list, AwardAuditListItem{
 			ID:          a.ID,
 			StudentName: leaderName,
 			StudentID:   leaderID,
 			CompName:    a.Register.Competition.CompName,
 			AwardLevel:  a.AwardLevel,
-			AwardDate:   "-",
+			AwardDate:   listAwardDate,
 			Phone:       phone,
 			SubmitTime:  submitTime,
 			Status:      mapAwardStatusToInt(a.Status),
@@ -849,6 +886,11 @@ func GetAwardAuditDetail(c *gin.Context) {
 		submitTime = award.Register.SupplementTime.Format("2006-01-02 15:04:05")
 	}
 
+	awardDate := "-"
+	if award.AwardTime != nil {
+		awardDate = award.AwardTime.Format("2006-01-02")
+	}
+
 	resp := AwardAuditDetailResp{
 		ID:            award.ID,
 		StudentName:   leaderName,
@@ -859,7 +901,7 @@ func GetAwardAuditDetail(c *gin.Context) {
 		CompName:      award.Register.Competition.CompName,
 		AwardLevel:    award.AwardLevel,
 		AwardSpecific: award.AwardName,
-		AwardDate:     "-",
+		AwardDate:     awardDate,
 		TeamName:      award.Register.TeamName,
 		Teammates:     teammates,
 		CertImage:     award.ProofUrl,
