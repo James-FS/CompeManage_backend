@@ -79,6 +79,8 @@ func UploadFile(c *gin.Context) {
 		return
 	}
 
+	db := database.DB.WithContext(c.Request.Context())
+
 	// 计算文件 MD5
 	fileHash, err := calcFileMD5(file)
 	if err != nil {
@@ -88,7 +90,7 @@ func UploadFile(c *gin.Context) {
 
 	// 查重（同一哈希 + 同一业务类型）
 	var existingRecord models.FileRecord
-	result := database.DB.Where("file_hash = ? AND biz_type = ?", fileHash, bizType).First(&existingRecord)
+	result := db.Where("file_hash = ? AND biz_type = ?", fileHash, bizType).First(&existingRecord)
 	if result.Error == nil {
 		// 已存在，直接返回（去重成功），前端无感知
 		utils.Success(c, gin.H{
@@ -134,7 +136,7 @@ func UploadFile(c *gin.Context) {
 		BizType:      bizType,
 		UploaderID:   uploaderID,
 	}
-	if err := database.DB.Create(&record).Error; err != nil {
+	if err := db.Create(&record).Error; err != nil {
 		// 插入失败，可能是并发冲突，删掉已保存的物理文件
 		os.Remove(dst)
 		utils.InternalServerError(c, "文件记录保存失败", err)

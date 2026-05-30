@@ -80,7 +80,7 @@ func CreateDeclare(c *gin.Context) {
 		CreatedBy:      userID.(uint),
 	}
 
-	if err := database.DB.Create(&declaration).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Create(&declaration).Error; err != nil {
 		utils.InternalServerError(c, "创建申报失败", err)
 		return
 	}
@@ -92,7 +92,7 @@ func GetDeclareDetail(c *gin.Context) {
 	declareID := c.Param("id")
 
 	var declaration models.CompDeclaration
-	if err := database.DB.
+	if err := database.DB.WithContext(c.Request.Context()).
 		Preload("CollegeInfo").
 		Preload("Manager").
 		Preload("Declarer").
@@ -118,7 +118,7 @@ func UpdateDeclare(c *gin.Context) {
 	}
 
 	var declaration models.CompDeclaration
-	if err := database.DB.First(&declaration, declareID).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).First(&declaration, declareID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.NotFound(c, "申报记录不存在")
 			return
@@ -164,7 +164,7 @@ func UpdateDeclare(c *gin.Context) {
 		updates["attachment_path"] = *req.AttachmentPath
 	}
 
-	if err := database.DB.Model(&declaration).Updates(updates).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Model(&declaration).Updates(updates).Error; err != nil {
 		utils.InternalServerError(c, "更新失败", err)
 		return
 	}
@@ -176,7 +176,7 @@ func SubmitDeclare(c *gin.Context) {
 	declareID := c.Param("id")
 
 	var declaration models.CompDeclaration
-	if err := database.DB.First(&declaration, declareID).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).First(&declaration, declareID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.NotFound(c, "申报记录不存在")
 			return
@@ -190,7 +190,7 @@ func SubmitDeclare(c *gin.Context) {
 		return
 	}
 
-	if err := database.DB.Model(&declaration).Update("declare_status", 1).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Model(&declaration).Update("declare_status", 1).Error; err != nil {
 		utils.InternalServerError(c, "提交失败", err)
 		return
 	}
@@ -202,7 +202,7 @@ func RevokeDeclare(c *gin.Context) {
 	declareID := c.Param("id")
 
 	var declaration models.CompDeclaration
-	if err := database.DB.First(&declaration, declareID).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).First(&declaration, declareID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.NotFound(c, "申报记录不存在")
 			return
@@ -216,7 +216,7 @@ func RevokeDeclare(c *gin.Context) {
 		return
 	}
 
-	if err := database.DB.Model(&declaration).Update("declare_status", 0).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Model(&declaration).Update("declare_status", 0).Error; err != nil {
 		utils.InternalServerError(c, "撤回失败", err)
 		return
 	}
@@ -237,7 +237,7 @@ func GetMyDeclares(c *gin.Context) {
 		return
 	}
 
-	query := database.DB.Where("created_by = ?", userID.(uint))
+	query := database.DB.WithContext(c.Request.Context()).Where("created_by = ?", userID.(uint))
 
 	if req.CompName != "" {
 		query = query.Where("comp_name LIKE ?", "%"+req.CompName+"%")
@@ -288,7 +288,7 @@ func GetMyPendingDeclares(c *gin.Context) {
 		return
 	}
 
-	query := database.DB.Where("created_by = ?", userID.(uint)).
+	query := database.DB.WithContext(c.Request.Context()).Where("created_by = ?", userID.(uint)).
 		Where("declare_status IN ?", []int{0, 1, 3})
 
 	if req.CompName != "" {
@@ -334,7 +334,7 @@ func GetMyPublishedDeclares(c *gin.Context) {
 		return
 	}
 
-	query := database.DB.Where("created_by = ?", userID.(uint)).
+	query := database.DB.WithContext(c.Request.Context()).Where("created_by = ?", userID.(uint)).
 		Where("declare_status = ?", 2)
 
 	if req.CompName != "" {
@@ -371,7 +371,7 @@ func DeleteDeclare(c *gin.Context) {
 	declareID := c.Param("id")
 
 	var declaration models.CompDeclaration
-	if err := database.DB.First(&declaration, declareID).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).First(&declaration, declareID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.NotFound(c, "申报记录不存在")
 			return
@@ -385,7 +385,7 @@ func DeleteDeclare(c *gin.Context) {
 		return
 	}
 
-	if err := database.DB.Unscoped().Delete(&declaration).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Unscoped().Delete(&declaration).Error; err != nil {
 		utils.InternalServerError(c, "删除失败", err)
 		return
 	}
@@ -400,7 +400,7 @@ func GetPendingDeclares(c *gin.Context) {
 		return
 	}
 
-	query := database.DB.Where("declare_status = ?", 1)
+	query := database.DB.WithContext(c.Request.Context()).Where("declare_status = ?", 1)
 
 	if req.CompName != "" {
 		query = query.Where("comp_name LIKE ?", "%"+req.CompName+"%")
@@ -448,7 +448,7 @@ func AuditDeclare(c *gin.Context) {
 	}
 
 	var declaration models.CompDeclaration
-	if err := database.DB.First(&declaration, req.DeclareID).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).First(&declaration, req.DeclareID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.NotFound(c, "申报记录不存在")
 			return
@@ -467,7 +467,7 @@ func AuditDeclare(c *gin.Context) {
 
 	switch req.AuditStatus {
 	case 2:
-		compCode, codeErr := nextCompetitionCode(database.DB, declaration.CompLevel, declaration.Year)
+		compCode, codeErr := nextCompetitionCode(database.DB.WithContext(c.Request.Context()), declaration.CompLevel, declaration.Year)
 		if codeErr != nil {
 			utils.InternalServerError(c, "生成赛事编号失败", codeErr)
 			return
@@ -491,7 +491,7 @@ func AuditDeclare(c *gin.Context) {
 			DeclareID:  &declaration.ID,
 		}
 
-		if err := database.DB.Create(&newComp).Error; err != nil {
+		if err := database.DB.WithContext(c.Request.Context()).Create(&newComp).Error; err != nil {
 			utils.InternalServerError(c, "创建赛事目录失败", err)
 			return
 		}
@@ -514,7 +514,7 @@ func AuditDeclare(c *gin.Context) {
 		status = "拒绝"
 	}
 
-	if err := database.DB.Save(&declaration).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Save(&declaration).Error; err != nil {
 		utils.InternalServerError(c, "审核失败", err)
 		return
 	}
@@ -529,7 +529,7 @@ func GetAllDeclares(c *gin.Context) {
 		return
 	}
 
-	query := database.DB.Model(&models.CompDeclaration{})
+	query := database.DB.WithContext(c.Request.Context()).Model(&models.CompDeclaration{})
 
 	if req.CompName != "" {
 		query = query.Where("comp_name LIKE ?", "%"+req.CompName+"%")
@@ -571,8 +571,11 @@ func GetAuditedDeclares(c *gin.Context) {
 		return
 	}
 
-	query := database.DB.Where("declare_status IN ?", []int{2, 3})
+	query := database.DB.WithContext(c.Request.Context()).Where("declare_status IN ?", []int{2, 3})
 
+	if req.DeclareStatus != 0 {
+		query = query.Where("declare_status = ?", req.DeclareStatus)
+	}
 	if req.CompName != "" {
 		query = query.Where("comp_name LIKE ?", "%"+req.CompName+"%")
 	}

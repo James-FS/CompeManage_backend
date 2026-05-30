@@ -10,13 +10,13 @@ import (
 
 func GetAllPermissions(c *gin.Context) {
 	var perms []models.Permission
-	database.DB.Order("id asc").Find(&perms)
+	database.DB.WithContext(c.Request.Context()).Order("id asc").Find(&perms)
 	utils.SuccessWithMessage(c, "获取成功", perms)
 }
 
 func GetAllRoles(c *gin.Context) {
 	var roles []models.Role
-	database.DB.Preload("Permissions").Order("id asc").Find(&roles)
+	database.DB.WithContext(c.Request.Context()).Preload("Permissions").Order("id asc").Find(&roles)
 	utils.SuccessWithMessage(c, "获取成功", roles)
 }
 
@@ -32,17 +32,19 @@ func AssignPermissions(c *gin.Context) {
 		return
 	}
 
+	db := database.DB.WithContext(c.Request.Context())
+
 	var role models.Role
-	if err := database.DB.First(&role, req.RoleID).Error; err != nil {
+	if err := db.First(&role, req.RoleID).Error; err != nil {
 		utils.NotFound(c, "角色不存在")
 		return
 	}
 
 	var perms []models.Permission
 	if len(req.PermIDs) > 0 {
-		database.DB.Where("id IN ?", req.PermIDs).Find(&perms)
+		db.Where("id IN ?", req.PermIDs).Find(&perms)
 	}
 
-	database.DB.Model(&role).Association("Permissions").Replace(&perms)
+	db.Model(&role).Association("Permissions").Replace(&perms)
 	utils.SuccessWithMessage(c, "权限分配成功", nil)
 }

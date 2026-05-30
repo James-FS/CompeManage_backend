@@ -103,10 +103,8 @@ func mapAwardStatusFromInt(status int) string {
 	}
 }
 
-func clearAwardCache(compID interface{}) {
+func clearAwardCache(ctx context.Context, compID interface{}) {
 	rdb := middleware.GetRedisClient()
-	ctx := context.Background()
-	// 清除该赛事对应的奖项缓存
 	cacheKey := fmt.Sprintf("cache:awards:%v", compID)
 	rdb.Del(ctx, cacheKey)
 }
@@ -130,9 +128,9 @@ func GetAwardCompList(c *gin.Context) {
 	var comps []models.CompDirectory
 	var total int64
 
-	db := database.DB.Model(&models.CompDirectory{})
+	db := database.DB.WithContext(c.Request.Context()).Model(&models.CompDirectory{})
 
-	if !checkUserIsAdmin(userID) {
+	if !checkUserIsAdmin(c.Request.Context(), userID) {
 		db = db.Where("manager_id = ?", userID)
 	}
 
@@ -237,7 +235,7 @@ func ImportAward(c *gin.Context) {
 
 	// 3. 获取赛事信息及奖项配置
 	var comp models.CompDirectory
-	if err := database.DB.Preload("Detail").First(&comp, compID).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Preload("Detail").First(&comp, compID).Error; err != nil {
 		utils.BadRequest(c, "找不到对应赛事")
 		return
 	}
@@ -252,7 +250,7 @@ func ImportAward(c *gin.Context) {
 	failCount := 0
 	var failReasons []string
 
-	tx := database.DB.Begin()
+	tx := database.DB.WithContext(c.Request.Context()).Begin()
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
@@ -369,7 +367,7 @@ func ImportAward(c *gin.Context) {
 		return
 	}
 
-	clearAwardCache(compID)
+	clearAwardCache(c.Request.Context(), compID)
 	utils.SuccessWithMessage(c, fmt.Sprintf("成功处理 %d 条，失败 %d 条", successCount, failCount), gin.H{
 		"success_count": successCount,
 		"fail_count":    failCount,
@@ -390,7 +388,7 @@ func SearchCompetition(c *gin.Context) {
 	}
 
 	var list []models.CompDirectory
-	if err := database.DB.Model(&models.CompDirectory{}).
+	if err := database.DB.WithContext(c.Request.Context()).Model(&models.CompDirectory{}).
 		Where("comp_name LIKE ?", "%"+keyword+"%").
 		Select("id", "comp_name", "year").
 		Order("create_time DESC").
@@ -434,7 +432,7 @@ func GetCompAwards(c *gin.Context) {
 	}
 
 	var comp models.CompDirectory
-	if err := database.DB.Preload("Detail").First(&comp, compID).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Preload("Detail").First(&comp, compID).Error; err != nil {
 		utils.InternalServerError(c, "赛事不存在", err)
 		return
 	}
@@ -446,7 +444,7 @@ func GetCompAwards(c *gin.Context) {
 
 	var awards []models.Award
 
-	err = database.DB.
+	err = database.DB.WithContext(c.Request.Context()).
 		Preload("Register").
 		Preload("Register.Leader").
 		Preload("Register.Competition").
@@ -517,8 +515,16 @@ func GetCompAwards(c *gin.Context) {
 			"award_hierarchy": awardHierarchy,
 			"list":            list,
 		}
-		data, _ := json.Marshal(cacheData)
-		rdb.Set(context.Background(), cacheKey, data, 30*time.Minute).Result()
+		asyncCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		data, err := json.Marshal(cacheData)
+		if err != nil {
+			logger.Error("异步缓存JSON序列化失败", "cache_key", cacheKey, "error", err)
+			return
+		}
+		if err := rdb.Set(asyncCtx, cacheKey, data, 30*time.Minute).Err(); err != nil {
+			logger.Error("异步缓存写入失败", "cache_key", cacheKey, "error", err)
+		}
 	}()
 	utils.Success(c, gin.H{
 		"award_hierarchy": awardHierarchy,
@@ -551,10 +557,11 @@ func GetStudentMyAwardList(c *gin.Context) {
 	}
 	offset := (page - 1) * size
 
-	dbQuery := database.DB.Model(&models.Award{}).
+	dbQuery := database.DB.WithContext(c.Request.Context()).Model(&models.Award{}).
 		Preload("Register").
 		Preload("Register.Leader").
 		Preload("Register.Competition").
+		Preload("Register.Members").
 		Joins("JOIN registers ON awards.reg_id = registers.id").
 		Where("registers.leader_id = ?", studentID)
 
@@ -641,7 +648,7 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 	}
 
 	var comp models.CompDirectory
-	if err := database.DB.First(&comp, req.CompID).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).First(&comp, req.CompID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			utils.NotFound(c, "赛事不存在")
 			return
@@ -651,11 +658,11 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 	}
 
 	var existingReg models.Register
-	existsErr := database.DB.Where("comp_id = ? AND leader_id = ?", req.CompID, leaderID).First(&existingReg).Error
+	existsErr := database.DB.WithContext(c.Request.Context()).Where("comp_id = ? AND leader_id = ?", req.CompID, leaderID).First(&existingReg).Error
 
 	var regID uint
 
-	tx := database.DB.Begin()
+	tx := database.DB.WithContext(c.Request.Context()).Begin()
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
@@ -709,9 +716,59 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 		fmt.Printf("检测到已存在的报名记录，regID=%d，跳过补录报名创建\n", regID)
 	}
 
+<<<<<<< HEAD
 	var awardTime *time.Time
 	if req.AwardDate.Year() > 1 {
 		awardTime = &req.AwardDate.Time
+=======
+	var existingAward models.Award
+	if err := tx.Where("reg_id = ?", regID).First(&existingAward).Error; err == nil {
+		switch existingAward.Status {
+		case "rejected":
+			if err := tx.Model(&existingAward).Updates(map[string]interface{}{
+				"award_level":   req.AwardLevel,
+				"award_name":    req.AwardName,
+				"status":        "draft",
+				"proof_url":     req.ProofURL,
+				"reject_reason": "",
+			}).Error; err != nil {
+				tx.Rollback()
+				utils.InternalServerError(c, "重新提交失败", err)
+				return
+			}
+				if existingAward.RegID != 0 {
+					if err := tx.Model(&models.Register{}).Where("id = ?", existingAward.RegID).Updates(map[string]interface{}{
+						"status": 3,
+					}).Error; err != nil {
+						tx.Rollback()
+						utils.InternalServerError(c, "更新报名状态失败", err)
+						return
+					}
+				}
+			if err := tx.Commit().Error; err != nil {
+				utils.InternalServerError(c, "事务提交失败", err)
+				return
+			}
+			clearAwardCache(c.Request.Context(), req.CompID)
+			utils.SuccessWithMessage(c, "重新申报成功，待审核", gin.H{
+				"award_id": existingAward.ID,
+				"reg_id":   regID,
+			})
+			return
+		case "approved":
+			tx.Rollback()
+			utils.BadRequest(c, "该赛事奖项已通过审核，无法重复申报")
+			return
+		default:
+			tx.Rollback()
+			utils.BadRequest(c, "该赛事您已提交过获奖申报，请勿重复提交")
+			return
+		}
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		tx.Rollback()
+		utils.InternalServerError(c, "查询已有申报记录失败", err)
+		return
+>>>>>>> develop
 	}
 
 	award := models.Award{
@@ -738,7 +795,7 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 		return
 	}
 
-	clearAwardCache(req.CompID)
+	clearAwardCache(c.Request.Context(), req.CompID)
 	utils.SuccessWithMessage(c, "补录申报成功，待审核", gin.H{
 		"award_id": award.ID,
 		"reg_id":   regID,
@@ -767,7 +824,7 @@ func GetAwardAuditList(c *gin.Context) {
 	compName := c.Query("comp_name")
 	source := c.DefaultQuery("source", "supplement")
 
-	db := database.DB.Model(&models.Award{}).
+	db := database.DB.WithContext(c.Request.Context()).Model(&models.Award{}).
 		Joins("JOIN comp_directories ON comp_directories.id = awards.comp_id").
 		Preload("Register").
 		Preload("Register.Competition").
@@ -787,7 +844,7 @@ func GetAwardAuditList(c *gin.Context) {
 		db = db.Where("comp_directories.comp_name LIKE ?", "%"+compName+"%")
 	}
 
-	if !checkUserIsAdmin(userID) {
+	if !checkUserIsAdmin(c.Request.Context(), userID) {
 		db = db.Where("comp_directories.manager_id = ?", userID)
 	}
 
@@ -851,7 +908,7 @@ func GetAwardAuditDetail(c *gin.Context) {
 	id, _ := strconv.Atoi(idStr)
 
 	var award models.Award
-	if err := database.DB.
+	if err := database.DB.WithContext(c.Request.Context()).
 		Preload("Register").
 		Preload("Register.Competition").
 		Preload("Register.Members").
@@ -920,13 +977,18 @@ func PassAwardAudit(c *gin.Context) {
 	auditorID := userIDVal.(uint)
 
 	var award models.Award
-	if err := database.DB.Preload("Register").First(&award, id).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Preload("Register").First(&award, id).Error; err != nil {
 		utils.NotFound(c, "记录不存在")
 		return
 	}
 
+	if award.Status != "draft" {
+		utils.BadRequest(c, "该记录已审核，无法重复操作")
+		return
+	}
+
 	now := time.Now()
-	tx := database.DB.Begin()
+	tx := database.DB.WithContext(c.Request.Context()).Begin()
 	if err := tx.Model(&award).Updates(map[string]interface{}{
 		"status":        "approved",
 		"auditor_id":    auditorID,
@@ -939,17 +1001,21 @@ func PassAwardAudit(c *gin.Context) {
 	}
 
 	if award.RegID != 0 {
-		tx.Model(&models.Register{}).Where("id = ?", award.RegID).Updates(map[string]interface{}{
+		if err := tx.Model(&models.Register{}).Where("id = ?", award.RegID).Updates(map[string]interface{}{
 			"status":        4,
 			"reject_reason": "",
-		})
+		}).Error; err != nil {
+			tx.Rollback()
+			utils.InternalServerError(c, "更新报名状态失败", err)
+			return
+		}
 	}
 
 	if err := tx.Commit().Error; err != nil {
 		utils.InternalServerError(c, "事务提交失败", err)
 		return
 	}
-	clearAwardCache(id)
+	clearAwardCache(c.Request.Context(), award.CompID)
 	utils.SuccessWithMessage(c, "审核已通过", nil)
 }
 
@@ -968,13 +1034,18 @@ func RejectAwardAudit(c *gin.Context) {
 	}
 
 	var award models.Award
-	if err := database.DB.Preload("Register").First(&award, id).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Preload("Register").First(&award, id).Error; err != nil {
 		utils.NotFound(c, "记录不存在")
 		return
 	}
 
+	if award.Status != "draft" {
+		utils.BadRequest(c, "该记录已审核，无法重复操作")
+		return
+	}
+
 	now := time.Now()
-	tx := database.DB.Begin()
+	tx := database.DB.WithContext(c.Request.Context()).Begin()
 	if err := tx.Model(&award).Updates(map[string]interface{}{
 		"status":        "rejected",
 		"auditor_id":    auditorID,
@@ -987,10 +1058,14 @@ func RejectAwardAudit(c *gin.Context) {
 	}
 
 	if award.RegID != 0 {
-		tx.Model(&models.Register{}).Where("id = ?", award.RegID).Updates(map[string]interface{}{
+		if err := tx.Model(&models.Register{}).Where("id = ?", award.RegID).Updates(map[string]interface{}{
 			"status":        5,
 			"reject_reason": req.Reason,
-		})
+		}).Error; err != nil {
+			tx.Rollback()
+			utils.InternalServerError(c, "更新报名状态失败", err)
+			return
+		}
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -998,6 +1073,7 @@ func RejectAwardAudit(c *gin.Context) {
 		return
 	}
 
+	clearAwardCache(c.Request.Context(), award.CompID)
 	utils.SuccessWithMessage(c, "已驳回", nil)
 }
 
@@ -1013,28 +1089,45 @@ func BatchPassAwardAudit(c *gin.Context) {
 	auditorID := userIDVal.(uint)
 
 	now := time.Now()
-	tx := database.DB.Begin()
-	if err := tx.Model(&models.Award{}).Where("id IN ?", req.IDs).Updates(map[string]interface{}{
+	tx := database.DB.WithContext(c.Request.Context()).Begin()
+	result := tx.Model(&models.Award{}).Where("id IN ? AND status = ?", req.IDs, "draft").Updates(map[string]interface{}{
 		"status":        "approved",
 		"auditor_id":    auditorID,
 		"audit_time":    &now,
 		"reject_reason": "",
-	}).Error; err != nil {
+	})
+	if result.Error != nil {
 		tx.Rollback()
-		utils.InternalServerError(c, "批量更新失败", err)
+		utils.InternalServerError(c, "批量更新失败", result.Error)
+		return
+	}
+	if result.RowsAffected == 0 {
+		tx.Rollback()
+		utils.BadRequest(c, "没有可审核的记录（可能已审核或不存在）")
 		return
 	}
 
 	var awards []models.Award
 	if err := tx.Where("id IN ?", req.IDs).Find(&awards).Error; err == nil {
+		compIDSet := make(map[uint]bool)
 		for _, a := range awards {
+			compIDSet[a.CompID] = true
 			if a.RegID != 0 {
-				tx.Model(&models.Register{}).Where("id = ?", a.RegID).Updates(map[string]interface{}{
+				if err := tx.Model(&models.Register{}).Where("id = ?", a.RegID).Updates(map[string]interface{}{
 					"status":        4,
 					"reject_reason": "",
-				})
+				}).Error; err != nil {
+					tx.Rollback()
+					utils.InternalServerError(c, "更新报名状态失败", err)
+					return
+				}
 			}
 		}
+		defer func() {
+			for compID := range compIDSet {
+				clearAwardCache(c.Request.Context(), compID)
+			}
+		}()
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -1058,28 +1151,45 @@ func BatchRejectAwardAudit(c *gin.Context) {
 	auditorID := userIDVal.(uint)
 
 	now := time.Now()
-	tx := database.DB.Begin()
-	if err := tx.Model(&models.Award{}).Where("id IN ?", req.IDs).Updates(map[string]interface{}{
+	tx := database.DB.WithContext(c.Request.Context()).Begin()
+	result := tx.Model(&models.Award{}).Where("id IN ? AND status = ?", req.IDs, "draft").Updates(map[string]interface{}{
 		"status":        "rejected",
 		"auditor_id":    auditorID,
 		"audit_time":    &now,
 		"reject_reason": req.Reason,
-	}).Error; err != nil {
+	})
+	if result.Error != nil {
 		tx.Rollback()
-		utils.InternalServerError(c, "批量更新失败", err)
+		utils.InternalServerError(c, "批量更新失败", result.Error)
+		return
+	}
+	if result.RowsAffected == 0 {
+		tx.Rollback()
+		utils.BadRequest(c, "没有可审核的记录（可能已审核或不存在）")
 		return
 	}
 
 	var awards []models.Award
 	if err := tx.Where("id IN ?", req.IDs).Find(&awards).Error; err == nil {
+		compIDSet := make(map[uint]bool)
 		for _, a := range awards {
+			compIDSet[a.CompID] = true
 			if a.RegID != 0 {
-				tx.Model(&models.Register{}).Where("id = ?", a.RegID).Updates(map[string]interface{}{
+				if err := tx.Model(&models.Register{}).Where("id = ?", a.RegID).Updates(map[string]interface{}{
 					"status":        5,
 					"reject_reason": req.Reason,
-				})
+				}).Error; err != nil {
+					tx.Rollback()
+					utils.InternalServerError(c, "更新报名状态失败", err)
+					return
+				}
 			}
 		}
+		defer func() {
+			for compID := range compIDSet {
+				clearAwardCache(c.Request.Context(), compID)
+			}
+		}()
 	}
 
 	if err := tx.Commit().Error; err != nil {
