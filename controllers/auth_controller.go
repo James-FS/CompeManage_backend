@@ -23,7 +23,7 @@ func Login(c *gin.Context) {
 	}
 
 	var user models.User
-	result := database.DB.Preload("Roles").Where("username = ?", input.Username).First(&user)
+	result := database.DB.WithContext(c.Request.Context()).Preload("Roles").Where("username = ?", input.Username).First(&user)
 
 	if result.Error != nil {
 		utils.Unauthorized(c, "用户不存在")

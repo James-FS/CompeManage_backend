@@ -16,6 +16,14 @@ func SetupRoutes(r *gin.Engine) {
 	})
 
 	r.Static("/static", "./static")
+
+	// CAS/OAuth2.0 统一认证接口（公开）
+	cas := r.Group("/api/cas")
+	{
+		cas.GET("/login", controllers.CasLogin)
+		cas.GET("/callback", controllers.CasCallback)
+	}
+
 	upload := r.Group("/api/upload", middleware.AuthRequired())
 	{
 		upload.POST("", controllers.UploadFile)
@@ -116,6 +124,9 @@ func SetupRoutes(r *gin.Engine) {
 		declare.POST("/:id/submit",
 			controllers.SubmitDeclare,
 			middleware.RequirePermission("declare:submit")) // 提交申报
+		declare.POST("/:id/revoke",
+			controllers.RevokeDeclare,
+			middleware.RequirePermission("declare:revoke")) // 撤回申报
 		declare.GET("/my/list",
 			controllers.GetMyDeclares,
 			middleware.RequirePermission("declare:list")) // 获取我的申报列表
@@ -133,6 +144,9 @@ func SetupRoutes(r *gin.Engine) {
 		declare.GET("/pending/list",
 			controllers.GetPendingDeclares,
 			middleware.RequirePermission("declare:pending-list")) // 获取待审核申报
+		declare.GET("/audited/list",
+			controllers.GetAuditedDeclares,
+			middleware.RequirePermission("declare:audited-list")) // 获取已审核申报
 		declare.POST("/audit",
 			controllers.AuditDeclare,
 			middleware.RequirePermission("declare:audit")) // 审核申报
@@ -210,13 +224,17 @@ func SetupRoutes(r *gin.Engine) {
 		award.GET("/audit/detail/:id",
 			controllers.GetAwardAuditDetail)
 		award.PUT("/audit/:id/pass",
-			controllers.PassAwardAudit)
+			controllers.PassAwardAudit,
+			middleware.RequirePermission("award:audit"))
 		award.PUT("/audit/:id/reject",
-			controllers.RejectAwardAudit)
+			controllers.RejectAwardAudit,
+			middleware.RequirePermission("award:audit"))
 		award.PUT("/audit/batch/pass",
-			controllers.BatchPassAwardAudit)
+			controllers.BatchPassAwardAudit,
+			middleware.RequirePermission("award:audit"))
 		award.PUT("/audit/batch/reject",
-			controllers.BatchRejectAwardAudit)
+			controllers.BatchRejectAwardAudit,
+			middleware.RequirePermission("award:audit"))
 	}
 
 	summary := r.Group("/api/summary", middleware.AuthRequired())
