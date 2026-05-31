@@ -736,15 +736,15 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 				utils.InternalServerError(c, "重新提交失败", err)
 				return
 			}
-				if existingAward.RegID != 0 {
-					if err := tx.Model(&models.Register{}).Where("id = ?", existingAward.RegID).Updates(map[string]interface{}{
-						"status": 3,
-					}).Error; err != nil {
-						tx.Rollback()
-						utils.InternalServerError(c, "更新报名状态失败", err)
-						return
-					}
+			if existingAward.RegID != 0 {
+				if err := tx.Model(&models.Register{}).Where("id = ?", existingAward.RegID).Updates(map[string]interface{}{
+					"status": 3,
+				}).Error; err != nil {
+					tx.Rollback()
+					utils.InternalServerError(c, "更新报名状态失败", err)
+					return
 				}
+			}
 			if err := tx.Commit().Error; err != nil {
 				utils.InternalServerError(c, "事务提交失败", err)
 				return
@@ -768,7 +768,7 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 		tx.Rollback()
 		utils.InternalServerError(c, "查询已有申报记录失败", err)
 		return
-	}
+}
 
 	award := models.Award{
 		CompID:     req.CompID,
