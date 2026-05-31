@@ -20,9 +20,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-func clearCompListCache() {
+func clearCompListCache(ctx context.Context) {
 	rdb := middleware.GetRedisClient()
-	ctx := context.Background()
 	iter := rdb.Scan(ctx, 0, "cache:comp_list:*", 0).Iterator()
 	for iter.Next(ctx) {
 		rdb.Del(ctx, iter.Val())
@@ -64,7 +63,7 @@ func nextCompetitionCode(tx *gorm.DB, level string, year int) (string, error) {
 	base := fmt.Sprintf("%s%04d", prefix, year)
 
 	var latest models.CompDirectory
-	err := tx.Model(&models.CompDirectory{}).
+	err := tx.Unscoped().Model(&models.CompDirectory{}).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Select("comp_code").
 		Where("comp_code LIKE ?", base+"%").
@@ -87,9 +86,9 @@ func nextCompetitionCode(tx *gorm.DB, level string, year int) (string, error) {
 	return fmt.Sprintf("%s%03d", base, seq), nil
 }
 
-func hasCompetitionStarted(compID uint, now time.Time) (bool, error) {
+func hasCompetitionStarted(ctx context.Context, compID uint, now time.Time) (bool, error) {
 	var detail models.CompDetail
-	err := database.DB.Select("comp_id", "comp_start_time").Where("comp_id = ?", compID).First(&detail).Error
+	err := database.DB.WithContext(ctx).Select("comp_id", "comp_start_time").Where("comp_id = ?", compID).First(&detail).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return false, nil
@@ -138,7 +137,7 @@ func GetCompetitionList(c *gin.Context) {
 		}
 	}
 	logger.Debug("赛事列表缓存未命中", "cache_key", cacheKey)
-	query := database.DB.Model(&models.CompDirectory{})
+	query := database.DB.WithContext(c.Request.Context()).Model(&models.CompDirectory{})
 
 	if req.CompName != "" {
 		query = query.Where("comp_name LIKE ?", "%"+req.CompName+"%")
@@ -178,7 +177,7 @@ func GetCompetitionList(c *gin.Context) {
 			return
 		}
 		uid := userID.(uint)
-		if !checkUserIsAdmin(uid) {
+		if !checkUserIsAdmin(c.Request.Context(), uid) {
 			query = query.Where("manager_id = ?", userID)
 			query = query.Preload("Detail", func(db *gorm.DB) *gorm.DB {
 				return db.Select("comp_id", "reg_start_time", "reg_end_time", "participant_type")
@@ -219,8 +218,16 @@ func GetCompetitionList(c *gin.Context) {
 		"size":  req.PageSize,
 	}
 	go func() {
-		data, _ := json.Marshal(responseData)
-		rdb.Set(context.Background(), cacheKey, data, 5*time.Minute).Result()
+		asyncCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		data, err := json.Marshal(responseData)
+		if err != nil {
+			logger.Error("异步缓存JSON序列化失败", "cache_key", cacheKey, "error", err)
+			return
+		}
+		if err := rdb.Set(asyncCtx, cacheKey, data, 5*time.Minute).Err(); err != nil {
+			logger.Error("异步缓存写入失败", "cache_key", cacheKey, "error", err)
+		}
 	}()
 	utils.Success(c, responseData)
 
@@ -263,7 +270,7 @@ func CreateCompetition(c *gin.Context) {
 	year := resolveCompetitionYear(req.Year)
 
 	var created models.CompDirectory
-	err := database.DB.Transaction(func(tx *gorm.DB) error {
+	err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
 		collegeID, collegeErr := resolveCollegeIDByName(tx, req.College)
 		if collegeErr != nil {
 			return collegeErr
@@ -300,7 +307,7 @@ func CreateCompetition(c *gin.Context) {
 		utils.InternalServerError(c, "创建失败", err)
 		return
 	}
-	clearCompListCache()
+	clearCompListCache(c.Request.Context())
 	utils.SuccessWithMessage(c, "创建成功", created)
 }
 
@@ -315,7 +322,7 @@ func BatchImportCompetition(c *gin.Context) {
 	}
 
 	var compDirs []models.CompDirectory
-	err := database.DB.Transaction(func(tx *gorm.DB) error {
+	err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
 		for i, item := range req.Items {
 			collegeID, collegeErr := resolveCollegeIDByName(tx, item.College)
 			if collegeErr != nil {
@@ -382,12 +389,12 @@ func GetManagerList(c *gin.Context) {
 	}
 
 	var role models.Role
-	if err := database.DB.Where("role_code = ?", "competition_manager").First(&role).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Where("role_code = ?", "competition_manager").First(&role).Error; err != nil {
 		utils.InternalServerError(c, "获取角色信息失败", err)
 		return
 	}
 
-	query := database.DB.Model(&models.User{}).
+	query := database.DB.WithContext(c.Request.Context()).Model(&models.User{}).
 		Joins("JOIN user_roles ON users.id = user_roles.user_id").
 		Where("user_roles.role_id = ?", role.ID)
 
@@ -441,7 +448,7 @@ func GetManagerList(c *gin.Context) {
 
 func GetCompetitionYears(c *gin.Context) {
 	var years []int
-	if err := database.DB.
+	if err := database.DB.WithContext(c.Request.Context()).
 		Model(&models.CompDirectory{}).
 		Where("year > ?", 0).
 		Distinct("year").
@@ -458,7 +465,7 @@ func DeleteCompetition(c *gin.Context) {
 	id := c.Param("id")
 
 	var comp models.CompDirectory
-	if err := database.DB.First(&comp, id).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).First(&comp, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.NotFound(c, "赛事不存在")
 		} else {
@@ -467,7 +474,7 @@ func DeleteCompetition(c *gin.Context) {
 		return
 	}
 
-	started, err := hasCompetitionStarted(comp.ID, time.Now())
+	started, err := hasCompetitionStarted(c.Request.Context(), comp.ID, time.Now())
 	if err != nil {
 		utils.InternalServerError(c, "校验赛事时间失败", err)
 		return
@@ -477,11 +484,11 @@ func DeleteCompetition(c *gin.Context) {
 		return
 	}
 
-	if err := database.DB.Delete(&comp).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Delete(&comp).Error; err != nil {
 		utils.InternalServerError(c, "删除失败", err)
 		return
 	}
-	clearCompListCache()
+	clearCompListCache(c.Request.Context())
 	utils.SuccessWithMessage(c, "删除成功", nil)
 }
 
@@ -489,7 +496,7 @@ func RestoreCompetition(c *gin.Context) {
 	id := c.Param("id")
 
 	var comp models.CompDirectory
-	if err := database.DB.Unscoped().First(&comp, id).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Unscoped().First(&comp, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.NotFound(c, "赛事不存在")
 		} else {
@@ -503,11 +510,11 @@ func RestoreCompetition(c *gin.Context) {
 		return
 	}
 
-	if err := database.DB.Model(&comp).Update("delete_time", nil).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Model(&comp).Update("delete_time", nil).Error; err != nil {
 		utils.InternalServerError(c, "恢复失败", err)
 		return
 	}
-	clearCompListCache()
+	clearCompListCache(c.Request.Context())
 	utils.SuccessWithMessage(c, "恢复成功", nil)
 }
 
@@ -524,14 +531,14 @@ func BatchDeleteCompetition(c *gin.Context) {
 
 	now := time.Now()
 	var comps []models.CompDirectory
-	if err := database.DB.Select("id", "comp_name").Where("id IN ?", req.IDs).Find(&comps).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Select("id", "comp_name").Where("id IN ?", req.IDs).Find(&comps).Error; err != nil {
 		utils.InternalServerError(c, "查询赛事失败", err)
 		return
 	}
 
 	if len(comps) > 0 {
 		var details []models.CompDetail
-		if err := database.DB.Select("comp_id", "comp_start_time").Where("comp_id IN ?", req.IDs).Find(&details).Error; err != nil {
+		if err := database.DB.WithContext(c.Request.Context()).Select("comp_id", "comp_start_time").Where("comp_id IN ?", req.IDs).Find(&details).Error; err != nil {
 			utils.InternalServerError(c, "校验赛事时间失败", err)
 			return
 		}
@@ -556,12 +563,12 @@ func BatchDeleteCompetition(c *gin.Context) {
 		}
 	}
 
-	result := database.DB.Delete(&models.CompDirectory{}, req.IDs)
+	result := database.DB.WithContext(c.Request.Context()).Delete(&models.CompDirectory{}, req.IDs)
 	if result.Error != nil {
 		utils.InternalServerError(c, "删除失败", result.Error)
 		return
 	}
-	clearCompListCache()
+	clearCompListCache(c.Request.Context())
 	utils.Success(c, gin.H{"deleted_count": result.RowsAffected})
 }
 
@@ -569,7 +576,7 @@ func GetCompetitionDetail(c *gin.Context) {
 	id := c.Param("id")
 	var comp models.CompDirectory
 
-	if err := database.DB.Preload("Manager").Preload("CollegeInfo").First(&comp, id).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Preload("Manager").Preload("CollegeInfo").First(&comp, id).Error; err != nil {
 		utils.NotFound(c, "赛事不存在")
 		return
 	}
@@ -598,12 +605,12 @@ func UpdateCompetition(c *gin.Context) {
 	}
 
 	var comp models.CompDirectory
-	if err := database.DB.First(&comp, id).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).First(&comp, id).Error; err != nil {
 		utils.NotFound(c, "赛事不存在")
 		return
 	}
 
-	collegeID, collegeErr := resolveCollegeIDByName(database.DB, req.College)
+	collegeID, collegeErr := resolveCollegeIDByName(database.DB.WithContext(c.Request.Context()), req.College)
 	if collegeErr != nil {
 		utils.BadRequest(c, collegeErr.Error())
 		return
@@ -629,10 +636,10 @@ func UpdateCompetition(c *gin.Context) {
 		updates["college_id"] = *collegeID
 	}
 
-	if err := database.DB.Model(&comp).Updates(updates).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Model(&comp).Updates(updates).Error; err != nil {
 		utils.InternalServerError(c, "更新失败", err)
 		return
 	}
-	clearCompListCache()
+	clearCompListCache(c.Request.Context())
 	utils.SuccessWithMessage(c, "更新成功", nil)
 }

@@ -35,7 +35,7 @@ func GetNoticeList(c *gin.Context) {
 	offset := (page - 1) * pageSize
 
 	// 3. 构建数据库查询（含筛选）
-	dbQuery := database.DB.Model(&models.Notice{})
+	dbQuery := database.DB.WithContext(c.Request.Context()).Model(&models.Notice{})
 	// 时间筛选：只查指定时间段内的通知
 	if startTime != "" {
 		dbQuery = dbQuery.Where("publish_time >= ?", startTime)
@@ -103,7 +103,7 @@ func GetNoticeDetail(c *gin.Context) {
 
 	// 2. 查询指定ID的通知
 	var notice models.Notice
-	err = database.DB.First(&notice, noticeID).Error
+	err = database.DB.WithContext(c.Request.Context()).First(&notice, noticeID).Error
 	if err != nil {
 		// 区分错误类型：记录不存在 → NotFound；其他错误 → 服务器错误
 		if err == gorm.ErrRecordNotFound {
@@ -154,7 +154,7 @@ func CreateNotice(c *gin.Context) {
 	}
 
 	// 4. 保存到数据库
-	if err := database.DB.Create(&notice).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Create(&notice).Error; err != nil {
 		utils.InternalServerError(c, "发布通知失败", err)
 		return
 	}
@@ -196,7 +196,7 @@ func CreateCompNotice(c *gin.Context) {
 		Attachment:          attachmentURL,
 		Status:              0, // 默认未发布
 	}
-	if err := database.DB.Create(&notice).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Create(&notice).Error; err != nil {
 		fmt.Printf("数据库写入失败: %v\n", err)
 		utils.InternalServerError(c, "发布赛事通知失败", err)
 		return
@@ -217,7 +217,7 @@ func PublishNotice(c *gin.Context) {
 
 	// 2. 检查通知是否存在
 	var notice models.Notice
-	if err := database.DB.First(&notice, noticeID).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).First(&notice, noticeID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.NotFound(c, "该通知不存在")
 		} else {
@@ -234,7 +234,7 @@ func PublishNotice(c *gin.Context) {
 
 	// 4. 更新状态为已发布，更新时间为当前时间
 	currentPublishTime := time.Now().Format("2006-01-02 15:04:05")
-	if err := database.DB.Model(&notice).Updates(map[string]interface{}{
+	if err := database.DB.WithContext(c.Request.Context()).Model(&notice).Updates(map[string]interface{}{
 		"status":       1,
 		"publish_time": currentPublishTime, // 发布时固定publish_time
 		"updated_at":   time.Now(),         // 发布时间=更新时间
@@ -250,6 +250,71 @@ func PublishNotice(c *gin.Context) {
 	})
 }
 
+// UpdateNotice 修改通知
+func UpdateNotice(c *gin.Context) {
+	// 1. 获取通知ID
+	noticeIDStr := c.Param("id")
+	noticeIDUint, err := strconv.ParseUint(noticeIDStr, 10, 32)
+	if err != nil {
+		utils.BadRequest(c, "通知ID格式错误，必须是数字")
+		return
+	}
+	noticeID := uint(noticeIDUint)
+
+	// 2. 检查通知是否存在
+	var notice models.Notice
+	if err := database.DB.WithContext(c.Request.Context()).First(&notice, noticeID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.NotFound(c, "该通知不存在")
+		} else {
+			utils.InternalServerError(c, "查询通知失败", err)
+		}
+		return
+	}
+
+	// 3. 解析要修改的字段
+	title := c.PostForm("title")
+	content := c.PostForm("content")
+	compIDStr := c.PostForm("compID")
+	attachmentURL := c.PostForm("attachment")
+
+	// 4. 构建更新字段
+	updates := make(map[string]interface{})
+	if title != "" {
+		updates["title"] = title
+	}
+	if content != "" {
+		updates["content"] = content
+	}
+	if compIDStr != "" {
+		compIDUint64, err := strconv.ParseUint(compIDStr, 10, 32)
+		if err != nil {
+			utils.BadRequest(c, "compID格式错误，必须是数字")
+			return
+		}
+		updates["competition_detail_id"] = uint(compIDUint64)
+	}
+	if attachmentURL != "" {
+		updates["attachment"] = attachmentURL
+	}
+
+	// 5. 如果没有要更新的字段
+	if len(updates) == 0 {
+		utils.BadRequest(c, "没有要修改的字段")
+		return
+	}
+
+	// 6. 执行更新
+	if err := database.DB.WithContext(c.Request.Context()).Model(&notice).Updates(updates).Error; err != nil {
+		utils.InternalServerError(c, "修改通知失败", err)
+		return
+	}
+
+	// 7. 返回更新后的通知
+	database.DB.WithContext(c.Request.Context()).First(&notice, noticeID)
+	utils.Success(c, gin.H{"notice": notice})
+}
+
 // DeleteNotice 删除通知（物理删除/逻辑删除可选，这里用GORM软删除）
 func DeleteNotice(c *gin.Context) {
 	// 1. 获取通知ID
@@ -263,7 +328,7 @@ func DeleteNotice(c *gin.Context) {
 
 	// 2. 检查通知是否存在
 	var notice models.Notice
-	if err := database.DB.First(&notice, noticeID).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).First(&notice, noticeID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.NotFound(c, "该通知不存在")
 		} else {
@@ -273,7 +338,7 @@ func DeleteNotice(c *gin.Context) {
 	}
 
 	// 3. 删除通知（GORM软删除，会自动填充DeletedAt字段）
-	if err := database.DB.Delete(&notice).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Delete(&notice).Error; err != nil {
 		utils.InternalServerError(c, "删除通知失败", err)
 		return
 	}

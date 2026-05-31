@@ -65,7 +65,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 		return
 	}
 	userID := userIDVal.(uint)
-	isAdmin := checkUserIsAdmin(userID)
+	isAdmin := checkUserIsAdmin(c.Request.Context(), userID)
 	cacheKey := fmt.Sprintf("cache:stats:dashboard:%v:%t", userID, isAdmin)
 	rdb := middleware.GetRedisClient()
 	ctx := c.Request.Context()
@@ -85,7 +85,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 	}
 
 	newCompBase := func() *gorm.DB {
-		q := database.DB.Model(&models.CompDirectory{})
+		q := database.DB.WithContext(ctx).Model(&models.CompDirectory{})
 		if !isAdmin {
 			q = q.Where("manager_id = ?", userID)
 		}
@@ -93,7 +93,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 	}
 
 	newRegBase := func() *gorm.DB {
-		q := database.DB.Model(&models.Register{}).
+		q := database.DB.WithContext(ctx).Model(&models.Register{}).
 			Joins("JOIN comp_directories ON comp_directories.id = registers.comp_id")
 		if !isAdmin {
 			q = q.Where("comp_directories.manager_id = ?", userID)
@@ -102,7 +102,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 	}
 
 	newAwardBase := func() *gorm.DB {
-		q := database.DB.Model(&models.Award{}).
+		q := database.DB.WithContext(ctx).Model(&models.Award{}).
 			Joins("JOIN registers ON registers.id = awards.reg_id").
 			Joins("JOIN comp_directories ON comp_directories.id = registers.comp_id")
 		if !isAdmin {
@@ -112,7 +112,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 	}
 
 	newSummaryBase := func() *gorm.DB {
-		q := database.DB.Model(&models.Summary{}).
+		q := database.DB.WithContext(ctx).Model(&models.Summary{}).
 			Joins("JOIN comp_directories ON comp_directories.id = summaries.comp_id")
 		if !isAdmin {
 			q = q.Where("comp_directories.manager_id = ?", userID)
@@ -121,7 +121,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 	}
 
 	newDeclareBase := func() *gorm.DB {
-		q := database.DB.Model(&models.CompDeclaration{})
+		q := database.DB.WithContext(ctx).Model(&models.CompDeclaration{})
 		if !isAdmin {
 			q = q.Where("created_by = ?", userID)
 		}
@@ -286,10 +286,16 @@ func GetStatisticsDashboard(c *gin.Context) {
 
 	// 4. 异步写入 Redis，设置 10 分钟过期
 	go func() {
-		data, _ := json.Marshal(responseData)
-		// 使用 context.Background() 确保请求结束后写入依然能完成
-		rdb.Set(context.Background(), cacheKey, data, 10*time.Minute)
-		// 现在只有定时清理缓存，没有其他函数主动删除的逻辑，更新后可能会导致和实际数据不一致
+		asyncCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		data, err := json.Marshal(responseData)
+		if err != nil {
+			logger.Error("异步缓存JSON序列化失败", "cache_key", cacheKey, "error", err)
+			return
+		}
+		if err := rdb.Set(asyncCtx, cacheKey, data, 10*time.Minute).Err(); err != nil {
+			logger.Error("异步缓存写入失败", "cache_key", cacheKey, "error", err)
+		}
 	}()
 
 	utils.Success(c, responseData)

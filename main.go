@@ -3,6 +3,7 @@ package main
 import (
 	"CompeManage_backend/config"
 	"CompeManage_backend/database"
+	"CompeManage_backend/datasource"
 	"CompeManage_backend/logger"
 	"CompeManage_backend/middleware"
 	"CompeManage_backend/routes"
@@ -40,6 +41,10 @@ func main() {
 	// 注册路由
 	routes.SetupRoutes(r)
 	utils.StartCompStatusScheduler(5 * time.Minute)
+	datasource.StartScheduler(6 * time.Hour)          // 每6小时全量同步本科生数据
+	datasource.StartStaffScheduler(6 * time.Hour)     // 每6小时全量同步教职工数据
+	datasource.StartPostgradScheduler(6 * time.Hour)  // 每6小时全量同步研究生数据
+	datasource.StartCollegeScheduler(6 * time.Hour)   // 每6小时全量同步组织机构数据
 	// 启动服务
 	port := config.GetString("server.port")
 	log.Printf("服务器启动：http://localhost:%s", port)

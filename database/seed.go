@@ -117,6 +117,39 @@ func ensureAwardStudentPermissions() {
 	grantRolePermissionsByCode("student", []string{"award:student:my-list", "award:student:supplement"})
 }
 
+func ensureDeclarePermissions() {
+	var declareParent models.Permission
+	if err := DB.Where("code = ?", "declare").First(&declareParent).Error; err != nil {
+		log.Printf("未找到权限目录 declare，跳过申报权限补齐: %v", err)
+		return
+	}
+
+	ensurePerm := func(code, name, desc string) {
+		var existed models.Permission
+		if err := DB.Where("code = ?", code).First(&existed).Error; err == nil {
+			return
+		}
+
+		perm := models.Permission{
+			Name:        name,
+			Code:        code,
+			Type:        3,
+			ParentID:    declareParent.ID,
+			Description: desc,
+		}
+		if err := DB.Create(&perm).Error; err != nil {
+			log.Printf("补齐权限失败(%s): %v", code, err)
+		}
+	}
+
+	ensurePerm("declare:audited-list", "查看已审核申报", "查看已审核的申报记录")
+	ensurePerm("declare:revoke", "撤回申报", "撤回已提交的申报")
+
+	grantRolePermissionsByCode("school_admin", []string{"declare:audited-list", "declare:revoke"})
+	grantRolePermissionsByCode("college_admin", []string{"declare:audited-list", "declare:revoke"})
+	grantRolePermissionsByCode("competition_manager", []string{"declare:audited-list"})
+}
+
 // ensureCompetitionRegConfigForAll 为已有赛事补齐报名设置的关键字段：
 // 报名开始/结束时间 + 个人赛/团队赛(ParticipantType)。
 // InitData 扩展版测试数据初始化
@@ -134,6 +167,7 @@ func InitData() {
 		ensureNoticeManagePermissions()
 		ensureCompetitionCorePermissions()
 		ensureAwardStudentPermissions()
+		ensureDeclarePermissions()
 		return
 	}
 
@@ -211,6 +245,8 @@ func InitData() {
 		{Name: "删除申报", Code: "declare:delete", Type: 3, ParentID: declareSub.ID, Description: "删除申报信息"},
 		{Name: "查看待审核申报", Code: "declare:pending-list", Type: 3, ParentID: declareSub.ID, Description: "查看待审核申报列表"},
 		{Name: "审核申报", Code: "declare:audit", Type: 3, ParentID: declareSub.ID, Description: "审核赛事申报"},
+		{Name: "查看已审核申报", Code: "declare:audited-list", Type: 3, ParentID: declareSub.ID, Description: "查看已审核的申报记录"},
+		{Name: "撤回申报", Code: "declare:revoke", Type: 3, ParentID: declareSub.ID, Description: "撤回已提交的申报"},
 		{Name: "查看所有申报", Code: "declare:all-declares", Type: 3, ParentID: declareSub.ID, Description: "查看所有申报信息"},
 
 		// 获奖管理权限 (parent: awardSub)
@@ -292,7 +328,7 @@ func InitData() {
 		"comp", "declare", "award", "summary", "reg:config", "reg:audit", "basic",
 		// 具体权限
 		"comp:list", "comp:detail", "comp:years:list", "manager:list",
-		"declare:create", "declare:get", "declare:update", "declare:submit", "declare:list", "declare:delete", "declare:pending-list", "declare:audit", "declare:all-declares",
+		"declare:create", "declare:get", "declare:update", "declare:submit", "declare:list", "declare:delete", "declare:pending-list", "declare:audit", "declare:audited-list", "declare:revoke", "declare:all-declares",
 		"award:list", "award:comp:list",
 		"summary:list", "summary:detail",
 		"reg:config:view",
@@ -312,7 +348,7 @@ func InitData() {
 		// 竞赛目录（仅查看）
 		"comp:list", "comp:detail", "comp:years:list", "manager:list",
 		// 赛事申报（仅查看）
-		"declare:get", "declare:list", "declare:pending-list", "declare:all-declares",
+		"declare:get", "declare:list", "declare:pending-list", "declare:audited-list", "declare:all-declares",
 		// 获奖管理
 		"award:list", "award:comp:list", "award:import",
 		// 赛事总结

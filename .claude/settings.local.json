@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build *)",
+      "Bash(curl -s -X POST http://localhost:8080/api/login -H \"Content-Type: application/json\" -d \"{\\\\\"username\\\\\":\\\\\"admin\\\\\",\\\\\"password\\\\\":\\\\\"123456\\\\\"}\")",
+      "Bash(curl -s -X POST http://localhost:8080/api/login -H \"Content-Type: application/json\" -d \"{\\\\\"username\\\\\":\\\\\"T2023001\\\\\",\\\\\"password\\\\\":\\\\\"123\\\\\"}\")",
+      "Bash(curl -s -X GET \"http://localhost:8080/api/notice/list?page=1&size=20\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6IlQyMDIzMDAxIiwicm9sZV9jb2RlIjoic2Nob29sX2FkbWluIiwiaXNzIjoiY29tcGVfYmFja2VuZCIsImV4cCI6MTc3ODk4NDczOCwiaWF0IjoxNzc4ODk4MzM4fQ.FzUIiIATvkTOmt_KeQYH7NcfWVXeheD9llk-2Rwpryg\")",
+      "Bash(curl -s http://localhost:8080/health)",
+      "Bash(go run *)",
+      "Bash(mysql -h 127.0.0.1 -P 3306 -u root -p1164657389abc -e \"DELETE t1 FROM comp_directories t1 INNER JOIN comp_directories t2 WHERE t1.id > t2.id AND t1.comp_code = t2.comp_code;\" CompeManage)",
+      "Bash(docker exec *)",
+      "Bash(go test *)"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "k6"
+  ],
+  "enabledMcpJsonServers": [
+    "k6"
+  ],
+  "enableAllProjectMcpServers": true
+}

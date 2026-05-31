@@ -8,10 +8,28 @@ import (
 	"github.com/spf13/viper"
 )
 
+type DataHallConfig struct {
+	Key      string `mapstructure:"key"`
+	Secret   string `mapstructure:"secret"`
+	BaseURL  string `mapstructure:"base_url"`
+	MinGrade string `mapstructure:"min_grade"` // 只同步此年级及之后的学生，如 "2022"，为空则全量
+}
+
+// CasConfig CAS/OAuth2.0 融合门户认证配置
+type CasConfig struct {
+	ServerURL    string `mapstructure:"server_url"`    // CAS服务器地址
+	ClientID     string `mapstructure:"client_id"`     // 应用 API Key
+	ClientSecret string `mapstructure:"client_secret"` // 应用 Secret Key
+	RedirectURI  string `mapstructure:"redirect_uri"`  // 授权回调地址
+	FrontendURL  string `mapstructure:"frontend_url"`  // 前端地址，用于最终302跳转
+}
+
 type Config struct {
 	Logger   LoggerConfig   `mapstructure:"logger"`
 	Database DatabaseConfig `mapstructure:"database"`
 	Redis    RedisConfig    `mapstructure:"redis"`
+	DataHall DataHallConfig `mapstructure:"datahall"`
+	Cas      CasConfig      `mapstructure:"cas"`
 }
 
 type DatabaseConfig struct {
@@ -44,6 +62,16 @@ func GetEnvironment() string {
 	if env := os.Getenv("ENV"); env != "" {
 		return env
 	}
+	if env := os.Getenv("APP_ENV"); env != "" {
+		switch env {
+		case "development":
+			return "dev"
+		case "production":
+			return "prod"
+		default:
+			return env
+		}
+	}
 	return "dev"
 }
 
@@ -58,24 +86,19 @@ func GetConfigPath(filename string) string {
 	return filepath.Join(wd, "config", filename)
 }
 
-// Init 初始化配置（从环境变量读取配置）
+// Init 初始化配置
 func Init() {
-	//设置yaml文件
 	env := GetEnvironment()
 	configFileName := "config-" + env + ".yaml"
 	configPath := GetConfigPath(configFileName)
-
 	log.Printf("加载配置环境: %s，配置文件: %s\n", env, configPath)
 
-	// 尝试加载环境特定的配置文件
 	viper.SetConfigFile(configPath)
 	viper.SetConfigType("yaml")
-	// 从环境变量读取配置
 	viper.AutomaticEnv()
 
 	if err := viper.ReadInConfig(); err != nil {
 		log.Printf("读取 %s 失败: %v，尝试加载默认配置\n", configPath, err)
-		// 回退到默认配置文件
 		defaultPath := GetConfigPath("config.yaml")
 		viper.SetConfigFile(defaultPath)
 		if err := viper.ReadInConfig(); err != nil {
@@ -83,32 +106,42 @@ func Init() {
 		}
 	}
 
+	// 绑定环境变量（env var 优先级高于 YAML）
+	viper.BindEnv("database.host", "DB_HOST")
+	viper.BindEnv("database.port", "DB_PORT")
+	viper.BindEnv("database.user", "DB_USER")
+	viper.BindEnv("database.password", "DB_PASSWORD")
+	viper.BindEnv("database.dbname", "DB_NAME")
+	viper.BindEnv("redis.host", "REDIS_HOST")
+	viper.BindEnv("redis.port", "REDIS_PORT")
+	viper.BindEnv("redis.password", "REDIS_PASSWORD")
+	viper.BindEnv("redis.db", "REDIS_DB")
+	viper.BindEnv("server.port", "SERVER_PORT")
+	viper.BindEnv("server.host", "SERVER_HOST")
+	viper.BindEnv("jwt.secret", "JWT_SECRET")
+
+	// CAS/OAuth2.0 统一认证配置（必须在 Unmarshal 之前）
+	viper.BindEnv("cas.client_id", "CAS_CLIENT_ID")
+	viper.BindEnv("cas.client_secret", "CAS_CLIENT_SECRET")
+	viper.BindEnv("cas.redirect_uri", "CAS_REDIRECT_URI")
+	viper.BindEnv("cas.frontend_url", "CAS_FRONTEND_URL")
+	viper.SetDefault("cas.server_url", "https://newcas.gzhu.edu.cn/cas")
+	viper.SetDefault("cas.frontend_url", "http://localhost:5219")
+
+	// 默认值（YAML 没配、env var 也没设时使用）
+	viper.SetDefault("database.host", "localhost")
+	viper.SetDefault("database.port", 3306)
+	viper.SetDefault("database.user", "root")
+	viper.SetDefault("database.password", "123456")
+	viper.SetDefault("database.dbname", "CompeManage")
+	viper.SetDefault("server.port", "8080")
+	viper.SetDefault("server.host", "0.0.0.0")
+	viper.SetDefault("jwt.secret", "your-jwt-secret")
+
+	// Unmarshal 放最后 —— BindEnv 绑定的 env var 会自动覆盖 YAML 值
 	if err := viper.Unmarshal(AppConfig); err != nil {
 		log.Fatalf("解析配置到结构体失败: %v", err)
 	}
-
-	// 数据库配置
-	viper.Set("database.host", getEnv("DB_HOST", "localhost"))
-	viper.Set("database.port", getEnv("DB_PORT", "3306"))
-	viper.Set("database.user", getEnv("DB_USER", "root"))
-	viper.Set("database.password", getEnv("DB_PASSWORD", "123456"))
-	viper.Set("database.name", getEnv("DB_NAME", "CompeManage"))
-
-	// 服务器配置
-	viper.Set("server.port", getEnv("SERVER_PORT", "8080"))
-	viper.Set("server.host", getEnv("SERVER_HOST", "0.0.0.0"))
-
-	// JWT配置
-	viper.Set("jwt.secret", getEnv("JWT_SECRET", "your-jwt-secret"))
-
-}
-
-// getEnv 读取环境变量，无则返回默认值
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
 }
 
 // GetString 获取字符串配置

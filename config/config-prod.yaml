@@ -1,3 +1,18 @@
+database:
+  host: "compemanage_mysql"
+  port: 3306
+  user: "root"
+  password: "123456"
+  dbname: "CompeManage"
+
+redis:
+  host: "compemanage-redis"
+  port: 6379
+  password: ""
+  db: 0
+  max_retries: 3
+  pool_size: 10
+
 logger:
   level: "info"
   filename: logs/prod.log
@@ -6,3 +21,17 @@ logger:
   max_age: 30
   compress: true
   show_line: false
+
+datahall:
+  key: "2026051118227ee8fb684d1211f18e4a0a3e580ef7931655"
+  secret: "bd6d57fc3e95940c974fb7b37c9ff4d0fe6a7911"
+  base_url: "https://datahall.gzhu.edu.cn"
+  min_grade: "2022"
+
+# CAS/OAuth2.0 融合门户统一认证
+cas:
+  server_url: "https://newcas.gzhu.edu.cn/cas"
+  client_id: ""
+  client_secret: ""
+  redirect_uri: "https://xkjs.gzhu.edu.cn/api/cas/callback"
+  frontend_url: "https://xkjs.gzhu.edu.cn"

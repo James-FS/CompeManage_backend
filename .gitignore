@@ -5,7 +5,13 @@
 *.so
 *.so.*
 *.dylib
-
+*.png
+*.pdf
+*.xlsx
+*.doc
+*.docx
+*.jpg
+*.logger.gz
 # Test binary, built with `go test -c`
 *.test
 
@@ -41,7 +47,7 @@ public/upload/*
 logs/
 *.log
 *.logger
-
+coverage.txt
 # Docker MySQL data
 mysql_data/
 app.logger
