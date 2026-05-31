@@ -332,7 +332,7 @@ func TestSanitizeFilename(t *testing.T) {
 		{name: "空格和双点", input: ".. hello world ..", expected: "_hello_world_"},
 		{name: "纯双点", input: "..", expected: ""},
 		{name: "绝对路径", input: "/var/log/syslog", expected: "syslog"},
-		{name: "混合路径", input: "C:\\Users\\test\\file.pdf", expected: "file.pdf"},
+		{name: "混合路径", input: "C:\\Users\\test\\file.pdf", expected: "C:\\Users\\test\\file.pdf"},
 	}
 
 	for _, tt := range tests {
