@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"bytes"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -315,6 +316,162 @@ func TestUploadFile_MkdirAllFails(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code, "目录创建失败应该返回 500")
 	// 生产环境返回通用错误信息
+	assert.Contains(t, w.Body.String(), "服务器内部错误", "应该提示服务器错误")
+}
+
+func TestSanitizeFilename(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{name: "普通文件名", input: "report.pdf", expected: "report.pdf"},
+		{name: "带路径", input: "../../../etc/passwd", expected: "passwd"},
+		{name: "空格替换", input: "my report.pdf", expected: "my_report.pdf"},
+		{name: "双点替换", input: "..test..", expected: "test"},
+		{name: "空格和双点", input: ".. hello world ..", expected: "_hello_world_"},
+		{name: "纯双点", input: "..", expected: ""},
+		{name: "绝对路径", input: "/var/log/syslog", expected: "syslog"},
+		{name: "混合路径", input: "C:\\Users\\test\\file.pdf", expected: "C:\\Users\\test\\file.pdf"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := sanitizeFilename(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestCalcFileMD5(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		expected string // 标准MD5
+	}{
+		{
+			name:     "空内容",
+			content:  "",
+			expected: "d41d8cd98f00b204e9800998ecf8427e", // MD5("")
+		},
+		{
+			name:     "短文本",
+			content:  "hello",
+			expected: "5d41402abc4b2a76b9719d911017c592",
+		},
+		{
+			name:     "PDF文件头",
+			content:  "%PDF-1.4 test content",
+			expected: "171982114fd5c7b8a4b8e8158541626b",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// 通过 multipart.Writer 创建合法的 FileHeader
+			body := new(bytes.Buffer)
+			writer := multipart.NewWriter(body)
+			part, err := writer.CreateFormFile("file", tt.name+".bin")
+			assert.NoError(t, err)
+			_, err = part.Write([]byte(tt.content))
+			assert.NoError(t, err)
+			assert.NoError(t, writer.Close())
+
+			req := httptest.NewRequest("POST", "/", body)
+			req.Header.Set("Content-Type", writer.FormDataContentType())
+			err = req.ParseMultipartForm(50 << 20)
+			assert.NoError(t, err)
+
+			fileHeaders := req.MultipartForm.File["file"]
+			assert.GreaterOrEqual(t, len(fileHeaders), 1)
+
+			result, err := calcFileMD5(fileHeaders[0])
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestCalcFileMD5_OpenError(t *testing.T) {
+	// multipart.FileHeader.Open() 在正常情况下不会返回错误，
+	// 此分支在实际场景中难以触发（文件描述符耗尽等系统级错误）
+	// 保留测试结构，但跳过实际执行
+	t.Skip("FileHeader.Open() 错误分支依赖系统资源耗尽，难以在测试中模拟")
+}
+
+// TestUploadFile_SaveUploadedFileFails 模拟文件保存失败（MkdirAll 成功但 SaveUploadedFile 失败）
+func TestUploadFile_SaveUploadedFileFails(t *testing.T) {
+	mock := setupDBMock(t)
+	defer mock.ExpectationsWereMet()
+
+	mockFileNotFound(mock)
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO `file_records`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	// 创建一个不可读的目录（模拟 SaveUploadedFile 失败）
+	tempDir := t.TempDir()
+	noticeDir := filepath.Join(tempDir, "notices")
+	// 先创建 notices 为文件而非目录，这样 SaveUploadedFile 会失败
+	err := os.WriteFile(noticeDir, []byte("blocker"), 0644)
+	assert.NoError(t, err)
+
+	originalNoticeDir := uploadDirs["notice"]
+	uploadDirs["notice"] = noticeDir
+	defer func() {
+		uploadDirs["notice"] = originalNoticeDir
+	}()
+
+	fileContent := []byte("test content")
+	formFields := map[string]string{"type": "notice"}
+	body, contentType := createMultipartRequest(fileContent, "test.pdf", "file", formFields)
+
+	req := httptest.NewRequest("POST", "/api/upload", body)
+	req.Header.Set("Content-Type", contentType)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	UploadFile(c)
+
+	// SaveUploadedFile 失败会导致 os.Remove(dst)，DB 回滚
+	assert.Equal(t, http.StatusInternalServerError, w.Code, "文件保存失败应该返回 500")
+	assert.Contains(t, w.Body.String(), "服务器内部错误", "应该提示服务器错误")
+}
+
+// TestUploadFile_DBInsertFails 模拟 DB 写入失败（物理文件已保存）
+func TestUploadFile_DBInsertFails(t *testing.T) {
+	mock := setupDBMock(t)
+	defer mock.ExpectationsWereMet()
+
+	mockFileNotFound(mock)
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO `file_records`").
+		WillReturnError(errors.New("duplicate entry"))
+	mock.ExpectRollback()
+
+	tempDir := t.TempDir()
+	originalNoticeDir := uploadDirs["notice"]
+	uploadDirs["notice"] = filepath.Join(tempDir, "notices")
+	defer func() {
+		uploadDirs["notice"] = originalNoticeDir
+	}()
+
+	fileContent := []byte("test content")
+	formFields := map[string]string{"type": "notice"}
+	body, contentType := createMultipartRequest(fileContent, "test.pdf", "file", formFields)
+
+	req := httptest.NewRequest("POST", "/api/upload", body)
+	req.Header.Set("Content-Type", contentType)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	UploadFile(c)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code, "DB 插入失败应该返回 500")
+	// 错误信息经过 utils.InternalServerError 统一包装为"服务器内部错误，请稍后重试"
 	assert.Contains(t, w.Body.String(), "服务器内部错误", "应该提示服务器错误")
 }
 
