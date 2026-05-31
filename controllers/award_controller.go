@@ -716,11 +716,11 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 		fmt.Printf("检测到已存在的报名记录，regID=%d，跳过补录报名创建\n", regID)
 	}
 
-<<<<<<< HEAD
 	var awardTime *time.Time
 	if req.AwardDate.Year() > 1 {
 		awardTime = &req.AwardDate.Time
-=======
+	}
+
 	var existingAward models.Award
 	if err := tx.Where("reg_id = ?", regID).First(&existingAward).Error; err == nil {
 		switch existingAward.Status {
@@ -768,7 +768,6 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 		tx.Rollback()
 		utils.InternalServerError(c, "查询已有申报记录失败", err)
 		return
->>>>>>> develop
 	}
 
 	award := models.Award{
