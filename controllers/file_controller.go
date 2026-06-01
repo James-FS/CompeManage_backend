@@ -4,15 +4,16 @@ import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -88,66 +89,68 @@ func UploadFile(c *gin.Context) {
 		return
 	}
 
-	// 查重（同一哈希 + 同一业务类型）
-	var existingRecord models.FileRecord
-	result := db.Where("file_hash = ? AND biz_type = ?", fileHash, bizType).First(&existingRecord)
-	if result.Error == nil {
-		// 已存在，直接返回（去重成功），前端无感知
-		utils.Success(c, gin.H{
-			"url":       existingRecord.StoragePath,
-			"name":      existingRecord.OriginalName,
-			"size":      existingRecord.FileSize,
-			"mime_type": existingRecord.FileExt,
-		})
-		return
-	}
-
-	// 不存在，保存文件
-	subDir := time.Now().Format("200601")
-	finalDir := filepath.Join(savePathRoot, subDir)
-
-	if err := os.MkdirAll(finalDir, os.ModePerm); err != nil {
-		utils.InternalServerError(c, "服务器存储初始化失败", err)
-		return
-	}
-
-	originalName := sanitizeFilename(file.Filename)
-	newFileName := fmt.Sprintf("%s_%s", fileHash, originalName)
-	dst := filepath.Join(finalDir, newFileName)
-
-	if err := c.SaveUploadedFile(file, dst); err != nil {
-		utils.InternalServerError(c, "文件保存失败", err)
-		return
-	}
-
 	// 获取上传用户ID
 	var uploaderID uint
 	if id, exists := c.Get("user_id"); exists {
 		uploaderID = id.(uint)
 	}
 
-	// 写入 FileRecord
+	// ext 已在文件格式校验时声明过（line 76），这里复用
+	originalName := sanitizeFilename(file.Filename)
+
+	// 用 INSERT 作为分布式锁：先插入记录，抢到锁的才写文件
+	// INSERT 失败（1062 duplicate key）→ 抢不到锁 → 查询已有记录返回
 	record := models.FileRecord{
 		FileHash:     fileHash,
 		OriginalName: originalName,
-		StoragePath:  "/" + filepath.ToSlash(dst),
+		StoragePath:  "", // 先占位，文件保存成功后再填入
 		FileSize:     file.Size,
 		FileExt:      ext,
 		BizType:      bizType,
 		UploaderID:   uploaderID,
 	}
 	if err := db.Create(&record).Error; err != nil {
-		// 插入失败，可能是并发冲突，删掉已保存的物理文件
-		os.Remove(dst)
+		// INSERT 失败，说明另一个请求先插成功了，直接返回已有记录
+		var existingRecord models.FileRecord
+		if err2 := db.Where("file_hash = ? AND biz_type = ?", fileHash, bizType).First(&existingRecord).Error; err2 == nil {
+			utils.Success(c, gin.H{
+				"url":       existingRecord.StoragePath,
+				"name":      existingRecord.OriginalName,
+				"size":      existingRecord.FileSize,
+				"mime_type": existingRecord.FileExt,
+			})
+			return
+		}
 		utils.InternalServerError(c, "文件记录保存失败", err)
 		return
 	}
 
-	// 返回（与原有响应结构完全一致）
+	// INSERT 成功，获得了分布式锁，开始保存物理文件
+	subDir := time.Now().Format("200601")
+	finalDir := filepath.Join(savePathRoot, subDir)
+	if err := os.MkdirAll(finalDir, os.ModePerm); err != nil {
+		db.Delete(&record) // 目录创建失败，删记录释放锁
+		utils.InternalServerError(c, "服务器存储初始化失败", err)
+		return
+	}
+
+	newFileName := fmt.Sprintf("%s_%s", fileHash, originalName)
+	dst := filepath.Join(finalDir, newFileName)
+	if err := c.SaveUploadedFile(file, dst); err != nil {
+		db.Delete(&record) // 文件保存失败，删记录释放锁
+		utils.InternalServerError(c, "文件保存失败", err)
+		return
+	}
+
+	// 文件保存成功，更新 storage_path 并返回
+	storagePath := "/" + filepath.ToSlash(dst)
+	db.Model(&record).Updates(map[string]interface{}{
+		"storage_path": storagePath,
+	})
 	utils.Success(c, gin.H{
-		"url":       record.StoragePath,
-		"name":      record.OriginalName,
-		"size":      record.FileSize,
-		"mime_type": record.FileExt,
+		"url":       storagePath,
+		"name":      originalName,
+		"size":      file.Size,
+		"mime_type": ext,
 	})
 }
