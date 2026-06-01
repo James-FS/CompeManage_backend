@@ -4,16 +4,15 @@ import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
-	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
