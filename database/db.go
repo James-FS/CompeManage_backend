@@ -38,8 +38,8 @@ func Init() {
 
 	// 连接池调优 - 支持更高并发
 	sqlDB, _ := DB.DB()
-	sqlDB.SetMaxIdleConns(50)   // 增大空闲连接
-	sqlDB.SetMaxOpenConns(200)   // 增大最大打开连接
+	sqlDB.SetMaxIdleConns(50)  // 增大空闲连接
+	sqlDB.SetMaxOpenConns(300) // 增大最大打开连接
 	log.Println("数据库连接成功")
 
 	// 自动迁移数据库表

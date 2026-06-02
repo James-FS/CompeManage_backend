@@ -2,41 +2,67 @@ package controllers
 
 import (
 	"CompeManage_backend/database"
+	"CompeManage_backend/middleware"
 	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
+	"context"
+	"crypto/md5"
+	"encoding/json"
 	"fmt"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"strconv"
-	"time"
 )
 
-// GetNoticeList 处理“通知列表+筛选”接口
+// clearNoticeListCache 删除通知列表相关的所有缓存
+func clearNoticeListCache(ctx context.Context) {
+	rdb := middleware.GetRedisClient()
+	iter := rdb.Scan(ctx, 0, "cache:notice_list:*", 0).Iterator()
+	for iter.Next(ctx) {
+		rdb.Del(ctx, iter.Val())
+	}
+}
+
+// GetNoticeList 处理"通知列表+筛选"接口
 func GetNoticeList(c *gin.Context) {
-	// 1. 获取前端传入的参数（分页+筛选）
-
 	compIDStr := c.Query("compID")
-	isLatestStr := c.DefaultQuery("is_latest", "true") // 默认按最新返回
+	isLatestStr := c.DefaultQuery("is_latest", "true")
 	isLatest, _ := strconv.ParseBool(isLatestStr)
-	statusStr := c.Query("status") // 新增：按状态筛选（0/1）
+	statusStr := c.Query("status")
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	startTime := c.Query("start_time")
+	endTime := c.Query("end_time")
 
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))           // 默认第1页
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10")) // 默认每页10条
-	startTime := c.Query("start_time")                             // 筛选：发布开始时间（如“2026.1.1”）
-	endTime := c.Query("end_time")                                 // 筛选：发布结束时间（如“2026.2.28”）
-
-	// 2. 处理分页偏移量（补充参数合法性校验）
 	if page < 1 {
 		page = 1
 	}
-	if pageSize < 1 || pageSize > 50 { // 限制每页最大条数，避免查询过多
+	if pageSize < 1 || pageSize > 50 {
 		pageSize = 10
 	}
-	offset := (page - 1) * pageSize
 
-	// 3. 构建数据库查询（含筛选）
-	dbQuery := database.DB.WithContext(c.Request.Context()).Model(&models.Notice{})
-	// 时间筛选：只查指定时间段内的通知
+	// 构造缓存 key（包含所有筛选参数）
+	cacheKeyRaw := fmt.Sprintf("%s|%s|%s|%s|%s|%d|%d",
+		compIDStr, isLatestStr, statusStr, startTime, endTime, page, pageSize)
+	cacheKey := fmt.Sprintf("cache:notice_list:%x", md5.Sum([]byte(cacheKeyRaw)))
+
+	rdb := middleware.GetRedisClient()
+	ctx := c.Request.Context()
+
+	// 先查 Redis 缓存
+	cacheData, err := rdb.Get(ctx, cacheKey).Result()
+	if err == nil && cacheData != "" {
+		var resp gin.H
+		if json.Unmarshal([]byte(cacheData), &resp) == nil {
+			utils.Success(c, resp)
+			return
+		}
+	}
+
+	// 构建数据库查询
+	dbQuery := database.DB.WithContext(ctx).Model(&models.Notice{})
 	if startTime != "" {
 		dbQuery = dbQuery.Where("publish_time >= ?", startTime)
 	}
@@ -61,36 +87,41 @@ func GetNoticeList(c *gin.Context) {
 		dbQuery = dbQuery.Where("status = ?", status)
 	}
 	if isLatest {
-		dbQuery = dbQuery.Order("publish_time DESC") // 最新在前
+		dbQuery = dbQuery.Order("publish_time DESC")
 	} else {
-		dbQuery = dbQuery.Order("publish_time ASC") // 最旧在前
+		dbQuery = dbQuery.Order("publish_time ASC")
 	}
 
-	// 4. 查询列表+总数（用于前端分页，补充错误处理）
+	offset := (page - 1) * pageSize
 	var noticeList []models.Notice
 	var total int64
 
-	// 统计总数：捕获数据库错误，返回服务器错误
 	if err := dbQuery.Count(&total).Error; err != nil {
 		utils.InternalServerError(c, "统计通知总数失败", err)
 		return
 	}
 
-	// 分页查询列表：捕获数据库错误，返回服务器错误
 	if err := dbQuery.Order("publish_time DESC").Offset(offset).Limit(pageSize).Find(&noticeList).Error; err != nil {
 		utils.InternalServerError(c, "查询通知列表失败", err)
 		return
 	}
 
-	// 5. 返回响应（用你项目已有的utils.Success统一格式）
-	utils.Success(c, gin.H{
-		"list":  noticeList, // 通知列表
-		"total": total,      // 总条数
-		"page":  page,       // 当前页码
-	})
+	// 异步写入 Redis 缓存
+	respData := gin.H{"list": noticeList, "total": total, "page": page}
+	go func() {
+		asyncCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		data, err := json.Marshal(respData)
+		if err != nil {
+			return
+		}
+		rdb.Set(asyncCtx, cacheKey, data, 5*time.Minute)
+	}()
+
+	utils.Success(c, respData)
 }
 
-// GetNoticeDetail 处理“单个通知查看”接口
+// GetNoticeDetail 处理"单个通知查看"接口
 func GetNoticeDetail(c *gin.Context) {
 	// 1. 获取URL中的通知ID
 	noticeIDStr := c.Param("id")
@@ -160,6 +191,8 @@ func CreateNotice(c *gin.Context) {
 	}
 
 	// 5. 返回发布结果（包含附件URL）
+	clearNoticeListCache(c.Request.Context())
+	clearNoticeListCache(c.Request.Context())
 	utils.Success(c, gin.H{"notice": notice})
 }
 
@@ -201,6 +234,7 @@ func CreateCompNotice(c *gin.Context) {
 		utils.InternalServerError(c, "发布赛事通知失败", err)
 		return
 	}
+	clearNoticeListCache(c.Request.Context())
 	utils.Success(c, gin.H{"notice": notice})
 }
 
@@ -244,6 +278,7 @@ func PublishNotice(c *gin.Context) {
 	}
 
 	// 5. 返回发布结果
+	clearNoticeListCache(c.Request.Context())
 	utils.Success(c, gin.H{
 		"notice": notice,
 		"msg":    "通知发布成功",
@@ -312,6 +347,7 @@ func UpdateNotice(c *gin.Context) {
 
 	// 7. 返回更新后的通知
 	database.DB.WithContext(c.Request.Context()).First(&notice, noticeID)
+	clearNoticeListCache(c.Request.Context())
 	utils.Success(c, gin.H{"notice": notice})
 }
 
@@ -344,5 +380,6 @@ func DeleteNotice(c *gin.Context) {
 	}
 
 	// 4. 返回删除结果
+	clearNoticeListCache(c.Request.Context())
 	utils.Success(c, gin.H{"msg": "通知删除成功"})
 }

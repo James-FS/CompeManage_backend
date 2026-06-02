@@ -35,25 +35,24 @@ func setupDBMock(t *testing.T) sqlmock.Sqlmock {
 	return mock
 }
 
-// mockFileNotFound 设置 mock：file_hash 查询返回 NotFound（文件未重复）
-func mockFileNotFound(mock sqlmock.Sqlmock) {
-	mock.ExpectQuery("SELECT \\* FROM `file_records`").
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
-		WillReturnError(gorm.ErrRecordNotFound)
-}
-
-// mockFileCreate 设置 mock：INSERT INTO file_records 成功
-func mockFileCreate(mock sqlmock.Sqlmock) {
+// mockInsertSuccess 设置 mock：INSERT 成功（新文件，获得分布式锁）
+func mockInsertSuccess(mock sqlmock.Sqlmock) {
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO `file_records`").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 }
 
-// mockFileFound 设置 mock：file_hash 查询返回已存在（重复文件）
+// mockFileFound 设置 mock：INSERT 失败（duplicate key），查询返回已存在（重复文件）
 func mockFileFound(mock sqlmock.Sqlmock) {
-	rows := sqlmock.NewRows([]string{"id", "file_hash", "biz_type", "storage_path", "original_name", "file_size", "file_ext", "uploader_id"}).
-		AddRow(1, "abc123", "notice", "/static/notices/202601/test.pdf", "test.pdf", 100, ".pdf", 1)
+	// INSERT 失败
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO `file_records`").
+		WillReturnError(errors.New("Duplicate entry"))
+	mock.ExpectRollback()
+	// fallback 查已有记录
+	rows := sqlmock.NewRows([]string{"id", "file_hash", "biz_type", "storage_path", "original_name", "file_size", "file_ext", "uploader_id", "create_time", "update_time", "delete_time"}).
+		AddRow(1, "abc123", "notice", "/static/notices/202601/existing.pdf", "existing.pdf", 999, ".pdf", 1, time.Now(), time.Now(), nil)
 	mock.ExpectQuery("SELECT \\* FROM `file_records`").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(rows)
@@ -76,8 +75,7 @@ func TestUploadFile_Success(t *testing.T) {
 	mock := setupDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mockFileNotFound(mock)
-	mockFileCreate(mock)
+	mockInsertSuccess(mock)
 
 	tempDir := t.TempDir()
 	originalNoticeDir := uploadDirs["notice"]
@@ -208,8 +206,7 @@ func TestUploadFile_DirectoryStructure(t *testing.T) {
 	mock := setupDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mockFileNotFound(mock)
-	mockFileCreate(mock)
+	mockInsertSuccess(mock)
 
 	tempDir := t.TempDir()
 	originalNoticeDir := uploadDirs["notice"]
@@ -251,8 +248,7 @@ func TestUploadFile_MissingType(t *testing.T) {
 	mock := setupDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mockFileNotFound(mock)
-	mockFileCreate(mock)
+	mockInsertSuccess(mock)
 
 	tempDir := t.TempDir()
 	originalTempDir := uploadDirs["temp"]
@@ -289,7 +285,11 @@ func TestUploadFile_MkdirAllFails(t *testing.T) {
 	mock := setupDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mockFileNotFound(mock)
+	mockInsertSuccess(mock)
+	// MkdirAll 失败时，代码会调用 db.Delete(&record) 释放锁
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM `file_records`").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 
 	tempDir := t.TempDir()
 	blockingFile := filepath.Join(tempDir, "notices")
@@ -332,7 +332,7 @@ func TestSanitizeFilename(t *testing.T) {
 		{name: "空格和双点", input: ".. hello world ..", expected: "_hello_world_"},
 		{name: "纯双点", input: "..", expected: ""},
 		{name: "绝对路径", input: "/var/log/syslog", expected: "syslog"},
-		{name: "混合路径", input: "C:\\Users\\test\\file.pdf", expected: "C:\\Users\\test\\file.pdf"},
+		{name: "混合路径", input: "C:\\Users\\test\\file.pdf", expected: filepath.FromSlash("file.pdf")},
 	}
 
 	for _, tt := range tests {
@@ -404,10 +404,10 @@ func TestUploadFile_SaveUploadedFileFails(t *testing.T) {
 	mock := setupDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mockFileNotFound(mock)
+	mockInsertSuccess(mock)
+	// SaveUploadedFile 失败时，代码会调用 db.Delete(&record) 释放锁
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO `file_records`").
-		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("DELETE FROM `file_records`").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	// 创建一个不可读的目录（模拟 SaveUploadedFile 失败）
@@ -435,21 +435,18 @@ func TestUploadFile_SaveUploadedFileFails(t *testing.T) {
 
 	UploadFile(c)
 
-	// SaveUploadedFile 失败会导致 os.Remove(dst)，DB 回滚
+	// SaveUploadedFile 失败，DB 记录被删除，返回 500
 	assert.Equal(t, http.StatusInternalServerError, w.Code, "文件保存失败应该返回 500")
 	assert.Contains(t, w.Body.String(), "服务器内部错误", "应该提示服务器错误")
 }
 
-// TestUploadFile_DBInsertFails 模拟 DB 写入失败（物理文件已保存）
+// TestUploadFile_DBInsertFails 测试 INSERT 失败时（如 duplicate key）能 fallback 到已存在记录
 func TestUploadFile_DBInsertFails(t *testing.T) {
 	mock := setupDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mockFileNotFound(mock)
-	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO `file_records`").
-		WillReturnError(errors.New("duplicate entry"))
-	mock.ExpectRollback()
+	// INSERT 失败 duplicate key → rollback → 查已有记录
+	mockFileFound(mock)
 
 	tempDir := t.TempDir()
 	originalNoticeDir := uploadDirs["notice"]
@@ -470,9 +467,10 @@ func TestUploadFile_DBInsertFails(t *testing.T) {
 
 	UploadFile(c)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code, "DB 插入失败应该返回 500")
-	// 错误信息经过 utils.InternalServerError 统一包装为"服务器内部错误，请稍后重试"
-	assert.Contains(t, w.Body.String(), "服务器内部错误", "应该提示服务器错误")
+	// INSERT 失败时 fallback 到已有记录，返回 200
+	assert.Equal(t, http.StatusOK, w.Code, "INSERT 失败应 fallback 返回 200")
+	assert.Contains(t, w.Body.String(), `"url"`, "应包含已存在文件的 URL")
+	assert.Contains(t, w.Body.String(), "existing.pdf", "应返回已有记录的文件名")
 }
 
 func TestUploadFile_PermissionDenied(t *testing.T) {

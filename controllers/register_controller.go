@@ -2,9 +2,11 @@ package controllers
 
 import (
 	"CompeManage_backend/database"
+	"CompeManage_backend/middleware"
 	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
 	"context"
+	"crypto/md5"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1507,7 +1509,24 @@ func GetUserList(c *gin.Context) {
 		req.PageSize = 50
 	}
 
-	query := database.DB.WithContext(c.Request.Context()).Model(&models.User{}).
+	// 构造缓存 key
+	cacheKeyRaw := fmt.Sprintf("%s|%s|%d|%d", req.Role, req.Search, req.Page, req.PageSize)
+	cacheKey := fmt.Sprintf("cache:reg_user_list:%x", md5.Sum([]byte(cacheKeyRaw)))
+
+	rdb := middleware.GetRedisClient()
+	ctx := c.Request.Context()
+
+	// 先查 Redis 缓存
+	cacheData, err := rdb.Get(ctx, cacheKey).Result()
+	if err == nil && cacheData != "" {
+		var resp gin.H
+		if json.Unmarshal([]byte(cacheData), &resp) == nil {
+			utils.Success(c, resp)
+			return
+		}
+	}
+
+	query := database.DB.WithContext(ctx).Model(&models.User{}).
 		Joins("LEFT JOIN user_roles ON user_roles.user_id = users.id").
 		Joins("LEFT JOIN roles ON roles.id = user_roles.role_id").
 		Where("roles.role_code = ?", req.Role).
@@ -1550,10 +1569,23 @@ func GetUserList(c *gin.Context) {
 		})
 	}
 
-	utils.Success(c, gin.H{
+	respData := gin.H{
 		"list":      respList,
 		"total":     total,
 		"page":      req.Page,
 		"page_size": req.PageSize,
-	})
+	}
+
+	// 异步写入 Redis 缓存
+	go func() {
+		asyncCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		data, err := json.Marshal(respData)
+		if err != nil {
+			return
+		}
+		rdb.Set(asyncCtx, cacheKey, data, 5*time.Minute)
+	}()
+
+	utils.Success(c, respData)
 }
