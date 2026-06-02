@@ -196,3 +196,141 @@ database.DB = dialector.Table("table_name").Session(&gorm.Session{})
 - 分支：`main`（主分支）、`ywx_Develop`（开发分支）
 - Commit Message：简洁描述变更内容
 - 敏感文件不提交（.env、静态上传文件）
+
+---
+
+## 测试规范
+
+### 工具
+
+| 工具 | 用途 |
+|------|------|
+| `testify/assert` | 断言 |
+| `go-sqlmock` | Mock GORM 数据库 |
+| `net/http/httptest` | HTTP 接口测试 |
+| `gomock` | 接口 Mock 生成 |
+
+### 命名
+
+- 测试文件：`xxx_controller_test.go`
+- 测试函数：`Test函数名_场景`（如 `TestSubmitRegistration_成功`）
+- 集成测试：`TestIntegration*`
+
+### 覆盖率
+
+- 单元测试覆盖率 >= 85%
+
+### Table-Driven Tests
+
+```go
+func TestFunction(t *testing.T) {
+    tests := []struct {
+        name     string
+        input    string
+        expected string
+        wantErr  bool
+    }{
+        {name: "valid input", input: "foo", expected: "bar"},
+        {name: "empty input", input: "", wantErr: true},
+    }
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            mock := setupDBMock(t)
+            defer mock.ExpectationsWereMet()
+            // test logic
+        })
+    }
+}
+```
+
+### 实战经验
+
+1. **setupDBMock**：每个子测试独立创建 mock，避免共享状态
+2. **c.Params 手动设置**：`gin.CreateTestContext` 不包含路由参数
+3. **Count 查询正则**：`mock.ExpectQuery("SELECT count\\(\\*\\) FROM ...")`
+4. **defer mock.ExpectationsWereMet()**：每个测试结束后校验
+
+### 辅助函数
+
+```go
+func setupDBMock(t *testing.T) sqlmock.Sqlmock {
+    db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+    assert.NoError(t, err)
+    gormDB, err := gorm.Open(mysql.New(mysql.Config{Conn: db, SkipInitializeWithVersion: true}), &gorm.Config{})
+    assert.NoError(t, err)
+    database.DB = gormDB
+    return mock
+}
+
+func buildGET(urlStr string) (*http.Request, *httptest.ResponseRecorder, *gin.Context) {
+    req := httptest.NewRequest("GET", urlStr, nil)
+    w := httptest.NewRecorder()
+    c, _ := gin.CreateTestContext(w)
+    c.Request = req
+    return req, w, c
+}
+```
+
+### 运行测试
+
+```bash
+go test -v -race ./...
+go test -coverprofile=coverage.out ./controllers/
+go tool cover -func=coverage.out
+```
+
+### 已测试文件覆盖率
+
+| 文件 | 函数 | 覆盖率 |
+|------|------|--------|
+| `file_controller.go` | `sanitizeFilename` | 100% |
+| `file_controller.go` | `UploadFile` | 88.9% |
+| `file_controller.go` | `calcFileMD5` | 75.0% |
+| `notice_controller.go` | `GetNoticeList` | 90.7% |
+| `notice_controller.go` | `GetNoticeDetail` | 92.9% |
+| `notice_controller.go` | `CreateNotice` | 94.7% |
+| `notice_controller.go` | `CreateCompNotice` | 85.7% |
+| `notice_controller.go` | `PublishNotice` | 95.0% |
+| `notice_controller.go` | `UpdateNotice` | 89.2% |
+| `notice_controller.go` | `DeleteNotice` | 93.8% |
+| `comp_controller.go` | `levelPrefix` | 100% |
+| `comp_controller.go` | `resolveCompetitionYear` | 100% |
+| `comp_controller.go` | `nextCompetitionCode` | 100% |
+| `comp_controller.go` | `hasCompetitionStarted` | 100% |
+| `comp_controller.go` | `resolveCollegeIDByName` | 100% |
+| `comp_controller.go` | `GetCompetitionList` | 参数校验 |
+| `comp_controller.go` | `CreateCompetition` | 参数校验 + 错误处理 |
+| `comp_controller.go` | `DeleteCompetition` | 未找到 + 已开始 |
+| `comp_controller.go` | `RestoreCompetition` | 未找到 + 未删除 |
+| `comp_controller.go` | `GetCompetitionDetail` | 100% |
+| `comp_controller.go` | `UpdateCompetition` | 参数校验 + 未找到 |
+| `comp_controller.go` | `BatchDeleteCompetition` | 参数校验 + 已开始 |
+| `comp_controller.go` | `GetCompetitionYears` | 100% |
+| `comp_controller.go` | `GetManagerList` | 参数校验 + 角色查询 |
+| `comp_controller.go` | `BatchImportCompetition` | 参数校验 + 学院不存在 |
+
+### 可测试函数参考
+
+| 文件 | 函数 | 测试类型 |
+|------|------|----------|
+| `award_controller.go` | `mapAwardStatusToInt` | 纯函数 |
+| `award_controller.go` | `mapAwardStatusFromInt` | 纯函数 |
+| `award_controller.go` | `getLeaderMember` | 纯函数 |
+| `award_controller.go` | `clearAwardCache` | Mock Redis |
+| `register_controller.go` | `isValidTime` | 纯函数 |
+| `register_controller.go` | `checkUserIsAdmin` | Mock DB |
+| `middleware/auth.go` | `RequirePermission` | Mock Redis + DB |
+| `datasource/datahall.go` | `derefStr` | 纯函数 |
+| `datasource/datahall.go` | `lastNChars` | 纯函数 |
+| `datasource/datahall.go` | `hashPassword` | 纯函数 |
+| `statistics_controller.go` | `calcPercent` | 纯函数 |
+| `statistics_controller.go` | `maxInt64` | 纯函数 |
+
+### 不建议单元测试的函数
+
+- `SyncStudents`、`updateExpiredComps`（依赖外部 API）
+- `file.Open()` 系统级错误分支
+
+### CI
+
+CI 自动运行 `go test -v -race ./...`，参考 `.github/workflows/ci.yml`
