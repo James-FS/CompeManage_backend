@@ -4,11 +4,13 @@ import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,7 +115,7 @@ func UploadFile(c *gin.Context) {
 		var existingRecord models.FileRecord
 		if err2 := db.Where("file_hash = ? AND biz_type = ?", fileHash, bizType).First(&existingRecord).Error; err2 == nil {
 			utils.Success(c, gin.H{
-				"url":       existingRecord.StoragePath,
+				"url":       buildDownloadURL(existingRecord.BizType, existingRecord.FileHash, existingRecord.OriginalName),
 				"name":      existingRecord.OriginalName,
 				"size":      existingRecord.FileSize,
 				"mime_type": existingRecord.FileExt,
@@ -146,10 +148,166 @@ func UploadFile(c *gin.Context) {
 	db.Model(&record).Updates(map[string]interface{}{
 		"storage_path": storagePath,
 	})
+	// 返回受控下载 URL，前端访问时走 /api/file/download 受权限校验
 	utils.Success(c, gin.H{
-		"url":       storagePath,
+		"url":       buildDownloadURL(bizType, fileHash, originalName),
 		"name":      originalName,
 		"size":      file.Size,
 		"mime_type": ext,
 	})
+}
+
+// buildDownloadURL 构造受控下载 URL
+func buildDownloadURL(bizType, fileHash, originalName string) string {
+	return fmt.Sprintf("/api/file/download/%s/%s_%s", bizType, fileHash, originalName)
+}
+
+// DownloadFile 处理文件下载/预览，支持权限校验
+// URL: GET /api/file/download/:type/:filename
+func DownloadFile(c *gin.Context) {
+	fileType := c.Param("type")
+	filename := c.Param("filename")
+
+	if _, ok := uploadDirs[fileType]; !ok {
+		utils.BadRequest(c, "不支持的文件类型")
+		return
+	}
+
+	// 从 filename 提取 md5（格式: md5_originalname）
+	md5Part := strings.SplitN(filename, "_", 2)[0]
+	if len(md5Part) != 32 {
+		utils.BadRequest(c, "无效的文件名格式")
+		return
+	}
+
+	ctx := c.Request.Context()
+	db := database.DB.WithContext(ctx)
+
+	// 查询 file_records 验证文件存在且属于该 biz_type
+	var record models.FileRecord
+	if err := db.Where("file_hash = ? AND biz_type = ?", md5Part, fileType).First(&record).Error; err != nil {
+		utils.NotFound(c, "文件不存在")
+		return
+	}
+
+	// 鉴权：上传者本人 / 管理员 / 赛事负责人 / 同团队成员
+	if !canAccessFile(ctx, c, fileType, record) {
+		utils.Forbidden(c, "无权限访问此文件")
+		return
+	}
+
+	// 拼接物理文件路径
+	relativePath := strings.TrimPrefix(record.StoragePath, "/")
+	filePath := filepath.FromSlash(relativePath)
+
+	if _, err := os.Stat(filePath); err != nil {
+		utils.NotFound(c, "文件已丢失，请重新上传")
+		return
+	}
+
+	// 设置 Content-Disposition：attachment 触发下载，inline 内嵌预览
+	// 中文 filename 用 URL 编码防止乱码
+	encodedName := url.QueryEscape(record.OriginalName)
+	disposition := fmt.Sprintf("attachment; filename*=UTF-8''%s", encodedName)
+	c.Header("Content-Disposition", disposition)
+	c.Header("Content-Type", "application/octet-stream")
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		utils.NotFound(c, "文件读取失败")
+		return
+	}
+	c.Data(200, "application/octet-stream", data)
+}
+
+// canAccessFile 判断当前用户是否有权限访问指定文件
+func canAccessFile(ctx context.Context, c *gin.Context, fileType string, record models.FileRecord) bool {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		return false
+	}
+	uid := userID.(uint)
+
+	// 上传者本人
+	if record.UploaderID == uid {
+		return true
+	}
+
+	// 管理员
+	if checkUserIsAdmin(ctx, uid) {
+		return true
+	}
+
+	switch fileType {
+	case "notice":
+		// notice 类型：登录即可
+		return true
+	case "reg_attachment":
+		// reg_attachment：检查是否为本团队的成员，或该文件所属赛事的负责人
+		if isTeamMemberForFile(ctx, uid, record.StoragePath) {
+			return true
+		}
+		return isCompManagerForFile(ctx, uid, record.StoragePath)
+	case "award_proof":
+		// award_proof：检查是否为该赛事负责人（按上传者所属赛事/奖项）
+		return isCompManagerForFile(ctx, uid, record.StoragePath)
+	case "temp":
+		// temp：仅上传者本人
+		return false
+	}
+
+	return false
+}
+
+// isTeamMemberForFile 检查用户是否为使用该文件的团队成员
+func isTeamMemberForFile(ctx context.Context, userID uint, storagePath string) bool {
+	var count int64
+	err := database.DB.WithContext(ctx).Table("registers").
+		Joins("JOIN reg_members ON reg_members.reg_id = registers.id").
+		Where("reg_members.user_id = ? AND (registers.attachment_url = ? OR registers.work_attachment_url = ?)", userID, storagePath, storagePath).
+		Count(&count).Error
+	if err != nil {
+		return false
+	}
+	return count > 0
+}
+
+// isCompManagerForFile 检查用户是否为该文件所属赛事的负责人
+// 通过 storage_path 找到关联的 register，再找到对应的 comp_directory.manager_id
+func isCompManagerForFile(ctx context.Context, userID uint, storagePath string) bool {
+	// 先查 reg_attachment 关联的赛事
+	var compID uint
+	err := database.DB.WithContext(ctx).Table("registers").
+		Select("comp_id").
+		Where("attachment_url = ? OR work_attachment_url = ?", storagePath, storagePath).
+		Scan(&compID).Error
+	if err == nil && compID > 0 {
+		return isCompManager(ctx, userID, compID)
+	}
+
+	// 查 award_proof 关联的赛事：通过 awards JOIN competitions
+	compID = 0
+	err = database.DB.WithContext(ctx).Table("awards").
+		Joins("JOIN competitions ON competitions.id = awards.comp_id").
+		Select("competitions.manager_id").
+		Where("awards.proof_url = ?", storagePath).
+		Scan(&compID).Error
+	if err == nil && compID > 0 {
+		return isCompManager(ctx, userID, compID)
+	}
+
+	return false
+}
+
+// isCompManager 检查用户是否为该赛事的负责人
+func isCompManager(ctx context.Context, userID uint, compID uint) bool {
+	var managerID uint
+	err := database.DB.WithContext(ctx).Table("comp_directories").
+		Select("manager_id").
+		Where("id = ?", compID).
+		Scan(&managerID).Error
+	if err != nil {
+		return false
+	}
+	return managerID == userID
 }
