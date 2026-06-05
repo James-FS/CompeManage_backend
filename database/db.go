@@ -57,6 +57,7 @@ func autoMigrate() {
 		&models.Role{},
 		&models.Permission{},
 		&models.College{},
+		&models.Department{},
 		&models.CompDirectory{},
 		&models.CompDetail{},
 		&models.Register{},
