@@ -42,6 +42,7 @@ func SetupRoutes(r *gin.Engine) {
 		apiGroup.POST("/login", controllers.Login)
 
 		apiGroup.GET("/college/list", controllers.GetCollegeList)
+		apiGroup.GET("/department/list", controllers.GetDepartmentList)
 	}
 
 	notice := r.Group("/api/notice", middleware.AuthRequired())
