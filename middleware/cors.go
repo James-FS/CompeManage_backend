@@ -13,6 +13,7 @@ func CORS() gin.HandlerFunc {
 		AllowOrigins:     []string{"*"}, // 生产环境改为具体域名（如https://xxx.xxx.com）
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Disposition"}, // 让前端 fetch 能读到下载文件名
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	})

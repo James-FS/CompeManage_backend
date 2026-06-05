@@ -15,7 +15,15 @@ func SetupRoutes(r *gin.Engine) {
 		utils.Success(c, gin.H{"status": "ok"})
 	})
 
-	r.Static("/static", "./static")
+	// r.Static("/static", "./static")
+	// 2026-06: 注释掉 /static 公开访问，全部走 /api/file/download 受控接口
+	// 彻底迁移后再删这行
+
+	// 受控文件下载/预览接口（需登录 + 业务权限）
+	file := r.Group("/api/file", middleware.AuthRequired())
+	{
+		file.GET("/download/:type/:filename", controllers.DownloadFile)
+	}
 
 	// CAS/OAuth2.0 统一认证接口（公开）
 	cas := r.Group("/api/cas")
@@ -45,9 +53,6 @@ func SetupRoutes(r *gin.Engine) {
 		notice.GET("/:id",
 			controllers.GetNoticeDetail,
 			middleware.RequirePermission("notice:detail")) // 单个通知查看
-		//notice.POST("/create",
-		//	controllers.CreateNotice,
-		//	middleware.RequirePermission("notice:create"))
 		notice.POST("/comp/create",
 			controllers.CreateCompNotice,
 			middleware.RequirePermission("notice:create"))
