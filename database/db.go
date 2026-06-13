@@ -67,6 +67,8 @@ func autoMigrate() {
 		&models.Award{},
 		&models.Summary{},
 		&models.FileRecord{},
+		&models.ReviewTask{},
+		&models.ReviewRecord{},
 	)
 
 	// 重新启用外键检查

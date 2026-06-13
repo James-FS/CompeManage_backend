@@ -37,6 +37,12 @@ type ConfigReq struct {
 	NeedAttachment   int        `json:"need_attachment"`
 	NeedRegAudit     *int       `json:"need_reg_audit"`
 	Track            []TrackReq `json:"track"`
+	// 专家评审配置
+	NeedReview       *int       `json:"need_review"`
+	ReviewStartTime  *time.Time `json:"review_start_time"`
+	ReviewEndTime    *time.Time `json:"review_end_time"`
+	ExpertIDs        []uint     `json:"expert_ids"`
+	ForceCloseReview bool       `json:"force_close_review"`
 }
 
 type TrackReq struct {
@@ -214,6 +220,21 @@ func SaveRegConfig(c *gin.Context) {
 
 	detail.Track = string(trackJson)
 
+	// 专家评审配置
+	if req.NeedReview != nil {
+		detail.NeedReview = int8(*req.NeedReview)
+	}
+	if req.ReviewStartTime != nil {
+		detail.ReviewStartTime = *req.ReviewStartTime
+	} else if req.NeedReview != nil && *req.NeedReview == 0 {
+		detail.ReviewStartTime = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+	if req.ReviewEndTime != nil {
+		detail.ReviewEndTime = *req.ReviewEndTime
+	} else if req.NeedReview != nil && *req.NeedReview == 0 {
+		detail.ReviewEndTime = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+
 	// 时间字段判空处理 (防止空指针崩溃)
 
 	if req.RegStartTime != nil {
@@ -273,6 +294,16 @@ func SaveRegConfig(c *gin.Context) {
 		}
 	}
 
+	// 同步评审专家
+	if detail.NeedReview == 1 || req.ForceCloseReview {
+		now := time.Now()
+		warnings := syncReviewTasks(c, req.CompID, req.ExpertIDs, userID, now, req.ForceCloseReview, "")
+		if len(warnings) > 0 {
+			utils.SuccessWithMessage(c, "报名设置保存成功，但有警告："+strings.Join(warnings, "；"), detail)
+			return
+		}
+	}
+
 	now := time.Now()
 	newStatus := 0
 	if !detail.RegStartTime.After(now) {
@@ -290,6 +321,7 @@ func SaveRegConfig(c *gin.Context) {
 	}
 
 	clearCompListCache(c.Request.Context())
+	clearReviewCompListCache(c.Request.Context())
 
 	utils.SuccessWithMessage(c, "报名设置保存成功", detail)
 }
@@ -359,6 +391,32 @@ func GetRegConfig(c *gin.Context) {
 		submitEndTime = &detail.SubmitEndTime
 	}
 
+	var revStartPtr, revEndPtr *time.Time
+	if isValidTime(detail.ReviewStartTime) {
+		revStartPtr = &detail.ReviewStartTime
+	}
+	if isValidTime(detail.ReviewEndTime) {
+		revEndPtr = &detail.ReviewEndTime
+	}
+
+	// 查询已分配评审专家
+	type ExpertItem struct {
+		ID       uint   `json:"id"`
+		Name     string `json:"name"`
+		Username string `json:"username"`
+	}
+	var experts []ExpertItem
+	if detail.NeedReview == 1 {
+		var tasks []models.ReviewTask
+		database.DB.WithContext(c.Request.Context()).Where("comp_id = ?", detail.CompID).Find(&tasks)
+		for _, t := range tasks {
+			var user models.User
+			if err := database.DB.WithContext(c.Request.Context()).Select("id, realname, username").First(&user, t.ExpertID).Error; err == nil {
+				experts = append(experts, ExpertItem{ID: user.ID, Name: user.Realname, Username: user.Username})
+			}
+		}
+	}
+
 	utils.Success(c, gin.H{
 		"comp_name":         comp.CompName,
 		"participant_type":  detail.ParticipantType,
@@ -374,6 +432,11 @@ func GetRegConfig(c *gin.Context) {
 		"submit_end_time":   submitEndTime,
 		"award_hierarchy":   awardHierarchy,
 		"track":             track,
+		// 专家评审配置
+		"need_review":       detail.NeedReview,
+		"review_start_time": revStartPtr,
+		"review_end_time":   revEndPtr,
+		"experts":           experts,
 	})
 }
 
@@ -1493,6 +1556,9 @@ func SubmitWork(c *gin.Context) {
 		utils.InternalServerError(c, "保存失败", err)
 		return
 	}
+
+	// 自动创建评审记录，无需管理员手动初始化
+	go AutoCreateReviewRecordsForWork(reg.CompID, reg.ID)
 
 	utils.SuccessWithMessage(c, "作品已成功保存", nil)
 }

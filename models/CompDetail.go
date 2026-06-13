@@ -24,6 +24,9 @@ type CompDetail struct {
 	AttachmentTemplate string    `gorm:"column:attachment_template;type:varchar(255);comment:附件模板地址" json:"attachment_template"`
 	AwardHierarchy     string    `gorm:"column:award_hierarchy;type:json;comment:奖项等级排序配置" json:"award_hierarchy"`
 	Track              string    `gorm:"column:track;type:json;comment:赛道+赛题配置" json:"track"`
+	NeedReview         int8      `gorm:"column:need_review;default:0;comment:是否需要专家评审(0:不需要 1:需要)" json:"need_review"`
+	ReviewStartTime    time.Time `gorm:"column:review_start_time;comment:评审开始时间" json:"review_start_time"`
+	ReviewEndTime      time.Time `gorm:"column:review_end_time;comment:评审结束时间" json:"review_end_time"`
 	BaseModel
 }
 

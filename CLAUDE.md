@@ -578,6 +578,22 @@ go tool cover -func=coverage.out
 | `statistics_controller.go` | `calcPercent` | 100% (8 cases) |
 | `statistics_controller.go` | `maxInt64` | 100% (6 cases) |
 | `statistics_controller.go` | `GetStatisticsDashboard` | 未登录 |
+| `review_controller.go` | `GetReviewCompList` | Count错误 + 空结果 + 有数据 + 默认分页 |
+| `review_controller.go` | `GetExpertList` | Count错误 + 空结果 + 关键词+学院过滤 + 默认分页 |
+| `review_controller.go` | `GetReviewTaskList` | 缺comp_id + 格式错误 + 空结果 + 有数据 |
+| `review_controller.go` | `AssignReviewTask` | 参数错误 + 未登录 + 赛事不存在 + 成功 |
+| `review_controller.go` | `InitReviewTasks` | 参数错误 + 赛事不存在 + 无任务 + 无作品 |
+| `review_controller.go` | `DeleteReviewTask` | ID无效 + 未找到 + 有记录无force + 强制删除 + status=0删除 |
+| `review_controller.go` | `GetReviewProgress` | 缺comp_id + 格式错误 + 赛事不存在 + 空结果 |
+| `review_controller.go` | `GetReviewResultList` | 缺comp_id + 格式错误 + 赛事不存在 + 空结果 + 异常检测 |
+| `review_controller.go` | `ConfirmReviewResult` | 参数错误 + 配置不存在 + 评审未结束 + 未完成 + 已有获奖 |
+| `review_controller.go` | `GetMyReviewTasks` | 未登录 + 空结果 + 有数据 + 默认分页 |
+| `review_controller.go` | `GetMyReviewWorks` | 未登录 + 缺task_id + 格式错误 + 未找到 + 空结果 + 状态过滤 + 有数据 |
+| `review_controller.go` | `GetReviewWorkDetail` | 未登录 + regId无效 + 缺task_id + task_id无效 + 任务不存在 + 记录不存在 + 成功 |
+| `review_controller.go` | `SubmitReview` | 参数错误 + 未登录 + 分数越界 + 记录不存在 + 已评审 + 未开始 + 已结束 |
+| `review_controller.go` | `UpdateReview` | ID无效 + 参数错误 + 未登录 + 分数越界 + 记录不存在 + 未评审 + 未开始 + 已结束 |
+| `review_controller.go` | `calcReviewStatus` | 无任务 + 全0 + 全1 + 全3 + 混合 |
+| `review_controller.go` | `syncReviewTasks` | 新增 + 移除未初始化 + 跳过已初始化 + 强制关闭 |
 
 ### 可测试函数参考
 
@@ -597,3 +613,23 @@ go tool cover -func=coverage.out
 ### CI
 
 CI 自动运行 `go test -v -race ./...`，参考 `.github/workflows/ci.yml`
+
+#### 14. GORM 软删除 vs 硬删除
+
+当模型嵌入 `BaseModel`（包含 `gorm.DeletedAt`）时，GORM 的 `Delete()` 执行软删除而非硬删除：
+
+```go
+// 期望（错误）：
+mock.ExpectExec("DELETE FROM `review_tasks`")
+
+// 实际 SQL（正确）：
+mock.ExpectExec("UPDATE `review_tasks` SET `delete_time`")
+```
+
+`Unscoped().Delete()` 才会执行真正的 `DELETE FROM`。测试中所有涉及 `Delete` 的操作都需要使用 `UPDATE ... SET delete_time` 模式。
+
+同样，`tx.Where(...).Delete(&models.Xxx{})` 也是软删除：
+```go
+// 期望：
+mock.ExpectExec("UPDATE `review_records` SET `delete_time`")
+```
