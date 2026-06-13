@@ -263,4 +263,25 @@ func SetupRoutes(r *gin.Engine) {
 	{
 		statistics.GET("/dashboard", controllers.GetStatisticsDashboard)
 	}
+
+	review := r.Group("/api/review", middleware.AuthRequired())
+	{
+		// 管理员路由
+		review.GET("/comp/list", controllers.GetReviewCompList, middleware.RequirePermission("review:comp:list"))
+		review.GET("/expert/list", controllers.GetExpertList, middleware.RequirePermission("review:expert:list"))
+		review.GET("/task/list", controllers.GetReviewTaskList, middleware.RequirePermission("review:task:list"))
+		review.POST("/task/assign", controllers.AssignReviewTask, middleware.RequirePermission("review:task:assign"))
+		review.POST("/task/init", controllers.InitReviewTasks, middleware.RequirePermission("review:task:init"))
+		review.DELETE("/task/:id", controllers.DeleteReviewTask, middleware.RequirePermission("review:task:delete"))
+		review.GET("/progress", controllers.GetReviewProgress, middleware.RequirePermission("review:progress"))
+		review.GET("/result/list", controllers.GetReviewResultList, middleware.RequirePermission("review:result:list"))
+		review.POST("/result/confirm", controllers.ConfirmReviewResult, middleware.RequirePermission("review:result:confirm"))
+
+		// 专家路由
+		review.GET("/my/tasks", controllers.GetMyReviewTasks, middleware.RequirePermission("review:my:list"))
+		review.GET("/my/works", controllers.GetMyReviewWorks, middleware.RequirePermission("review:my:works"))
+		review.GET("/my/works/:regId", controllers.GetReviewWorkDetail, middleware.RequirePermission("review:my:work:detail"))
+		review.POST("/submit", controllers.SubmitReview, middleware.RequirePermission("review:my:submit"))
+		review.PUT("/submit/:id", controllers.UpdateReview, middleware.RequirePermission("review:my:update"))
+	}
 }

@@ -150,6 +150,112 @@ func ensureDeclarePermissions() {
 	grantRolePermissionsByCode("competition_manager", []string{"declare:audited-list"})
 }
 
+func ensureReviewPermissions() {
+	var reviewParent models.Permission
+	if err := DB.Where("code = ?", "review").First(&reviewParent).Error; err != nil {
+		// 创建 review 目录权限
+		reviewParent = models.Permission{
+			Name:        "专家评审",
+			Code:        "review",
+			Type:        1,
+			ParentID:    0,
+			Description: "专家评审相关功能",
+		}
+		if err := DB.Create(&reviewParent).Error; err != nil {
+			log.Printf("创建 review 权限目录失败: %v", err)
+			return
+		}
+		log.Println("已创建 review 权限目录")
+	}
+
+	ensurePerm := func(code, name, desc string) {
+		var existed models.Permission
+		if err := DB.Where("code = ?", code).First(&existed).Error; err == nil {
+			return
+		}
+
+		perm := models.Permission{
+			Name:        name,
+			Code:        code,
+			Type:        3,
+			ParentID:    reviewParent.ID,
+			Description: desc,
+		}
+		if err := DB.Create(&perm).Error; err != nil {
+			log.Printf("补齐权限失败(%s): %v", code, err)
+		}
+	}
+
+	// 管理员评审权限
+	ensurePerm("review:comp:list", "评审赛事列表", "查看评审赛事列表")
+	ensurePerm("review:expert:list", "获取专家列表", "获取可选的评审专家列表")
+	ensurePerm("review:task:list", "查看评审任务", "查看评审任务列表")
+	ensurePerm("review:task:assign", "分配评审任务", "分配评审专家")
+	ensurePerm("review:task:init", "初始化评审任务", "初始化评审任务")
+	ensurePerm("review:task:delete", "删除评审任务", "删除评审任务")
+	ensurePerm("review:progress", "查看评审进度", "查看评审进度")
+	ensurePerm("review:result:list", "查看评审结果", "查看评审结果汇总")
+	ensurePerm("review:result:confirm", "确认评审结果", "确认评审结果生成获奖")
+
+	// 专家评审权限
+	ensurePerm("review:my:list", "我的评审任务", "查看我的评审任务列表")
+	ensurePerm("review:my:works", "待评审作品", "查看待评审作品列表")
+	ensurePerm("review:my:work:detail", "作品详情", "查看作品详情")
+	ensurePerm("review:my:submit", "提交评审", "提交评审打分")
+	ensurePerm("review:my:update", "修改评审", "修改已提交的评审结果")
+
+	// 为已有角色补齐评审权限
+	grantRolePermissionsByCode("school_admin", []string{
+		"review:comp:list", "review:expert:list", "review:task:list", "review:task:assign",
+		"review:task:init", "review:task:delete", "review:progress", "review:result:list",
+		"review:result:confirm", "review:my:list", "review:my:works", "review:my:work:detail",
+		"review:my:submit", "review:my:update",
+	})
+	grantRolePermissionsByCode("college_admin", []string{
+		"review:comp:list", "review:expert:list", "review:task:list", "review:task:assign",
+		"review:task:init", "review:task:delete", "review:progress", "review:result:list",
+		"review:result:confirm",
+	})
+	grantRolePermissionsByCode("competition_manager", []string{
+		"review:comp:list", "review:expert:list", "review:task:list", "review:task:assign",
+		"review:task:init", "review:task:delete", "review:progress", "review:result:list",
+		"review:result:confirm",
+	})
+	grantRolePermissionsByCode("expert", []string{
+		"review:my:list", "review:my:works", "review:my:work:detail", "review:my:submit",
+		"review:my:update",
+	})
+}
+
+// ensureExpertUsers 确保种子专家用户存在（增量更新时不会丢失新增的专家账号）
+func ensureExpertUsers() {
+	var expertRole models.Role
+	if err := DB.Where("role_code = ?", "expert").First(&expertRole).Error; err != nil {
+		return
+	}
+
+	experts := []models.User{
+		{Username: "E2023001", Realname: "周杰", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子工程"},
+		{Username: "E2023002", Realname: "李专家", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "计算机科学与技术"},
+	}
+
+	for _, u := range experts {
+		var existing models.User
+		if DB.Where("username = ?", u.Username).First(&existing).Error == nil {
+			continue
+		}
+		if err := DB.Create(&u).Error; err != nil {
+			log.Printf("创建专家用户 %s 失败: %v", u.Username, err)
+			continue
+		}
+		var user models.User
+		if DB.Where("username = ?", u.Username).First(&user).Error == nil {
+			DB.Model(&user).Association("Roles").Replace([]models.Role{expertRole})
+			log.Printf("已补创建专家用户: %s", u.Username)
+		}
+	}
+}
+
 // ensureCompetitionRegConfigForAll 为已有赛事补齐报名设置的关键字段：
 // 报名开始/结束时间 + 个人赛/团队赛(ParticipantType)。
 // InitData 扩展版测试数据初始化
@@ -168,6 +274,8 @@ func InitData() {
 		ensureCompetitionCorePermissions()
 		ensureAwardStudentPermissions()
 		ensureDeclarePermissions()
+		ensureReviewPermissions()
+		ensureExpertUsers()
 		return
 	}
 
@@ -182,11 +290,13 @@ func InitData() {
 	registrationDir := models.Permission{Name: "报名管理", Code: "registration", Type: 1, ParentID: 0, Description: "报名配置、审核、提交相关功能"}
 	noticeDir := models.Permission{Name: "通知管理", Code: "notice", Type: 1, ParentID: 0, Description: "通知发布和管理功能"}
 	systemDir := models.Permission{Name: "系统管理", Code: "system", Type: 1, ParentID: 0, Description: "权限、角色、基础数据管理"}
+	reviewDir := models.Permission{Name: "专家评审", Code: "review", Type: 1, ParentID: 0, Description: "专家评审相关功能"}
 
 	DB.Create(&competitionDir)
 	DB.Create(&registrationDir)
 	DB.Create(&noticeDir)
 	DB.Create(&systemDir)
+	DB.Create(&reviewDir)
 
 	// --- Level 2: 子分类（中间层父目录）Type=1(作为目录), ParentID=Level1.ID ---
 
@@ -288,6 +398,22 @@ func InitData() {
 		// 基础数据权限 (parent: basicSub)
 		{Name: "查看学院列表", Code: "college:list", Type: 3, ParentID: basicSub.ID, Description: "查看学院列表"},
 		{Name: "文件上传", Code: "upload:file", Type: 3, ParentID: basicSub.ID, Description: "上传文件"},
+
+		// 专家评审权限 (parent: reviewDir)
+		{Name: "评审赛事列表", Code: "review:comp:list", Type: 3, ParentID: reviewDir.ID, Description: "查看评审赛事列表"},
+		{Name: "获取专家列表", Code: "review:expert:list", Type: 3, ParentID: reviewDir.ID, Description: "获取可选的评审专家列表"},
+		{Name: "查看评审任务", Code: "review:task:list", Type: 3, ParentID: reviewDir.ID, Description: "查看评审任务列表"},
+		{Name: "分配评审任务", Code: "review:task:assign", Type: 3, ParentID: reviewDir.ID, Description: "分配评审专家"},
+		{Name: "初始化评审任务", Code: "review:task:init", Type: 3, ParentID: reviewDir.ID, Description: "初始化评审任务"},
+		{Name: "删除评审任务", Code: "review:task:delete", Type: 3, ParentID: reviewDir.ID, Description: "删除评审任务"},
+		{Name: "查看评审进度", Code: "review:progress", Type: 3, ParentID: reviewDir.ID, Description: "查看评审进度"},
+		{Name: "查看评审结果", Code: "review:result:list", Type: 3, ParentID: reviewDir.ID, Description: "查看评审结果汇总"},
+		{Name: "确认评审结果", Code: "review:result:confirm", Type: 3, ParentID: reviewDir.ID, Description: "确认评审结果生成获奖"},
+		{Name: "我的评审任务", Code: "review:my:list", Type: 3, ParentID: reviewDir.ID, Description: "查看我的评审任务列表"},
+		{Name: "待评审作品", Code: "review:my:works", Type: 3, ParentID: reviewDir.ID, Description: "查看待评审作品列表"},
+		{Name: "作品详情", Code: "review:my:work:detail", Type: 3, ParentID: reviewDir.ID, Description: "查看作品详情"},
+		{Name: "提交评审", Code: "review:my:submit", Type: 3, ParentID: reviewDir.ID, Description: "提交评审打分"},
+		{Name: "修改评审", Code: "review:my:update", Type: 3, ParentID: reviewDir.ID, Description: "修改已提交的评审结果"},
 	}
 	DB.Create(&perms)
 
@@ -319,11 +445,11 @@ func InitData() {
 	DB.Find(&allPerms)
 	DB.Model(&schoolAdminRole).Association("Permissions").Append(&allPerms)
 
-	// --- B. 院级管理员：竞赛查看、申报审核、报名审核、基础数据查看 ---
+	// --- B. 院级管理员：竞赛查看、申报审核、报名审核、基础数据查看、专家评审管理 ---
 	var collegePerms []models.Permission
 	DB.Where("code IN ?", []string{
 		// 大分类（目录权限）
-		"competition", "registration", "notice", "system",
+		"competition", "registration", "notice", "system", "review",
 		// 子分类（目录权限）
 		"comp", "declare", "award", "summary", "reg:config", "reg:audit", "basic",
 		// 具体权限
@@ -335,14 +461,16 @@ func InitData() {
 		"reg:audit:list", "reg:audit:detail", "reg:audit:update",
 		"notice:list", "notice:detail", "notice:create", "notice:publish", "notice:delete",
 		"college:list",
+		// 专家评审管理
+		"review:comp:list", "review:expert:list", "review:task:list", "review:task:assign", "review:task:init", "review:task:delete", "review:progress", "review:result:list", "review:result:confirm",
 	}).Find(&collegePerms)
 	DB.Model(&collegeAdminRole).Association("Permissions").Append(&collegePerms)
 
-	// --- C. 赛事负责人：竞赛目录/赛事申报仅查看，其他模块保持原有权限 ---
+	// --- C. 赛事负责人：竞赛目录/赛事申报仅查看，其他模块保持原有权限、专家评审管理 ---
 	var managerPerms []models.Permission
 	DB.Where("code IN ?", []string{
 		// 大分类
-		"competition", "registration", "notice",
+		"competition", "registration", "notice", "review",
 		// 子分类
 		"comp", "declare", "award", "summary", "reg:config", "reg:audit", "reg:submit",
 		// 竞赛目录（仅查看）
@@ -361,6 +489,8 @@ func InitData() {
 		"notice:list", "notice:detail", "notice:create", "notice:publish", "notice:delete",
 		// 基础数据
 		"college:list", "upload:file",
+		// 专家评审管理
+		"review:comp:list", "review:expert:list", "review:task:list", "review:task:assign", "review:task:init", "review:task:delete", "review:progress", "review:result:list", "review:result:confirm",
 	}).Find(&managerPerms)
 	DB.Model(&competitionManagerRole).Association("Permissions").Append(&managerPerms)
 
@@ -400,11 +530,11 @@ func InitData() {
 	}).Find(&studentPerms)
 	DB.Model(&studentRole).Association("Permissions").Append(&studentPerms)
 
-	// --- F. 专家：竞赛查看、申报查看、获奖查看、通知查看 ---
+	// --- F. 专家：竞赛查看、申报查看、获奖查看、通知查看、专家评审 ---
 	var expertPerms []models.Permission
 	DB.Where("code IN ?", []string{
 		// 大分类
-		"competition", "notice",
+		"competition", "notice", "review",
 		// 子分类
 		"comp", "declare", "award",
 		// 竞赛查看
@@ -415,6 +545,8 @@ func InitData() {
 		"award:list", "award:comp:list",
 		// 通知查看
 		"notice:list", "notice:detail",
+		// 专家评审
+		"review:my:list", "review:my:works", "review:my:work:detail", "review:my:submit", "review:my:update",
 	}).Find(&expertPerms)
 	DB.Model(&expertRole).Association("Permissions").Append(&expertPerms)
 
@@ -441,6 +573,7 @@ func InitData() {
 		{Username: "S2024001", Realname: "林晓明", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "2024级", Major: "计算机科学与技术"},
 		{Username: "S2024002", Realname: "陈思思", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "2024级", Major: "软件工程"},
 		{Username: "E2023001", Realname: "周杰", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子工程"},
+		{Username: "E2023002", Realname: "李专家", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "计算机科学与技术"},
 		// 新增：无权限测试用户
 		{Username: "guest", Realname: "访客用户", Password: hashPassword("123"), College: "其他", Grade: "访客", Major: ""},
 	}
@@ -459,6 +592,7 @@ func InitData() {
 		"S2024001": &studentRole,            // 林晓明 - 学生
 		"S2024002": &studentRole,            // 陈思思 - 学生
 		"E2023001": &expertRole,             // 周杰 - 专家
+		"E2023002": &expertRole,             // 李专家 - 专家
 		// guest 用户不分配角色，用于测试无权限访问
 	}
 
@@ -502,7 +636,7 @@ func InitData() {
 	log.Println("  赛事负责人: T2023003  密码: 123 (竞赛管理+申报管理+报名配置编辑+报名审核)")
 	log.Println("  老师:       T2023010/T2023011/T2023012  密码: 123 (用于指导教师选择)")
 	log.Println("  学生:       S2024001  密码: 123 (报名提交+通知查看)")
-	log.Println("  专家:       E2023001   密码: 123 (竞赛查看+申报查看+获奖查看+通知查看)")
+	log.Println("  专家:       E2023001/E2023002   密码: 123 (竞赛查看+申报查看+获奖查看+通知查看)")
 	log.Println("  访客:       guest    密码: 123 (无任何权限-测试用)")
 	log.Println("================================")
 	log.Println("🔐 新权限结构说明：")

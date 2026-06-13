@@ -23,8 +23,9 @@ const maxFileSize = 30 << 20
 
 var uploadDirs = map[string]string{
 	"notice":         "static/notices",
-	"reg_attachment": "static/reg_attachments",
-	"award_proof":    "static/award_proofs",
+	"reg_attachment":   "static/reg_attachments",
+	"competition_work": "static/reg_attachments",
+	"award_proof":      "static/award_proofs",
 	"temp":           "static/temp",
 }
 
@@ -240,63 +241,107 @@ func canAccessFile(ctx context.Context, c *gin.Context, fileType string, record 
 
 	switch fileType {
 	case "notice":
-		// notice 类型：登录即可
 		return true
 	case "reg_attachment":
-		// reg_attachment：检查是否为本团队的成员，或该文件所属赛事的负责人
 		if isTeamMemberForFile(ctx, uid, record.StoragePath) {
 			return true
 		}
 		return isCompManagerForFile(ctx, uid, record.StoragePath)
+	case "competition_work":
+		if isTeamMemberForFile(ctx, uid, record.StoragePath) {
+			return true
+		}
+		if isCompManagerForFile(ctx, uid, record.StoragePath) {
+			return true
+		}
+		return isExpertForFile(ctx, uid, record.StoragePath)
 	case "award_proof":
-		// award_proof：检查是否为该赛事负责人（按上传者所属赛事/奖项）
 		return isCompManagerForFile(ctx, uid, record.StoragePath)
 	case "temp":
-		// temp：仅上传者本人
 		return false
 	}
 
 	return false
+}
+
+// findCompIDByStoragePath 根据文件物理路径找到关联赛事的 comp_id
+// storagePath 如 /static/reg_attachments/202606/md5_originalname
+// register 表中存的是下载 URL 如 /api/file/download/competition_work/md5_originalname
+func findCompIDByStoragePath(ctx context.Context, storagePath string) uint {
+	// 从物理路径提取文件名部分 (md5_originalname)
+	idx := strings.LastIndexByte(storagePath, '/')
+	if idx < 1 {
+		return 0
+	}
+	fileName := storagePath[idx+1:]
+	parts := strings.SplitN(fileName, "_", 2)
+	if len(parts) != 2 || len(parts[0]) != 32 {
+		return 0
+	}
+	// 用 md5 hash 模糊匹配 register 中的下载 URL
+	var compID uint
+	database.DB.WithContext(ctx).Table("registers").
+		Select("comp_id").
+		Where("attachment_url LIKE ? OR work_attachment_url LIKE ?", "%"+parts[0]+"%", "%"+parts[0]+"%").
+		Scan(&compID)
+	return compID
+}
+
+// isCompManagerForFile 检查用户是否为该文件所属赛事的负责人
+func isCompManagerForFile(ctx context.Context, userID uint, storagePath string) bool {
+	compID := findCompIDByStoragePath(ctx, storagePath)
+	if compID > 0 {
+		return isCompManager(ctx, userID, compID)
+	}
+	// 非 register 关联的文件（如 award_proof），尝试从 awards 表查找
+	var mID uint
+	err := database.DB.WithContext(ctx).Table("awards").
+		Joins("JOIN competitions ON competitions.id = awards.comp_id").
+		Select("comp_directories.manager_id").
+		Joins("JOIN comp_directories ON comp_directories.id = competitions.comp_directory_id").
+		Where("awards.proof_url LIKE ?", "%"+extractMD5FromPath(storagePath)+"%").
+		Scan(&mID).Error
+	if err != nil || mID == 0 {
+		return false
+	}
+	return mID == userID
 }
 
 // isTeamMemberForFile 检查用户是否为使用该文件的团队成员
 func isTeamMemberForFile(ctx context.Context, userID uint, storagePath string) bool {
 	var count int64
-	err := database.DB.WithContext(ctx).Table("registers").
+	database.DB.WithContext(ctx).Table("registers").
 		Joins("JOIN reg_members ON reg_members.reg_id = registers.id").
-		Where("reg_members.user_id = ? AND (registers.attachment_url = ? OR registers.work_attachment_url = ?)", userID, storagePath, storagePath).
-		Count(&count).Error
-	if err != nil {
-		return false
-	}
+		Where("reg_members.user_id = ? AND (registers.attachment_url LIKE ? OR registers.work_attachment_url LIKE ?)", userID, "%"+extractMD5FromPath(storagePath)+"%", "%"+extractMD5FromPath(storagePath)+"%").
+		Count(&count)
 	return count > 0
 }
 
-// isCompManagerForFile 检查用户是否为该文件所属赛事的负责人
-// 通过 storage_path 找到关联的 register，再找到对应的 comp_directory.manager_id
-func isCompManagerForFile(ctx context.Context, userID uint, storagePath string) bool {
-	// 先查 reg_attachment 关联的赛事
-	var compID uint
-	err := database.DB.WithContext(ctx).Table("registers").
-		Select("comp_id").
-		Where("attachment_url = ? OR work_attachment_url = ?", storagePath, storagePath).
-		Scan(&compID).Error
-	if err == nil && compID > 0 {
-		return isCompManager(ctx, userID, compID)
+// extractMD5FromPath 从存储路径中提取 32 位 MD5 哈希
+func extractMD5FromPath(storagePath string) string {
+	idx := strings.LastIndexByte(storagePath, '/')
+	if idx < 1 {
+		return ""
 	}
-
-	// 查 award_proof 关联的赛事：通过 awards JOIN competitions
-	compID = 0
-	err = database.DB.WithContext(ctx).Table("awards").
-		Joins("JOIN competitions ON competitions.id = awards.comp_id").
-		Select("competitions.manager_id").
-		Where("awards.proof_url = ?", storagePath).
-		Scan(&compID).Error
-	if err == nil && compID > 0 {
-		return isCompManager(ctx, userID, compID)
+	fileName := storagePath[idx+1:]
+	parts := strings.SplitN(fileName, "_", 2)
+	if len(parts) != 2 || len(parts[0]) != 32 {
+		return ""
 	}
+	return parts[0]
+}
 
-	return false
+// isExpertForFile 检查用户是否是指定评审该文件所属赛事的专家
+func isExpertForFile(ctx context.Context, userID uint, storagePath string) bool {
+	compID := findCompIDByStoragePath(ctx, storagePath)
+	if compID == 0 {
+		return false
+	}
+	var count int64
+	database.DB.WithContext(ctx).Table("review_tasks").
+		Where("comp_id = ? AND expert_id = ?", compID, userID).
+		Count(&count)
+	return count > 0
 }
 
 // isCompManager 检查用户是否为该赛事的负责人
