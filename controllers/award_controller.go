@@ -125,90 +125,63 @@ func GetAwardCompList(c *gin.Context) {
 }
 
 func ExportAwardTemplate(c *gin.Context) {
-	compID := c.Query("comp_id")
-
-	var regs []models.Register
-	if err := database.DB.
-		Preload("Leader").
-		Preload("Members").
-		Where("comp_id = ? AND status = 1", compID).
-		Find(&regs).Error; err != nil {
-		utils.InternalServerError(c, "查询数据失败", err)
-		return
-	}
-
+	// 1. 创建 Excel 实例
 	f := excelize.NewFile()
-	sheet := "获奖录入"
-	f.NewSheet(sheet)
-	f.DeleteSheet("Sheet1")
+	sheet := "Sheet1"
+	f.SetSheetName("Sheet1", sheet)
 
-	headers := []string{
-		"奖项等级", "获奖项目名", "负责人", "学号", "所属学院", "指导老师",
-		"成员1", "学号1",
-		"成员2", "学号2",
-		"成员3", "学号3",
-		"成员4", "学号4",
-		"成员5", "学号5",
-	}
-	for i, h := range headers {
-		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
-		f.SetCellValue(sheet, cell, h)
-	}
+	// 2. 定义美化样式 (蓝色背景、白色粗体)
+	headerStyle, _ := f.NewStyle(&excelize.Style{
+		Fill:      excelize.Fill{Type: "pattern", Color: []string{"4F81BD"}, Pattern: 1},
+		Font:      &excelize.Font{Bold: true, Color: "FFFFFF", Size: 12, Family: "微软雅黑"},
+		Alignment: &excelize.Alignment{Horizontal: "center", Vertical: "center"},
+		Border: []excelize.Border{
+			{Type: "top", Color: "000000", Style: 1},
+			{Type: "bottom", Color: "000000", Style: 1},
+			{Type: "left", Color: "000000", Style: 1},
+			{Type: "right", Color: "000000", Style: 1},
+		},
+	})
 
-	for i, r := range regs {
-		row := i + 2
+	// 3. 设置表头字段顺序
+	headers := []string{"序号", "获奖项目", "奖项等级", "负责人", "学号", "团队成员", "所属学院", "指导老师"}
+	for i, header := range headers {
+		colName, _ := excelize.ColumnNumberToName(i + 1)
+		f.SetCellValue(sheet, colName+"1", header)
+		f.SetCellStyle(sheet, colName+"1", colName+"1", headerStyle)
 
-		leaderName, leaderStuID, _, _ := getLeaderMember(r.Members, r.Leader)
-
-		college := r.Leader.College
-		if college == "" {
-			for _, m := range r.Members {
-				if m.IsLeader {
-					college = m.College
-					break
-				}
-			}
-		}
-
-		var nonLeaderMembers []models.RegMember
-		for _, m := range r.Members {
-			if !m.IsLeader {
-				nonLeaderMembers = append(nonLeaderMembers, m)
-			}
-		}
-
-		f.SetCellValue(sheet, fmt.Sprintf("A%d", row), "")
-		f.SetCellValue(sheet, fmt.Sprintf("B%d", row), r.TeamName)
-		f.SetCellValue(sheet, fmt.Sprintf("C%d", row), leaderName)
-		f.SetCellValue(sheet, fmt.Sprintf("D%d", row), leaderStuID)
-		f.SetCellValue(sheet, fmt.Sprintf("E%d", row), college)
-		f.SetCellValue(sheet, fmt.Sprintf("F%d", row), "")
-
-		memberCols := []string{"G", "H", "I", "J", "K", "L", "M", "N", "O", "P"}
-		for j := 0; j < 5; j++ {
-			memberName := ""
-			memberStuID := ""
-			if j < len(nonLeaderMembers) {
-				memberName = nonLeaderMembers[j].Name
-				memberStuID = nonLeaderMembers[j].StudentID
-			}
-			f.SetCellValue(sheet, fmt.Sprintf("%s%d", memberCols[j*2], row), memberName)
-			f.SetCellValue(sheet, fmt.Sprintf("%s%d", memberCols[j*2+1], row), memberStuID)
-		}
+		// 设置默认列宽
+		f.SetColWidth(sheet, colName, colName, 18)
 	}
 
-	fileName := fmt.Sprintf("Award_Template_%s.xlsx", compID)
+	// 微调特定列宽
+	f.SetColWidth(sheet, "B", "B", 30) // 获奖项目
+	f.SetColWidth(sheet, "F", "F", 40) // 团队成员
+	f.SetRowHeight(sheet, 1, 25)       // 表头行高
+
+	// 4. 添加一行示例数据 (可选，方便用户参考格式)
+	f.SetCellValue(sheet, "A2", "1")
+	f.SetCellValue(sheet, "B2", "示例：第十届数学建模大赛")
+	f.SetCellValue(sheet, "C2", "一等奖")
+	f.SetCellValue(sheet, "D2", "张三")
+	f.SetCellValue(sheet, "E2", "202100123")
+	f.SetCellValue(sheet, "F2", "张三、李四、王五")
+	f.SetCellValue(sheet, "G2", "计算机学院")
+	f.SetCellValue(sheet, "H2", "王老师")
+
+	// 5. 设置 HTTP 响应头并下载
+	fileName := "获奖名单导入模板.xlsx"
 	c.Header("Content-Type", "application/octet-stream")
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", fileName))
+	c.Header("Content-Disposition", "attachment; filename="+fileName)
 	c.Header("Content-Transfer-Encoding", "binary")
-	c.Header("Cache-Control", "no-cache")
 
 	if err := f.Write(c.Writer); err != nil {
-		fmt.Println("导出流写入中断:", err)
+		utils.InternalServerError(c, "生成模板失败", err)
 	}
 }
 
 func ImportAward(c *gin.Context) {
+	// 1. 参数校验
 	compIDStr := c.Query("comp_id")
 	if compIDStr == "" {
 		utils.BadRequest(c, "缺少 comp_id")
@@ -216,11 +189,13 @@ func ImportAward(c *gin.Context) {
 	}
 	compID, _ := strconv.Atoi(compIDStr)
 
+	// 2. 文件读取
 	file, _, err := c.Request.FormFile("file")
 	if err != nil {
 		utils.BadRequest(c, "文件上传失败")
 		return
 	}
+	defer file.Close()
 
 	f, err := excelize.OpenReader(file)
 	if err != nil {
@@ -235,6 +210,7 @@ func ImportAward(c *gin.Context) {
 		return
 	}
 
+	// 3. 获取赛事信息及奖项配置
 	var comp models.CompDirectory
 	if err := database.DB.Preload("Detail").First(&comp, compID).Error; err != nil {
 		utils.BadRequest(c, "找不到对应赛事")
@@ -243,7 +219,7 @@ func ImportAward(c *gin.Context) {
 
 	var awardHierarchy []string
 	if err := json.Unmarshal([]byte(comp.Detail.AwardHierarchy), &awardHierarchy); err != nil || len(awardHierarchy) == 0 {
-		utils.BadRequest(c, "奖项等级配置解析失败或未配置")
+		utils.BadRequest(c, "奖项等级配置解析失败")
 		return
 	}
 
@@ -252,91 +228,129 @@ func ImportAward(c *gin.Context) {
 	var failReasons []string
 
 	tx := database.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
 
+	// 4. 遍历 Excel 行（跳过表头）
 	for i, row := range rows {
-		if i == 0 || len(row) < 2 {
+		if i == 0 || len(row) < 4 { // 至少需要 4 列：等级、名称、负责人、学号
 			continue
 		}
 
-		levelRankStr := strings.TrimSpace(row[0])
-		teamName := strings.TrimSpace(row[1])
+		levelRankStr := strings.TrimSpace(row[0])  // 对应 Award.LevelRank
+		teamNameExcel := strings.TrimSpace(row[1]) // 对应 Register.TeamName
+		studentID := strings.TrimSpace(row[3])     // 用于锁定负责人
 
-		if levelRankStr == "" || teamName == "" {
-			continue
-		}
-
-		levelRank, err := strconv.Atoi(levelRankStr)
-		if err != nil || levelRank < 1 || levelRank > len(awardHierarchy) {
+		if levelRankStr == "" || studentID == "" {
 			failCount++
-			failReasons = append(failReasons, fmt.Sprintf("第%d行：奖项等级[%s]无效，应为1~%d的数字", i+1, levelRankStr, len(awardHierarchy)))
+			failReasons = append(failReasons, fmt.Sprintf("第%d行：奖项等级或学号不能为空", i+1))
 			continue
 		}
 
-		awardName := awardHierarchy[levelRank-1]
-		awardLevel := comp.CompLevel + awardName
+		levelRank, _ := strconv.Atoi(levelRankStr)
+		if levelRank < 1 || levelRank > len(awardHierarchy) {
+			failCount++
+			failReasons = append(failReasons, fmt.Sprintf("第%d行：奖项等级数字无效", i+1))
+			continue
+		}
 
+		// A. 通过学号找到 UserID
+		var leader models.User
+		if err := tx.Where("username = ?", studentID).First(&leader).Error; err != nil {
+			failCount++
+			failReasons = append(failReasons, fmt.Sprintf("第%d行：学号[%s]用户不存在", i+1, studentID))
+			continue
+		}
+
+		// B. 锁定唯一的报名记录
 		var reg models.Register
-		if err := tx.Where("comp_id = ? AND team_name = ? AND status = 1", compID, teamName).First(&reg).Error; err != nil {
+		// 根据你的描述：通过学号和 compID 锁定
+		if err := tx.Where("comp_id = ? AND leader_id = ? AND status IN (1, 4)", uint(compID), leader.ID).
+			Preload("Members").
+			First(&reg).Error; err != nil {
 			failCount++
-			failReasons = append(failReasons, fmt.Sprintf("第%d行：找不到团队[%s]的报名记录", i+1, teamName))
+			failReasons = append(failReasons, fmt.Sprintf("第%d行：未找到学号[%s]在该赛事的审核通过记录", i+1, studentID))
 			continue
 		}
+
+		// C. 团队名称填充逻辑 (根据你的业务逻辑)
+		// 如果 Excel 里的名称为空，且报名成员数 > 1，则填充为“个人参赛”
+		if teamNameExcel == "" {
+			if len(reg.Members) > 1 {
+				teamNameExcel = "个人参赛"
+			} else {
+				// 如果是 1 个人且 Excel 为空，可保持原报名表名称或逻辑补充
+				teamNameExcel = reg.TeamName
+			}
+		}
+
+		// 更新报名表的 TeamName（同步你要求的逻辑到数据库）
+		if teamNameExcel != "" && reg.TeamName != teamNameExcel {
+			tx.Model(&reg).Update("team_name", teamNameExcel)
+		}
+
+		// D. 准备 Award 数据
+		awardName := awardHierarchy[levelRank-1]
+		awardLevelStr := comp.CompLevel + awardName
+		now := time.Now()
 
 		var award models.Award
+		// 根据 reg_id 查找是否已有奖项记录（保持唯一性）
 		err = tx.Where("reg_id = ?", reg.ID).First(&award).Error
-		if err != nil {
-			now := time.Now()
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// 创建新奖项
 			newAward := models.Award{
 				CompID:     uint(compID),
 				RegID:      reg.ID,
 				LevelRank:  levelRank,
-				AwardLevel: awardLevel,
+				AwardLevel: awardLevelStr,
 				AwardName:  awardName,
 				Status:     "approved",
 				Source:     "import",
 				AuditTime:  &now,
 			}
-			if err := tx.Create(&newAward).Error; err == nil {
-				successCount++
-			} else {
+			if err := tx.Create(&newAward).Error; err != nil {
 				failCount++
-				failReasons = append(failReasons, fmt.Sprintf("第%d行：创建奖项失败 - %s", i+1, err.Error()))
+				failReasons = append(failReasons, fmt.Sprintf("第%d行：创建获奖记录失败", i+1))
+				continue
 			}
 		} else {
-			now := time.Now()
-			award.LevelRank = levelRank
-			award.AwardLevel = awardLevel
-			award.AwardName = awardName
-			award.Status = "approved"
-			award.Source = "import"
-			award.AuditTime = &now
-			award.RejectReason = ""
-			if err := tx.Save(&award).Error; err == nil {
-				successCount++
-			} else {
+			// 更新现有奖项
+			updates := map[string]interface{}{
+				"level_rank":  levelRank,
+				"award_level": awardLevelStr,
+				"award_name":  awardName,
+				"status":      "approved",
+				"audit_time":  &now,
+				"source":      "import",
+			}
+			if err := tx.Model(&award).Updates(updates).Error; err != nil {
 				failCount++
-				failReasons = append(failReasons, fmt.Sprintf("第%d行：更新奖项失败 - %s", i+1, err.Error()))
+				failReasons = append(failReasons, fmt.Sprintf("第%d行：更新获奖记录失败", i+1))
+				continue
 			}
 		}
+
+		// E. 更新报名状态（可选：4 代表补录或已获记录状态）
+		tx.Model(&reg).Update("status", 4)
+		successCount++
 	}
 
 	if err := tx.Commit().Error; err != nil {
-		tx.Rollback()
 		utils.InternalServerError(c, "事务提交失败", err)
 		return
 	}
 
-	resp := gin.H{
+	clearAwardCache(compID)
+	utils.SuccessWithMessage(c, fmt.Sprintf("成功处理 %d 条，失败 %d 条", successCount, failCount), gin.H{
 		"success_count": successCount,
 		"fail_count":    failCount,
-	}
-	if len(failReasons) > 0 {
-		resp["fail_reasons"] = failReasons
-	}
-	clearAwardCache(compID)
-	utils.SuccessWithMessage(c, fmt.Sprintf("成功处理 %d 条，失败 %d 条", successCount, failCount), resp)
+		"fail_reasons":  failReasons,
+	})
 }
-
 func SearchCompetition(c *gin.Context) {
 	keyword := c.Query("keyword")
 	if keyword == "" {
@@ -474,7 +488,11 @@ func GetCompAwards(c *gin.Context) {
 		})
 	}
 	go func() {
-		data, _ := json.Marshal(list)
+		cacheData := gin.H{
+			"award_hierarchy": awardHierarchy,
+			"list":            list,
+		}
+		data, _ := json.Marshal(cacheData)
 		rdb.Set(context.Background(), cacheKey, data, 30*time.Minute).Result()
 	}()
 	utils.Success(c, gin.H{

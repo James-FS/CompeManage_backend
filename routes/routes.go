@@ -45,6 +45,9 @@ func SetupRoutes(r *gin.Engine) {
 		notice.PUT("/:id/publish",
 			controllers.PublishNotice,
 			middleware.RequirePermission("notice:publish"))
+		notice.PUT("/:id",
+			controllers.UpdateNotice,
+			middleware.RequirePermission("notice:update"))
 		notice.DELETE("/:id",
 			controllers.DeleteNotice,
 			middleware.RequirePermission("notice:delete"))
@@ -152,6 +155,12 @@ func SetupRoutes(r *gin.Engine) {
 		reg.GET("/list",
 			middleware.RequirePermission("reg:audit:list"),
 			controllers.GetRegList)
+		reg.GET("/work/audit/comp/list",
+			middleware.RequirePermission("reg:audit:list"),
+			controllers.GetWorkAuditCompList)
+		reg.GET("/work/audit/student/list",
+			middleware.RequirePermission("reg:audit:detail"),
+			controllers.GetWorkAuditStudentList)
 		reg.GET("/detail",
 			middleware.RequirePermission("reg:audit:detail"),
 			controllers.GetRegDetail)

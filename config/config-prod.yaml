@@ -1,3 +1,10 @@
+# 学校数据中台 API 配置
+datahall:
+  key: "your-app-key"
+  secret: "your-app-secret"
+  base_url: "https://datahall.gzhu.edu.cn"
+  min_grade: "2022"
+
 logger:
   level: "info"
   filename: logs/prod.log

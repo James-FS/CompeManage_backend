@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,19 +16,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
-
-type Question struct {
-	Title string `json:"title"`
-	Score string `json:"score"`
-}
-
-// 新增：赛道结构体（和前端/模型层对应）
-type Track struct {
-	TrackName string     `json:"trackName"`
-	Questions []Question `json:"questions"`
-}
-
-// ConfigReq 前端提交的数据结构
 
 const MaxPageSize = 100
 
@@ -46,7 +32,17 @@ type ConfigReq struct {
 	AwardHierarchy   []string   `json:"award_hierarchy"`
 	NeedAdvisor      int        `json:"need_advisor"`
 	NeedAttachment   int        `json:"need_attachment"`
-	Track            []Track    `json:"track"`
+	NeedRegAudit     *int       `json:"need_reg_audit"`
+	Track            []TrackReq `json:"track"`
+}
+
+type TrackReq struct {
+	TrackName string        `json:"trackName"`
+	SubTrack  []SubTrackReq `json:"subTrack"`
+}
+
+type SubTrackReq struct {
+	Title string `json:"title"`
 }
 
 type ApplicationReq struct {
@@ -100,6 +96,22 @@ type UserListResp struct {
 	Username string `json:"username"`
 	College  string `json:"college"`
 	Grade    string `json:"grade"`
+}
+
+type WorkAuditCompListReq struct {
+	Page     int    `form:"page"`
+	PageSize int    `form:"page_size"`
+	CompName string `form:"comp_name"`
+	Manager  string `form:"manager"`
+	College  string `form:"college"`
+	Status   string `form:"status"`
+}
+
+type WorkAuditStudentListReq struct {
+	CompID   uint   `form:"comp_id" binding:"required"`
+	Page     int    `form:"page"`
+	PageSize int    `form:"page_size"`
+	Keyword  string `form:"keyword"`
 }
 
 func isValidTime(t time.Time) bool {
@@ -182,33 +194,21 @@ func SaveRegConfig(c *gin.Context) {
 	detail.MaxTeamMember = req.MaxTeamMember
 	detail.NeedAdvisor = req.NeedAdvisor
 	detail.NeedAttachment = req.NeedAttachment
+	needRegAudit := 1
+	if detail.ID != 0 && (detail.NeedRegAudit == 0 || detail.NeedRegAudit == 1) {
+		needRegAudit = detail.NeedRegAudit
+	}
+	if req.NeedRegAudit != nil {
+		if *req.NeedRegAudit != 0 && *req.NeedRegAudit != 1 {
+			utils.BadRequest(c, "need_reg_audit 仅支持 0 或 1")
+			return
+		}
+		needRegAudit = *req.NeedRegAudit
+	}
+	detail.NeedRegAudit = needRegAudit
 	detail.GradeRequirement = string(gradeJson)
 	detail.AwardHierarchy = string(hierarchyJson)
 
-	// 1. 依然保留你的转换逻辑（确保数据模型一致）
-	var modelTracks []models.Track
-	for _, t := range req.Track {
-		var modelQuestions []models.Question
-		for _, q := range t.Questions {
-			modelQuestions = append(modelQuestions, models.Question{
-				Title: q.Title,
-				Score: q.Score,
-			})
-		}
-		modelTracks = append(modelTracks, models.Track{
-			TrackName: t.TrackName,
-			Questions: modelQuestions,
-		})
-	}
-
-	trackJson, err = json.Marshal(modelTracks)
-	if err != nil {
-		c.JSON(500, gin.H{"code": 500, "msg": "赛道数据序列化失败"})
-		return
-	}
-
-	// 3. 将字符串赋值给 detail 对象的 Track 字段（注意：detail.Track 在模型里应该是 string 类型）
-	// 如果你的 models.CompDetail 定义里 Track 是 string，就这样写：
 	detail.Track = string(trackJson)
 
 	// 时间字段判空处理 (防止空指针崩溃)
@@ -248,6 +248,24 @@ func SaveRegConfig(c *gin.Context) {
 	} else {
 		if err := database.DB.Save(&detail).Error; err != nil {
 			utils.InternalServerError(c, "更新配置失败", err)
+			return
+		}
+	}
+
+	// 首次创建时 NeedRegAudit=0 可能被数据库默认值(default:1)覆盖，强制回写以保证配置立即生效。
+	if err := database.DB.Model(&models.CompDetail{}).
+		Where("comp_id = ?", req.CompID).
+		Update("need_reg_audit", needRegAudit).Error; err != nil {
+		utils.InternalServerError(c, "更新审核开关失败", err)
+		return
+	}
+	detail.NeedRegAudit = needRegAudit
+
+	if detail.NeedRegAudit == 0 {
+		if err := database.DB.Model(&models.Register{}).
+			Where("comp_id = ? AND status IN ?", req.CompID, []int{0, 3}).
+			Update("status", gorm.Expr("CASE WHEN status = 3 THEN 4 ELSE 1 END")).Error; err != nil {
+			utils.InternalServerError(c, "更新报名审核状态失败", err)
 			return
 		}
 	}
@@ -314,11 +332,13 @@ func GetRegConfig(c *gin.Context) {
 		awardHierarchy = []string{}
 	}
 
-	var track []string
+	var track []TrackReq
 	if detail.Track != "" {
-		_ = json.Unmarshal([]byte(detail.Track), &track)
+		if err := json.Unmarshal([]byte(detail.Track), &track); err != nil {
+			track = []TrackReq{}
+		}
 	} else {
-		track = []string{}
+		track = []TrackReq{}
 	}
 
 	var regStartTime, regEndTime, submitStartTime, submitEndTime *time.Time
@@ -336,32 +356,21 @@ func GetRegConfig(c *gin.Context) {
 		submitEndTime = &detail.SubmitEndTime
 	}
 
-	var tracks []models.Track
-	if detail.Track != "" {
-		// 假设数据库存的是 JSON 字符串
-		if err := json.Unmarshal([]byte(detail.Track), &tracks); err != nil {
-			fmt.Println("解析赛道JSON失败:", err)
-			tracks = []models.Track{} // 解析失败则给空数组，防止前端报错
-		}
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"code": 200,
-		"msg":  "获取成功",
-		"data": gin.H{
-			"comp_name":         comp.CompName,
-			"participant_type":  detail.ParticipantType,
-			"min_team_member":   detail.MinTeamMember,
-			"max_team_member":   detail.MaxTeamMember,
-			"grade_requirement": grades,
-			"need_advisor":      detail.NeedAdvisor,
-			"need_attachment":   detail.NeedAttachment,
-			"reg_start_time":    regStartTime,
-			"reg_end_time":      regEndTime,
-			"submit_start_time": submitStartTime,
-			"submit_end_time":   submitEndTime,
-			"award_hierarchy":   awardHierarchy,
-			"track":             tracks,
-		},
+	utils.Success(c, gin.H{
+		"comp_name":         comp.CompName,
+		"participant_type":  detail.ParticipantType,
+		"min_team_member":   detail.MinTeamMember,
+		"max_team_member":   detail.MaxTeamMember,
+		"grade_requirement": grades,
+		"need_advisor":      detail.NeedAdvisor,
+		"need_attachment":   detail.NeedAttachment,
+		"need_reg_audit":    detail.NeedRegAudit,
+		"reg_start_time":    regStartTime,
+		"reg_end_time":      regEndTime,
+		"submit_start_time": submitStartTime,
+		"submit_end_time":   submitEndTime,
+		"award_hierarchy":   awardHierarchy,
+		"track":             track,
 	})
 }
 
@@ -405,6 +414,44 @@ func SubmitRegistration(c *gin.Context) {
 		return
 	}
 
+	var trackConfig []TrackReq
+	if comp.Detail.Track != "" {
+		if err := json.Unmarshal([]byte(comp.Detail.Track), &trackConfig); err == nil && len(trackConfig) > 0 {
+			// 赛事配置了赛道，必须填写
+			if req.Track == "" {
+				removeUploadedFile(req.AttachmentUrl)
+				utils.BadRequest(c, "该赛事要求必须选择赛道")
+				return
+			}
+
+			// 验证选择的赛道是否存在
+			trackValid := false
+			for _, track := range trackConfig {
+				if req.Track == track.TrackName {
+					trackValid = true
+					break
+				}
+				// 检查是否是 "trackName / subTrackTitle" 格式
+				for _, subTrack := range track.SubTrack {
+					expectedFormat := track.TrackName + " / " + subTrack.Title
+					if req.Track == expectedFormat {
+						trackValid = true
+						break
+					}
+				}
+				if trackValid {
+					break
+				}
+			}
+
+			if !trackValid {
+				removeUploadedFile(req.AttachmentUrl)
+				utils.BadRequest(c, "选择的赛道无效")
+				return
+			}
+		}
+	}
+
 	if comp.Detail.NeedAttachment == 2 && req.AttachmentUrl == "" {
 		utils.BadRequest(c, "该赛事要求必须上传报名附件/项目文档")
 		return
@@ -436,6 +483,9 @@ func SubmitRegistration(c *gin.Context) {
 		Status:        0,
 		Members:       make([]models.RegMember, 0),
 		Track:         req.Track,
+	}
+	if comp.Detail.NeedRegAudit == 0 {
+		register.Status = 1
 	}
 
 	if req.AdvisorInfo != nil {
@@ -529,6 +579,7 @@ func GetRegList(c *gin.Context) {
 		Joins("LEFT JOIN comp_directories ON comp_directories.id = registers.comp_id").
 		Joins("LEFT JOIN comp_details ON comp_details.comp_id = registers.comp_id").
 		Preload("Competition").
+		Preload("Competition.Detail").
 		Preload("Leader").
 		Preload("Members")
 
@@ -628,16 +679,24 @@ func GetRegList(c *gin.Context) {
 		}
 
 		respList = append(respList, AuditListResp{
-			ID:            item.ID,
-			CompID:        item.CompID,
-			CompName:      item.Competition.CompName,
-			TeamName:      item.TeamName,
-			LeaderName:    leaderName,
-			StuID:         stuID,
-			Email:         leaderEmail,
-			Phone:         leaderPhone,
-			CreateTime:    item.CreatedAt.Format("2006-01-02 15:04"),
-			Status:        item.Status,
+			ID:         item.ID,
+			CompID:     item.CompID,
+			CompName:   item.Competition.CompName,
+			TeamName:   item.TeamName,
+			LeaderName: leaderName,
+			StuID:      stuID,
+			Email:      leaderEmail,
+			Phone:      leaderPhone,
+			CreateTime: item.CreatedAt.Format("2006-01-02 15:04"),
+			Status: func() int8 {
+				if item.Status == 0 && item.Competition.Detail.NeedRegAudit == 0 {
+					return 1
+				}
+				if item.Status == 3 && item.Competition.Detail.NeedRegAudit == 0 {
+					return 4
+				}
+				return item.Status
+			}(),
 			AttachmentUrl: item.AttachmentUrl,
 			Members:       item.Members,
 			AdvisorInfo:   item.AdvisorInfo,
@@ -729,6 +788,197 @@ func GetRegDetail(c *gin.Context) {
 	})
 }
 
+func GetWorkAuditCompList(c *gin.Context) {
+	var req WorkAuditCompListReq
+	if err := c.ShouldBindQuery(&req); err != nil {
+		utils.BadRequest(c, "参数错误")
+		return
+	}
+
+	if req.Page < 1 {
+		req.Page = 1
+	}
+	if req.PageSize < 1 {
+		req.PageSize = 10
+	}
+	if req.PageSize > MaxPageSize {
+		req.PageSize = MaxPageSize
+	}
+
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		utils.Unauthorized(c, "未登录")
+		return
+	}
+	userID := userIDVal.(uint)
+	now := time.Now()
+
+	buildBaseQuery := func(withRegisterJoin bool) *gorm.DB {
+		query := database.DB.Table("comp_directories").
+			Joins("LEFT JOIN comp_details ON comp_details.comp_id = comp_directories.id").
+			Joins("LEFT JOIN users ON users.id = comp_directories.manager_id").
+			Joins("LEFT JOIN colleges ON colleges.id = comp_directories.college_id").
+			Where("YEAR(comp_details.submit_start_time) > 1970").
+			Where("comp_details.submit_start_time <= ?", now)
+
+		if withRegisterJoin {
+			query = query.Joins("LEFT JOIN registers ON registers.comp_id = comp_directories.id")
+		}
+
+		if !checkUserIsAdmin(userID) {
+			query = query.Where("comp_directories.manager_id = ?", userID)
+		}
+
+		if strings.TrimSpace(req.CompName) != "" {
+			query = query.Where("comp_directories.comp_name LIKE ?", "%"+strings.TrimSpace(req.CompName)+"%")
+		}
+		if strings.TrimSpace(req.Manager) != "" {
+			query = query.Where("users.realname LIKE ?", "%"+strings.TrimSpace(req.Manager)+"%")
+		}
+		if strings.TrimSpace(req.College) != "" {
+			query = query.Where("colleges.name = ?", strings.TrimSpace(req.College))
+		}
+		if strings.TrimSpace(req.Status) != "" {
+			query = query.Where("comp_directories.status = ?", strings.TrimSpace(req.Status))
+		}
+
+		return query
+	}
+
+	var total int64
+	if err := buildBaseQuery(false).Distinct("comp_directories.id").Count(&total).Error; err != nil {
+		utils.InternalServerError(c, "查询作品审核赛事总数失败", err)
+		return
+	}
+
+	type WorkAuditCompResp struct {
+		CompID      uint   `json:"comp_id"`
+		CompName    string `json:"comp_name"`
+		ManagerName string `json:"manager_name"`
+		CollegeName string `json:"college_name"`
+		SubmitCount int64  `json:"submit_count"`
+		Status      int8   `json:"status"`
+	}
+
+	var list []WorkAuditCompResp
+	offset := (req.Page - 1) * req.PageSize
+	if err := buildBaseQuery(true).
+		Select(`
+			comp_directories.id AS comp_id,
+			comp_directories.comp_name AS comp_name,
+			COALESCE(users.realname, '') AS manager_name,
+			COALESCE(colleges.name, '') AS college_name,
+			COALESCE(SUM(CASE WHEN registers.work_attachment_url IS NOT NULL AND registers.work_attachment_url <> '' THEN 1 ELSE 0 END), 0) AS submit_count,
+			comp_directories.status AS status
+		`).
+		Group("comp_directories.id, comp_directories.comp_name, users.realname, colleges.name, comp_directories.status").
+		Order("comp_directories.create_time DESC").
+		Offset(offset).
+		Limit(req.PageSize).
+		Scan(&list).Error; err != nil {
+		utils.InternalServerError(c, "查询作品审核赛事列表失败", err)
+		return
+	}
+
+	utils.Success(c, gin.H{
+		"list":  list,
+		"total": total,
+		"page":  req.Page,
+		"size":  req.PageSize,
+	})
+}
+
+func GetWorkAuditStudentList(c *gin.Context) {
+	var req WorkAuditStudentListReq
+	if err := c.ShouldBindQuery(&req); err != nil {
+		utils.BadRequest(c, "参数错误")
+		return
+	}
+
+	if req.Page < 1 {
+		req.Page = 1
+	}
+	if req.PageSize < 1 {
+		req.PageSize = 10
+	}
+	if req.PageSize > MaxPageSize {
+		req.PageSize = MaxPageSize
+	}
+
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		utils.Unauthorized(c, "未登录")
+		return
+	}
+	userID := userIDVal.(uint)
+
+	var comp models.CompDirectory
+	if err := database.DB.Select("id", "manager_id").Where("id = ?", req.CompID).First(&comp).Error; err != nil {
+		utils.NotFound(c, "赛事不存在")
+		return
+	}
+
+	if !checkUserIsAdmin(userID) && comp.ManagerID != userID {
+		utils.Forbidden(c, "无权查看该赛事提交信息")
+		return
+	}
+
+	query := database.DB.Table("registers").
+		Joins("LEFT JOIN reg_members ON reg_members.reg_id = registers.id AND reg_members.is_leader = ?", true).
+		Where("registers.comp_id = ?", req.CompID).
+		Where("registers.work_attachment_url IS NOT NULL AND registers.work_attachment_url <> ''")
+
+	if strings.TrimSpace(req.Keyword) != "" {
+		kw := "%" + strings.TrimSpace(req.Keyword) + "%"
+		query = query.Where("registers.team_name LIKE ? OR reg_members.name LIKE ? OR reg_members.username LIKE ?", kw, kw, kw)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		utils.InternalServerError(c, "查询提交学生总数失败", err)
+		return
+	}
+
+	type WorkAuditStudentResp struct {
+		RegID      uint   `json:"reg_id"`
+		TeamName   string `json:"team_name"`
+		LeaderName string `json:"leader_name"`
+		StuID      string `json:"stu_id"`
+		College    string `json:"college"`
+		Phone      string `json:"phone"`
+		Email      string `json:"email"`
+		UpdateTime string `json:"update_time"`
+	}
+
+	var list []WorkAuditStudentResp
+	offset := (req.Page - 1) * req.PageSize
+	if err := query.
+		Select(`
+			registers.id AS reg_id,
+			registers.team_name AS team_name,
+			COALESCE(reg_members.name, '') AS leader_name,
+			COALESCE(reg_members.username, '') AS stu_id,
+			COALESCE(reg_members.college, '') AS college,
+			COALESCE(reg_members.phone, '') AS phone,
+			COALESCE(reg_members.email, '') AS email,
+			DATE_FORMAT(registers.update_time, '%Y-%m-%d %H:%i') AS update_time
+		`).
+		Order("registers.update_time DESC").
+		Offset(offset).
+		Limit(req.PageSize).
+		Scan(&list).Error; err != nil {
+		utils.InternalServerError(c, "查询提交学生列表失败", err)
+		return
+	}
+
+	utils.Success(c, gin.H{
+		"list":  list,
+		"total": total,
+		"page":  req.Page,
+		"size":  req.PageSize,
+	})
+}
+
 func AuditRegister(c *gin.Context) {
 	type AuditReq struct {
 		ID     uint   `json:"id" binding:"required"`
@@ -755,10 +1005,18 @@ func AuditRegister(c *gin.Context) {
 	userID := userIDVal.(uint)
 
 	var reg models.Register
-	err := database.DB.Preload("Competition").First(&reg, req.ID).Error
+	err := database.DB.Preload("Competition").Preload("Competition.Detail").First(&reg, req.ID).Error
 
 	if err != nil {
 		utils.NotFound(c, "记录不存在")
+		return
+	}
+
+	if reg.Competition.Detail.NeedRegAudit == 0 {
+		if reg.Status == 0 {
+			_ = database.DB.Model(&reg).Updates(map[string]interface{}{"status": 1, "reject_reason": ""}).Error
+		}
+		utils.BadRequest(c, "该赛事已设置为免审核，报名会自动通过")
 		return
 	}
 
@@ -828,6 +1086,8 @@ func GetMyRegStatus(c *gin.Context) {
 	var reg models.Register
 	err = database.DB.
 		Preload("Members").
+		Preload("Competition").
+		Preload("Competition.Detail").
 		Preload("Leader").
 		Joins("INNER JOIN reg_members ON reg_members.reg_id = registers.id").
 		Where("registers.comp_id = ? AND reg_members.username = ?", compID, studentID).
@@ -840,6 +1100,11 @@ func GetMyRegStatus(c *gin.Context) {
 			utils.InternalServerError(c, "查询失败", err)
 		}
 		return
+	}
+
+	if reg.Status == 0 && reg.Competition.Detail.NeedRegAudit == 0 {
+		reg.Status = 1
+		_ = database.DB.Model(&models.Register{}).Where("id = ?", reg.ID).Update("status", 1).Error
 	}
 
 	type MemberResp struct {
@@ -929,6 +1194,43 @@ func ResubmitRegistration(c *gin.Context) {
 		return
 	}
 
+	// 验证赛道配置
+	var trackConfig []TrackReq
+	if detail.Track != "" {
+		if err := json.Unmarshal([]byte(detail.Track), &trackConfig); err == nil && len(trackConfig) > 0 {
+			// 赛事配置了赛道，必须填写
+			if req.Track == "" {
+				utils.BadRequest(c, "该赛事要求必须选择赛道")
+				return
+			}
+
+			// 验证选择的赛道是否存在
+			trackValid := false
+			for _, track := range trackConfig {
+				if req.Track == track.TrackName {
+					trackValid = true
+					break
+				}
+				// 检查是否是 "trackName / subTrackTitle" 格式
+				for _, subTrack := range track.SubTrack {
+					expectedFormat := track.TrackName + " / " + subTrack.Title
+					if req.Track == expectedFormat {
+						trackValid = true
+						break
+					}
+				}
+				if trackValid {
+					break
+				}
+			}
+
+			if !trackValid {
+				utils.BadRequest(c, "选择的赛道无效")
+				return
+			}
+		}
+	}
+
 	if detail.NeedAttachment == 2 && req.AttachmentUrl == "" {
 		utils.BadRequest(c, "该赛事要求必须上传报名附件，请勿删除附件")
 		return
@@ -963,6 +1265,9 @@ func ResubmitRegistration(c *gin.Context) {
 	}
 
 	reg.Status = 0
+	if detail.NeedRegAudit == 0 {
+		reg.Status = 1
+	}
 	reg.RejectReason = ""
 
 	if err := tx.Save(&reg).Error; err != nil {
@@ -1014,7 +1319,6 @@ func ResubmitRegistration(c *gin.Context) {
 
 	utils.SuccessWithMessage(c, "重新提交成功", nil)
 }
-
 func GetMyRegList(c *gin.Context) {
 	userIDVal, exists := c.Get("user_id")
 	if !exists {
@@ -1092,10 +1396,18 @@ func GetMyRegList(c *gin.Context) {
 		}
 
 		list = append(list, gin.H{
-			"id":                r.ID,
-			"comp_id":           r.CompID,
-			"comp_name":         compName,
-			"status":            r.Status,
+			"id":        r.ID,
+			"comp_id":   r.CompID,
+			"comp_name": compName,
+			"status": func() int8 {
+				if r.Status == 0 && r.Competition.Detail.NeedRegAudit == 0 {
+					return 1
+				}
+				if r.Status == 3 && r.Competition.Detail.NeedRegAudit == 0 {
+					return 4
+				}
+				return r.Status
+			}(),
 			"reg_url":           regAttachment,
 			"work_url":          r.WorkAttachmentUrl,
 			"submit_start_time": submitStartStr,
@@ -1146,7 +1458,12 @@ func SubmitWork(c *gin.Context) {
 		return
 	}
 
-	if reg.Status != 1 {
+	if reg.Status == 0 && reg.Competition.Detail.NeedRegAudit == 0 {
+		reg.Status = 1
+		_ = database.DB.Model(&reg).Update("status", 1).Error
+	}
+
+	if reg.Status != 1 && reg.Status != 4 {
 		utils.BadRequest(c, "您的报名未通过审核，无法提交作品")
 		return
 	}

@@ -16,14 +16,15 @@ var DB *gorm.DB // 全局DB实例
 // Init 初始化数据库连接
 func Init() {
 	// 拼接DSN（MySQL连接字符串）
-	dsn := "%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local"
-	dsn = fmt.Sprintf(
-		dsn,
-		config.GetString("database.user"),
-		config.GetString("database.password"),
-		config.GetString("database.host"),
-		config.GetString("database.port"),
-		config.GetString("database.name"),
+	c := config.AppConfig.Database
+
+	// 调试打印：确认拿到的数据是否正确
+	fmt.Printf("[DEBUG] 数据库配置: 用户=%s, 密码=%s, 地址=%s:%d, 库名=%s\n",
+		c.User, "******", c.Host, c.Port, c.Dbname)
+
+	// 拼接DSN
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&allowNativePasswords=true",
+		c.User, c.Password, c.Host, c.Port, c.Dbname,
 	)
 
 	// 连接数据库
@@ -35,10 +36,10 @@ func Init() {
 		log.Fatalf("数据库连接失败：%v", err)
 	}
 
-	// 可选：获取底层sql.DB，设置连接池
+	// 连接池调优 - 支持更高并发
 	sqlDB, _ := DB.DB()
-	sqlDB.SetMaxIdleConns(10)  // 最大空闲连接
-	sqlDB.SetMaxOpenConns(100) // 最大打开连接
+	sqlDB.SetMaxIdleConns(50)   // 增大空闲连接
+	sqlDB.SetMaxOpenConns(200)   // 增大最大打开连接
 	log.Println("数据库连接成功")
 
 	// 自动迁移数据库表
@@ -64,6 +65,7 @@ func autoMigrate() {
 		&models.CompDeclaration{},
 		&models.Award{},
 		&models.Summary{},
+		&models.FileRecord{},
 	)
 
 	// 重新启用外键检查

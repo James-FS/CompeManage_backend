@@ -5,12 +5,19 @@
 *.so
 *.so.*
 *.dylib
-
+*.png
+*.pdf
+*.xlsx
+*.doc
+*.docx
+*.jpg
+*.logger.gz
 # Test binary, built with `go test -c`
 *.test
 
 # Output of the go coverage tool
 *.out
+coverage
 
 # Dependency directories
 vendor/
@@ -39,7 +46,10 @@ public/upload/*
 
 logs/
 *.log
+*.logger
 
 # Docker MySQL data
 mysql_data/
 app.logger
+server
+logger/app.logger

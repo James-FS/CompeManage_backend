@@ -8,10 +8,33 @@ import (
 	"github.com/spf13/viper"
 )
 
-type Config struct {
-	Logger LoggerConfig `mapstructure:"logger"`
+type DataHallConfig struct {
+	Key      string `mapstructure:"key"`
+	Secret   string `mapstructure:"secret"`
+	BaseURL  string `mapstructure:"base_url"`
+	MinGrade string `mapstructure:"min_grade"` // 只同步此年级及之后的学生，如 "2022"，为空则全量
 }
 
+type Config struct {
+	Logger   LoggerConfig   `mapstructure:"logger"`
+	Database DatabaseConfig `mapstructure:"database"`
+	Redis    RedisConfig    `mapstructure:"redis"`
+	DataHall DataHallConfig `mapstructure:"datahall"`
+}
+
+type DatabaseConfig struct {
+	Host     string `mapstructure:"host"`
+	Port     int    `mapstructure:"port"`
+	User     string `mapstructure:"user"`
+	Password string `mapstructure:"password"`
+	Dbname   string `mapstructure:"dbname"`
+}
+
+type RedisConfig struct {
+	Host     string `mapstructure:"host"`
+	Port     int    `mapstructure:"port"`
+	Password string `mapstructure:"password"`
+}
 type LoggerConfig struct {
 	Level      string `mapstructure:"level"`
 	Filename   string `mapstructure:"filename"`
