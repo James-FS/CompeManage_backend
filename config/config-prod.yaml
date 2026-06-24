@@ -23,8 +23,9 @@ logger:
   show_line: false
 
 datahall:
-  key: "2026051118227ee8fb684d1211f18e4a0a3e580ef7931655"
-  secret: "bd6d57fc3e95940c974fb7b37c9ff4d0fe6a7911"
+  enabled: false
+  key: ""
+  secret: ""
   base_url: "https://datahall.gzhu.edu.cn"
   min_grade: "2022"
 
@@ -33,5 +34,5 @@ cas:
   server_url: "https://newcas.gzhu.edu.cn/cas"
   client_id: ""
   client_secret: ""
-  redirect_uri: "https://xkjs.gzhu.edu.cn/api/cas/callback"
-  frontend_url: "https://xkjs.gzhu.edu.cn"
+  redirect_uri: "http://1.117.230.218/api/cas/callback"
+  frontend_url: "http://1.117.230.218"

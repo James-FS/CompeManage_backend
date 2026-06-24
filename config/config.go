@@ -9,6 +9,7 @@ import (
 )
 
 type DataHallConfig struct {
+	Enabled  bool   `mapstructure:"enabled"`
 	Key      string `mapstructure:"key"`
 	Secret   string `mapstructure:"secret"`
 	BaseURL  string `mapstructure:"base_url"`
@@ -119,6 +120,11 @@ func Init() {
 	viper.BindEnv("server.port", "SERVER_PORT")
 	viper.BindEnv("server.host", "SERVER_HOST")
 	viper.BindEnv("jwt.secret", "JWT_SECRET")
+	viper.BindEnv("datahall.enabled", "DATAHALL_ENABLED")
+	viper.BindEnv("datahall.key", "DATAHALL_KEY")
+	viper.BindEnv("datahall.secret", "DATAHALL_SECRET")
+	viper.BindEnv("datahall.base_url", "DATAHALL_BASE_URL")
+	viper.BindEnv("datahall.min_grade", "DATAHALL_MIN_GRADE")
 
 	// CAS/OAuth2.0 统一认证配置（必须在 Unmarshal 之前）
 	viper.BindEnv("cas.client_id", "CAS_CLIENT_ID")
@@ -137,6 +143,7 @@ func Init() {
 	viper.SetDefault("server.port", "8080")
 	viper.SetDefault("server.host", "0.0.0.0")
 	viper.SetDefault("jwt.secret", "your-jwt-secret")
+	viper.SetDefault("datahall.enabled", false)
 
 	// Unmarshal 放最后 —— BindEnv 绑定的 env var 会自动覆盖 YAML 值
 	if err := viper.Unmarshal(AppConfig); err != nil {
@@ -152,4 +159,9 @@ func GetString(key string) string {
 // GetInt 获取整数配置
 func GetInt(key string) int {
 	return viper.GetInt(key)
+}
+
+// GetBool 获取布尔配置
+func GetBool(key string) bool {
+	return viper.GetBool(key)
 }

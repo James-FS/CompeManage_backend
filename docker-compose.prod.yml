@@ -1,6 +1,9 @@
 services:
   app:
-    image: ywxx252324/compemanage:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: compemanage-backend:demo-deploy
     container_name: compemanage_app
     restart: always
     ports:
@@ -11,8 +14,11 @@ services:
       - JWT_SECRET=4c8b2a9e7f1d3c6a5b0e8d9f2c1a4b7e6d3f0c9a8b5e2d1f4c7a0b9e6d3f2c1a
       - CAS_CLIENT_ID=compemanage
       - CAS_CLIENT_SECRET=compemanage
-      - CAS_REDIRECT_URI=https://xkjs.gzhu.edu.cn/api/cas/callback
-      - CAS_FRONTEND_URL=https://xkjs.gzhu.edu.cn
+      - CAS_REDIRECT_URI=http://1.117.230.218/api/cas/callback
+      - CAS_FRONTEND_URL=http://1.117.230.218
+      - DATAHALL_ENABLED=false
+      - DATAHALL_KEY=
+      - DATAHALL_SECRET=
     depends_on:
       - mysql-db
       - redis
