@@ -1,252 +1,253 @@
-# 学科竞赛管理系统 - 后端服务
+# 学科竞赛管理系统后端
 
-## 📋 项目概述
+这是学科竞赛管理系统的 Go 后端服务，为前端提供认证、赛事目录、赛事申报、报名配置、报名审核、作品提交、专家评审、获奖填报、赛事总结、权限管理、文件上传下载和数据统计等 RESTful API。
 
-学科竞赛管理系统后端是一个基于 **Go + Gin + MySQL + GORM** 构建的 RESTful API 服务，为学科竞赛管理平台提供核心业务支持。
+线上演示：
 
-**技术栈：**
-- **框架**：Gin (高性能 Web 框架)
-- **ORM**：GORM (Go 语言 ORM 库)
-- **数据库**：MySQL
-- **认证**：JWT (JSON Web Token)
-- **配置管理**：Viper
-
----
-
-## 🏗️ 项目架构
-
-### 目录结构
-
+```text
+http://1.117.230.218/
 ```
+
+前端仓库：
+
+```text
+https://github.com/James-FS/CompeManage_frontend
+```
+
+完整线上演示操作记录见前端仓库 `docs/demo-operation-log.md`。
+
+## 技术栈
+
+- Go 1.24
+- Gin
+- GORM
+- MySQL 8
+- Redis
+- JWT
+- Viper
+- Lumberjack 日志滚动
+- Excelize
+- Docker Compose
+
+## 主要能力
+
+### 认证与权限
+
+- 账号密码登录，成功后签发 JWT。
+- CAS/OAuth2.0 统一身份认证入口。
+- RBAC 权限模型，角色包括校级管理员、院级管理员、赛事负责人、老师、学生、专家、访客。
+- 路由层使用 `AuthRequired` 和 `RequirePermission` 做接口级权限控制。
+
+### 赛事管理
+
+- 赛事目录查询、创建、编辑、删除、恢复、批量导入。
+- 赛事负责人和年份维度查询。
+- 学院侧赛事申报，校级侧审核。
+
+### 报名与作品
+
+- 报名规则配置。
+- 学生报名、重新提交、报名状态查询。
+- 报名审核、作品提交、作品审核。
+- 支持学生、指导老师、队员等用户选择接口。
+
+### 获奖、评审与总结
+
+- 获奖填报、获奖模板导出、获奖名单导入。
+- 学生获奖补录、获奖审核、批量审核。
+- 专家评审任务分配、评审进度、评审结果确认。
+- 赛事总结填写、查看和附件管理。
+
+### 基础能力
+
+- 健康检查：`GET /health`
+- 通知公告管理。
+- 学院、部门基础数据查询。
+- 文件上传和受控下载。
+- 数据统计看板。
+- 赛事状态定时更新。
+
+## 目录结构
+
+```text
 CompeManage_backend/
-├── config/           # 配置管理模块（环境变量读取、配置初始化）
-├── controllers/      # 控制层（处理 HTTP 请求）
-├── database/         # 数据库模块（数据库连接、初始化）
-├── middleware/       # 中间件（CORS、认证等）
-├── models/          # 数据模型（定义数据结构）
-├── routes/          # 路由管理（API 端点定义）
-├── utils/           # 工具函数（JWT、响应处理等）
-├── main.go          # 应用入口
-├── .env             # 环境变量配置（本地开发）
-├── .env.example     # 环境变量示例
-└── go.mod           # Go 模块定义
+├── config/           # Viper 配置加载、环境变量绑定
+├── controllers/      # HTTP 控制器
+├── database/         # GORM 初始化、基础数据种子
+├── datasource/       # DataHall 外部数据同步
+├── logger/           # slog/lumberjack 日志配置
+├── middleware/       # CORS、JWT 鉴权、权限校验、Redis 初始化
+├── models/           # GORM 模型
+├── routes/           # API 路由注册
+├── scripts/          # 压测与辅助脚本
+├── utils/            # JWT、响应封装、调度器、文件工具
+├── Dockerfile
+├── docker-compose.yml
+├── docker-compose.prod.yml
+└── main.go
 ```
 
----
+## API 模块
 
-## 🔧 环境配置
+| 模块 | 前缀 | 说明 |
+| --- | --- | --- |
+| 健康检查 | `/health` | 服务可用性检查 |
+| 登录 | `/api/login` | 账号密码登录 |
+| CAS | `/api/cas` | 统一身份认证登录与回调 |
+| 文件 | `/api/upload`, `/api/file` | 文件上传、受控下载 |
+| 通知 | `/api/notice` | 通知公告管理 |
+| 权限 | `/api/perm` | 权限树、角色列表、角色授权 |
+| 赛事 | `/api/comp` | 赛事目录管理 |
+| 申报 | `/api/declare` | 学院申报与校级审核 |
+| 报名 | `/api/reg` | 报名配置、报名审核、作品提交 |
+| 获奖 | `/api/award` | 获奖填报、导入、审核 |
+| 总结 | `/api/summary` | 赛事总结 |
+| 统计 | `/api/statistics` | 数据看板 |
+| 评审 | `/api/review` | 专家评审 |
 
-### 前置条件
+## 演示账号
 
-- **Go 1.25.0** 或更高版本
-- **MySQL 5.7** 或更高版本
-- **git** (版本控制)
+基础数据由 `database.InitData()` 初始化。密码均为 `123`。
 
-### 安装依赖
+| 角色 | 用户名 | 说明 |
+| --- | --- | --- |
+| 校级管理员 | `T2023001` | 拥有所有权限 |
+| 院级管理员 | `T2023002` | 学院侧管理与审核 |
+| 赛事负责人 | `T2023003` | 赛事管理、报名配置、报名审核 |
+| 老师 | `T2023010` / `T2023011` / `T2023012` | 指导教师选择 |
+| 学生 | `S2024001` | 报名、作品提交、获奖补录 |
+| 专家 | `E2023001` / `E2023002` | 专家评审 |
+| 访客 | `guest` | 无业务权限 |
 
-```bash
-# 1. 克隆项目
-git clone <repository-url>
-cd CompeManage_backend
+## 配置说明
 
-# 2. 下载 Go 依赖
-go mod download
+配置文件按环境加载：
 
-# 或使用国内镜像加速（可选）
-go env -w GOPROXY=https://goproxy.cn,direct
-go mod download
+```text
+config/config-dev.yaml
+config/config-prod.yaml
 ```
 
-### 环境变量配置
+环境变量优先级高于 YAML。常用变量：
 
-#### 方式一：复制 .env.example（推荐）
+| 变量 | 说明 |
+| --- | --- |
+| `APP_ENV` | 运行环境，`production` 会加载 `config-prod.yaml` |
+| `SERVER_PORT` | 后端端口，默认 `8080` |
+| `DB_HOST` / `DB_PORT` | MySQL 地址 |
+| `DB_USER` / `DB_PASSWORD` / `DB_NAME` | MySQL 账号与数据库 |
+| `REDIS_HOST` / `REDIS_PORT` | Redis 地址 |
+| `JWT_SECRET` | JWT 签名密钥 |
+| `CAS_CLIENT_ID` / `CAS_CLIENT_SECRET` | 统一认证配置 |
+| `CAS_REDIRECT_URI` | CAS 回调地址 |
+| `CAS_FRONTEND_URL` | 登录后跳转的前端地址 |
+| `DATAHALL_ENABLED` | 是否启用 DataHall 外部同步，演示环境必须保持 `false` |
+| `DATAHALL_KEY` / `DATAHALL_SECRET` | DataHall 密钥，禁止提交真实值 |
 
-```bash
-cp .env .env
-```
+## DataHall 安全开关
 
-然后编辑 `.env` 文件，配置相应的环境变量。
-
-#### 方式二：手动创建 .env 文件
-
-在项目根目录创建 `.env` 文件，内容如下：
+`demo-deploy` 分支默认关闭外部数据同步：
 
 ```env
-# 数据库配置
-DB_HOST=localhost
-DB_PORT=3306
-DB_USER=root
-DB_PASSWORD=your_password
-DB_NAME=CompeManage
-
-# 服务器配置
-SERVER_PORT=8080
-SERVER_HOST=0.0.0.0
-
-# JWT 密钥（用于用户认证）
-JWT_SECRET=your-jwt-secret-key-here
-
-# 其他配置
-APP_ENV=development
+DATAHALL_ENABLED=false
+DATAHALL_KEY=
+DATAHALL_SECRET=
 ```
 
-### 配置说明
+启动日志应包含：
 
-| 变量名 | 说明 | 默认值 | 备注 |
-|--------|------|--------|------|
-| `DB_HOST` | MySQL 数据库主机 | localhost | - |
-| `DB_PORT` | MySQL 数据库端口 | 3306 | - |
-| `DB_USER` | MySQL 用户名 | root | - |
-| `DB_PASSWORD` | MySQL 密码 | 空 | ⚠️ 必须配置 |
-| `DB_NAME` | 数据库名称 | CompeManage | - |
-| `SERVER_PORT` | 服务器监听端口 | 8080 | - |
-| `SERVER_HOST` | 服务器监听地址 | 0.0.0.0 | - |
-| `JWT_SECRET` | JWT 签名密钥 | your-jwt-secret | 生产环境必须修改 |
-
-#### ⚠️ 配置重点
-
-配置系统采用**环境变量优先**的方式：
-
-1. **读取顺序**：`.env` 文件 → 系统环境变量 → 代码默认值
-2. **优先级**：`.env` 文件中的值 **优先级最高**
-3. **若要使用 .env 配置**：务必确保 `.env` 文件在项目根目录，且 `godotenv.Load()` 能成功加载
-
-**配置初始化流程**：
-
-```go
-// 1. 加载 .env 文件
-godotenv.Load()
-
-// 2. 初始化配置（从环境变量读取）
-config.Init()
-
-// 3. 使用配置
-dbPassword := config.GetString("database.password")
+```text
+DataHall sync disabled
 ```
 
----
+只有在真实内网生产环境、确认合规并配置好密钥后，才允许设置：
 
-## 🚀 快速开始
+```env
+DATAHALL_ENABLED=true
+```
 
-### 1. 准备数据库
+## Docker 部署
+
+演示部署推荐使用 `demo-deploy` 分支：
 
 ```bash
-# 创建数据库
-mysql -u root -p -e "CREATE DATABASE CompeManage;"
-
-# 导入表结构（如有 SQL 文件）
-mysql -u root -p CompeManage < database.sql
+git clone -b demo-deploy https://github.com/James-FS/CompeManage_backend.git
+cd CompeManage_backend
+sudo docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-### 2. 启动服务
+查看容器：
 
 ```bash
-# 开发环境运行
+sudo docker compose -f docker-compose.prod.yml ps
+```
+
+检查健康接口：
+
+```bash
+curl http://127.0.0.1:8080/health
+```
+
+查看日志：
+
+```bash
+sudo docker logs --tail=100 compemanage_app
+```
+
+停止服务：
+
+```bash
+sudo docker compose -f docker-compose.prod.yml down
+```
+
+## 本地开发
+
+准备 MySQL 和 Redis 后，配置环境变量或修改 `config/config-dev.yaml`。
+
+下载依赖：
+
+```bash
+go mod download
+```
+
+启动：
+
+```bash
 go run main.go
-
-# 或编译后运行
-go build -o compe-manage-api
-./compe-manage-api
 ```
 
-### 3. 验证服务
+测试：
 
 ```bash
-# 测试健康检查接口
-curl http://localhost:8080/health
+go test ./...
+```
 
-# 预期响应
-{
-    "code": 0,
-    "data": {
-        "status": "ok"
-    },
-    "message": "success"
+构建：
+
+```bash
+go build ./...
+```
+
+## Nginx 反向代理
+
+前端部署在 Nginx 根路径，后端通过 `/api` 转发：
+
+```nginx
+location /api/ {
+    proxy_pass http://127.0.0.1:8080/api/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+
+location /health {
+    proxy_pass http://127.0.0.1:8080/health;
 }
 ```
 
----
+## 安全注意
 
-## 📦 核心模块说明
-
-### config 配置管理
-
-**职责**：集中管理所有配置参数
-
-```go
-// 读取配置
-port := config.GetString("server.port")
-dbHost := config.GetString("database.host")
-```
-
-**关键函数**：
-- `Init()` - 初始化配置，从环境变量读取
-- `GetString(key)` - 获取字符串配置
-- `GetInt(key)` - 获取整数配置
-
-### database 数据库模块
-
-**职责**：初始化数据库连接、提供全局 DB 实例
-
-```go
-// 获取数据库实例
-db := database.GetDB()
-
-// 执行查询（使用 GORM）
-db.Find(&users)
-```
-
-**特点**：
-- 使用 GORM ORM 简化数据操作
-- 配置了连接池（最大 100 个连接）
-- 开发环境打印 SQL 日志便于调试
-
-### middleware 中间件
-
-**当前实现**：
-- **CORS** 中间件：允许跨域请求
-
-```go
-// 注册中间件
-r.Use(middleware.CORS())
-```
-
-**配置说明**：
-- 开发环境允许所有来源 (`*`)
-- 生产环境应配置具体的允许域名
-
-### routes 路由管理
-
-**职责**：定义所有 API 端点
-
-```go
-// 注册路由
-routes.SetupRoutes(r)
-```
-
-**当前端点**：
-- `GET /health` - 健康检查
-
-### utils 工具函数
-
-**包含模块**：
-- `jwt.go` - JWT 令牌生成和验证
-- `response.go` - 统一响应格式
-
-```go
-// 统一响应格式
-utils.Success(c, data)    // 成功响应
-utils.Error(c, code, msg) // 错误响应
-```
-
----
-
-## 📄 许可证
-
-MIT License
-
----
-
-## 👥 贡献者
-
-欢迎提交 Issue 和 Pull Request！
+- 不要提交真实 DataHall key/secret。
+- 演示环境保持 `DATAHALL_ENABLED=false`。
+- 生产环境必须替换 `JWT_SECRET`、MySQL 密码和 Redis 访问策略。
+- MySQL、Redis 不建议暴露公网端口。
+- 上传文件和下载接口应始终经过鉴权与权限校验。
