@@ -227,6 +227,40 @@ func ensureReviewPermissions() {
 	})
 }
 
+// ensureTestUsers 确保测试账号存在（用于人工登录测试）
+func ensureTestUsers() {
+	type testUser struct {
+		User     models.User
+		RoleCode string
+	}
+
+	testUsers := []testUser{
+		{User: models.User{Username: "900001", Realname: "测试校管理员", Password: hashPassword("Pw@yy03"), College: "教务处", Grade: "教职员工", Major: "管理"}, RoleCode: "school_admin"},
+		{User: models.User{Username: "900006", Realname: "测试学生", Password: hashPassword("Pw@yy03"), College: "计算机科学与网络工程学院", Grade: "2024级", Major: "计算机科学与技术"}, RoleCode: "student"},
+	}
+
+	for _, tu := range testUsers {
+		var existing models.User
+		if DB.Where("username = ?", tu.User.Username).First(&existing).Error == nil {
+			continue
+		}
+		if err := DB.Create(&tu.User).Error; err != nil {
+			log.Printf("创建测试用户 %s 失败: %v", tu.User.Username, err)
+			continue
+		}
+		var role models.Role
+		if DB.Where("role_code = ?", tu.RoleCode).First(&role).Error != nil {
+			log.Printf("未找到角色 %s，跳过测试用户 %s 角色分配", tu.RoleCode, tu.User.Username)
+			continue
+		}
+		var user models.User
+		if DB.Where("username = ?", tu.User.Username).First(&user).Error == nil {
+			DB.Model(&user).Association("Roles").Replace([]models.Role{role})
+			log.Printf("已创建测试用户: %s (角色: %s)", tu.User.Username, tu.RoleCode)
+		}
+	}
+}
+
 // ensureExpertUsers 确保种子专家用户存在（增量更新时不会丢失新增的专家账号）
 func ensureExpertUsers() {
 	var expertRole models.Role
@@ -276,6 +310,7 @@ func InitData() {
 		ensureDeclarePermissions()
 		ensureReviewPermissions()
 		ensureExpertUsers()
+		ensureTestUsers()
 		return
 	}
 
@@ -644,4 +679,5 @@ func InitData() {
 	log.Println("  第2层: 竞赛目录(comp)、赛事申报(declare)、获奖管理(award)等子分类")
 	log.Println("  第3层: 具体的操作权限(如 comp:list, reg:audit:update 等)")
 	log.Println("================================")
+	ensureTestUsers()
 }

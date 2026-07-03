@@ -1,0 +1,22 @@
+{"time":"2026-07-03T16:41:38.5636312+08:00","level":"INFO","msg":"数据库连接成功"}
+{"time":"2026-07-03T16:41:39.3747702+08:00","level":"INFO","msg":"数据库自动迁移成功"}
+{"time":"2026-07-03T16:41:39.4028241+08:00","level":"INFO","msg":"数据库已有数据，跳过初始化..."}
+{"time":"2026-07-03T16:41:39.4219996+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-07-03T16:41:39.4374989+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-07-03T16:41:39.4502728+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-07-03T16:41:39.4667604+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-07-03T16:41:39.4790408+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-07-03T16:41:39.4907248+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-07-03T16:41:39.5067575+08:00","level":"INFO","msg":"已补齐角色 student 的通知权限"}
+{"time":"2026-07-03T16:41:39.5226032+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-07-03T16:41:39.5354282+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-07-03T16:41:39.5493945+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-07-03T16:41:39.5863143+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-07-03T16:41:39.5990329+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-07-03T16:41:39.6112497+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-07-03T16:41:39.6240806+08:00","level":"INFO","msg":"已补齐角色 expert 的通知权限"}
+{"time":"2026-07-03T16:41:39.8552297+08:00","level":"INFO","msg":"已创建测试用户: 900001 (角色: school_admin)"}
+{"time":"2026-07-03T16:41:39.8859476+08:00","level":"INFO","msg":"已创建测试用户: 900006 (角色: student)"}
+{"time":"2026-07-03T16:41:39.8950898+08:00","level":"INFO","source":{"function":"CompeManage_backend/logger.Info","file":"D:/Code/CompeManage/CompeManage_backend/logger/logger.go","line":79},"msg":"Redis启动成功","host":"localhost","port":6379,"password":"","db":0}
+{"time":"2026-07-03T16:41:39.8994399+08:00","level":"INFO","msg":"服务器启动：http://localhost:8080"}
+{"time":"2026-07-03T16:41:39.9250072+08:00","level":"INFO","msg":"[Scheduler] 已将 2 个竞赛状态更新为已结束"}
