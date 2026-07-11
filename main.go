@@ -33,18 +33,21 @@ func main() {
 	defer middleware.CloseRedis()
 	// 创建Gin引擎（开发环境用gin.Default，生产可改为gin.ReleaseMode）
 	r := gin.Default()
-	// 注册pprof
-	pprof.Register(r)
+	if config.GetEnvironment() != "prod" {
+		pprof.Register(r)
+	} else {
+		log.Println("生产环境未注册 pprof 调试接口")
+	}
 	// 注册中间件（跨域优先）
 	r.Use(middleware.CORS())
 
 	// 注册路由
 	routes.SetupRoutes(r)
 	utils.StartCompStatusScheduler(5 * time.Minute)
-	datasource.StartScheduler(6 * time.Hour)          // 每6小时全量同步本科生数据
-	datasource.StartStaffScheduler(6 * time.Hour)     // 每6小时全量同步教职工数据
-	datasource.StartPostgradScheduler(6 * time.Hour)  // 每6小时全量同步研究生数据
-	datasource.StartCollegeScheduler(6 * time.Hour)   // 每6小时全量同步组织机构数据
+	datasource.StartScheduler(6 * time.Hour)           // 每6小时全量同步本科生数据
+	datasource.StartStaffScheduler(6 * time.Hour)      // 每6小时全量同步教职工数据
+	datasource.StartPostgradScheduler(6 * time.Hour)   // 每6小时全量同步研究生数据
+	datasource.StartCollegeScheduler(6 * time.Hour)    // 每6小时全量同步组织机构数据
 	datasource.StartDepartmentScheduler(6 * time.Hour) // 每6小时全量同步部门数据
 	// 启动服务
 	port := config.GetString("server.port")

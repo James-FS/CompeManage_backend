@@ -60,11 +60,14 @@ func RequirePermission(permCode string) gin.HandlerFunc {
 		ctx := c.Request.Context()
 		rdb := GetRedisClient()
 
-		// 查询缓存中是否存在
-		cached, err := rdb.Exists(ctx, cacheKey).Result()
-		if err == nil && cached > 0 {
-			// 缓存命中，有权限，直接放行
-			c.Next()
+		// 缓存值同时表达允许和拒绝，不能只根据键是否存在放行。
+		cached, err := rdb.Get(ctx, cacheKey).Result()
+		if err == nil {
+			if cached == "1" {
+				c.Next()
+				return
+			}
+			c.AbortWithStatusJSON(403, gin.H{"msg": "权限不足，禁止访问"})
 			return
 		}
 
