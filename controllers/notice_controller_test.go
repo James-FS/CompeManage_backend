@@ -30,9 +30,11 @@ func setupNoticeDBMock(t *testing.T) sqlmock.Sqlmock {
 
 	// 启动 miniredis，避免缓存逻辑 panic（cache miss 后走 DB）
 	mr := miniredis.RunT(t)
+	previousRedisClient := middleware.RedisClient
 	middleware.RedisClient = redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() {
 		_ = middleware.RedisClient.Close()
+		middleware.RedisClient = previousRedisClient
 	})
 
 	return mock

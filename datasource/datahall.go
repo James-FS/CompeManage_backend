@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -17,6 +18,7 @@ import (
 	"CompeManage_backend/models"
 
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 const (
@@ -203,16 +205,8 @@ func SyncStudents() {
 
 	var studentRole models.Role
 	if err := database.DB.Where("role_code = ?", "student").First(&studentRole).Error; err != nil {
-		log.Printf("[DataHall] 未找到 student 角色: %v，新用户将不分配角色", err)
-	}
-
-	var studentUserIDs []uint
-	database.DB.Table("user_roles").
-		Where("role_id = ?", studentRole.ID).
-		Pluck("user_id", &studentUserIDs)
-	studentSet := make(map[uint]bool, len(studentUserIDs))
-	for _, uid := range studentUserIDs {
-		studentSet[uid] = true
+		log.Printf("[DataHall] 未找到 student 角色: %v，终止本次同步", err)
+		return
 	}
 
 	var created, updated, skipped, failed int
@@ -227,7 +221,7 @@ func SyncStudents() {
 		var user models.User
 		result := database.DB.Where("username = ?", sid).First(&user)
 
-		if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			// 不存在 → 创建
 			hashedPwd, pwdErr := hashPassword(lastNChars(sid, 6))
 			if pwdErr != nil {
@@ -237,32 +231,38 @@ func SyncStudents() {
 			}
 
 			user = models.User{
-				Username:  sid,
-				Realname:  derefStr(item.Name),
-				Password:  hashedPwd,
-				College:   derefStr(item.CollegeName),
-				Major:     derefStr(item.MajorName),
-				Grade:     derefStr(item.Grade),
-				Sex:       item.Sex,
-				MajorCode: item.MajorCode,
-				ClassCode: item.ClassCode,
-				ClassName: item.ClassName,
+				Username:     sid,
+				Realname:     derefStr(item.Name),
+				Password:     hashedPwd,
+				College:      derefStr(item.CollegeName),
+				Major:        derefStr(item.MajorName),
+				Grade:        derefStr(item.Grade),
+				Sex:          item.Sex,
+				MajorCode:    item.MajorCode,
+				ClassCode:    item.ClassCode,
+				ClassName:    item.ClassName,
+				IdentityType: "student",
 			}
 
-			if err := database.DB.Create(&user).Error; err != nil {
+			if err := database.DB.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Create(&user).Error; err != nil {
+					return err
+				}
+				return database.SetUserRole(tx, user.ID, studentRole.ID)
+			}); err != nil {
 				log.Printf("[DataHall] 创建用户 %s 失败: %v", sid, err)
 				failed++
 				continue
 			}
 
-			if studentRole.ID != 0 {
-				database.DB.Model(&user).Association("Roles").Append(&studentRole)
-			}
-
 			created++
+		} else if result.Error != nil {
+			log.Printf("[DataHall] 查询用户 %s 失败: %v", sid, result.Error)
+			failed++
+			continue
 		} else {
-			// 已存在 → 仅更新学生账号
-			if !studentSet[user.ID] {
+			// 授权角色可能变化，人员同步只依据自然身份。
+			if user.IdentityType != "" && user.IdentityType != "student" {
 				skipped++
 				continue
 			}
@@ -277,7 +277,8 @@ func SyncStudents() {
 			newClassCode := derefStr(item.ClassCode)
 			newClassName := derefStr(item.ClassName)
 
-			if user.Realname == newRealname &&
+			if user.IdentityType == "student" &&
+				user.Realname == newRealname &&
 				user.College == newCollege &&
 				user.Major == newMajor &&
 				user.Grade == newGrade &&
@@ -290,14 +291,15 @@ func SyncStudents() {
 			}
 
 			updates := map[string]interface{}{
-				"realname":   newRealname,
-				"college":    newCollege,
-				"major":      newMajor,
-				"grade":      newGrade,
-				"sex":        item.Sex,
-				"major_code": item.MajorCode,
-				"class_code": item.ClassCode,
-				"class_name": item.ClassName,
+				"identity_type": "student",
+				"realname":      newRealname,
+				"college":       newCollege,
+				"major":         newMajor,
+				"grade":         newGrade,
+				"sex":           item.Sex,
+				"major_code":    item.MajorCode,
+				"class_code":    item.ClassCode,
+				"class_name":    item.ClassName,
 			}
 			if err := database.DB.Model(&user).Updates(updates).Error; err != nil {
 				log.Printf("[DataHall] 更新用户 %s 失败: %v", sid, err)

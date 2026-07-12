@@ -54,10 +54,10 @@ func hashTestPassword(password string) string {
 
 func TestCheckPassword(t *testing.T) {
 	tests := []struct {
-		name           string
-		dbPassword     string
-		inputPassword  string
-		expected       bool
+		name          string
+		dbPassword    string
+		inputPassword string
+		expected      bool
 	}{
 		{
 			name:          "密码正确",
@@ -221,7 +221,7 @@ func TestLogin_Success_WithRole(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "管理员")
 }
 
-func TestLogin_Success_WithoutRole(t *testing.T) {
+func TestLogin_Forbidden_WithoutRole(t *testing.T) {
 	mock := setupAuthDBMock(t)
 	defer mock.ExpectationsWereMet()
 
@@ -242,12 +242,11 @@ func TestLogin_Success_WithoutRole(t *testing.T) {
 	_, w, c := buildAuthPOSTJSON(body)
 	Login(c)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "token")
-	assert.Contains(t, w.Body.String(), "user") // 默认角色是 "user"
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "尚未分配角色")
 }
 
-func TestLogin_Success_MultipleRoles(t *testing.T) {
+func TestLogin_Error_MultipleRoles(t *testing.T) {
 	mock := setupAuthDBMock(t)
 	defer mock.ExpectationsWereMet()
 
@@ -257,7 +256,7 @@ func TestLogin_Success_MultipleRoles(t *testing.T) {
 	mock.ExpectQuery("SELECT .* FROM `users`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "realname", "password", "college", "create_time", "update_time"}).
 			AddRow(3, "teacher", "老师", hashTestPassword("123456"), "计算机学院", now, now))
-	// 多个角色，只取第一个
+	// 多个角色属于需要迁移修复的数据异常
 	mock.ExpectQuery("SELECT .* FROM `user_roles`").
 		WillReturnRows(sqlmock.NewRows([]string{"user_id", "role_id"}).
 			AddRow(3, 1).
@@ -274,7 +273,6 @@ func TestLogin_Success_MultipleRoles(t *testing.T) {
 	_, w, c := buildAuthPOSTJSON(body)
 	Login(c)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "token")
-	assert.Contains(t, w.Body.String(), "competition_manager") // 第一个角色
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.NotContains(t, w.Body.String(), "token")
 }

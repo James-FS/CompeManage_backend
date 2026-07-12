@@ -3,8 +3,10 @@ package database
 import (
 	"CompeManage_backend/models"
 	"log"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 func hashPassword(password string) string {
@@ -227,6 +229,29 @@ func ensureReviewPermissions() {
 	})
 }
 
+func ensureUserManagePermissions() {
+	var permParent models.Permission
+	if err := DB.Where("code = ?", "perm").First(&permParent).Error; err != nil {
+		log.Printf("未找到权限目录 perm，跳过用户管理权限补齐: %v", err)
+		return
+	}
+
+	definitions := []models.Permission{
+		{Name: "查看用户列表", Code: "user:list", Type: 3, ParentID: permParent.ID, Description: "查看系统用户、角色和管理学院"},
+		{Name: "分配用户角色", Code: "user:assign_role", Type: 3, ParentID: permParent.ID, Description: "修改用户角色和院管理员管理学院"},
+	}
+	for _, definition := range definitions {
+		var existing models.Permission
+		if err := DB.Where("code = ?", definition.Code).First(&existing).Error; err == nil {
+			continue
+		}
+		if err := DB.Create(&definition).Error; err != nil {
+			log.Printf("补齐用户管理权限失败(%s): %v", definition.Code, err)
+		}
+	}
+	grantRolePermissionsByCode("school_admin", []string{"user:list", "user:assign_role"})
+}
+
 // ensureTestUsers 确保测试账号存在（用于人工登录测试）
 func ensureTestUsers() {
 	type testUser struct {
@@ -235,8 +260,8 @@ func ensureTestUsers() {
 	}
 
 	testUsers := []testUser{
-		{User: models.User{Username: "900001", Realname: "测试校管理员", Password: hashPassword("Pw@yy03"), College: "教务处", Grade: "教职员工", Major: "管理"}, RoleCode: "school_admin"},
-		{User: models.User{Username: "900006", Realname: "测试学生", Password: hashPassword("Pw@yy03"), College: "计算机科学与网络工程学院", Grade: "2024级", Major: "计算机科学与技术"}, RoleCode: "student"},
+		{User: models.User{Username: "900001", Realname: "测试校管理员", Password: hashPassword("Pw@yy03"), College: "教务处", Grade: "教职员工", Major: "管理", IdentityType: "staff"}, RoleCode: "school_admin"},
+		{User: models.User{Username: "900006", Realname: "测试学生", Password: hashPassword("Pw@yy03"), College: "计算机科学与网络工程学院", Grade: "2024级", Major: "计算机科学与技术", IdentityType: "student"}, RoleCode: "student"},
 	}
 
 	for _, tu := range testUsers {
@@ -244,20 +269,21 @@ func ensureTestUsers() {
 		if DB.Where("username = ?", tu.User.Username).First(&existing).Error == nil {
 			continue
 		}
-		if err := DB.Create(&tu.User).Error; err != nil {
-			log.Printf("创建测试用户 %s 失败: %v", tu.User.Username, err)
-			continue
-		}
 		var role models.Role
 		if DB.Where("role_code = ?", tu.RoleCode).First(&role).Error != nil {
 			log.Printf("未找到角色 %s，跳过测试用户 %s 角色分配", tu.RoleCode, tu.User.Username)
 			continue
 		}
-		var user models.User
-		if DB.Where("username = ?", tu.User.Username).First(&user).Error == nil {
-			DB.Model(&user).Association("Roles").Replace([]models.Role{role})
-			log.Printf("已创建测试用户: %s (角色: %s)", tu.User.Username, tu.RoleCode)
+		if err := DB.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(&tu.User).Error; err != nil {
+				return err
+			}
+			return SetUserRole(tx, tu.User.ID, role.ID)
+		}); err != nil {
+			log.Printf("创建测试用户 %s 失败: %v", tu.User.Username, err)
+			continue
 		}
+		log.Printf("已创建测试用户: %s (角色: %s)", tu.User.Username, tu.RoleCode)
 	}
 }
 
@@ -269,8 +295,8 @@ func ensureExpertUsers() {
 	}
 
 	experts := []models.User{
-		{Username: "E2023001", Realname: "周杰", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子工程"},
-		{Username: "E2023002", Realname: "李专家", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "计算机科学与技术"},
+		{Username: "E2023001", Realname: "周杰", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子工程", IdentityType: "external"},
+		{Username: "E2023002", Realname: "李专家", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "计算机科学与技术", IdentityType: "external"},
 	}
 
 	for _, u := range experts {
@@ -278,15 +304,16 @@ func ensureExpertUsers() {
 		if DB.Where("username = ?", u.Username).First(&existing).Error == nil {
 			continue
 		}
-		if err := DB.Create(&u).Error; err != nil {
+		if err := DB.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(&u).Error; err != nil {
+				return err
+			}
+			return SetUserRole(tx, u.ID, expertRole.ID)
+		}); err != nil {
 			log.Printf("创建专家用户 %s 失败: %v", u.Username, err)
 			continue
 		}
-		var user models.User
-		if DB.Where("username = ?", u.Username).First(&user).Error == nil {
-			DB.Model(&user).Association("Roles").Replace([]models.Role{expertRole})
-			log.Printf("已补创建专家用户: %s", u.Username)
-		}
+		log.Printf("已补创建专家用户: %s", u.Username)
 	}
 }
 
@@ -309,6 +336,7 @@ func InitData() {
 		ensureAwardStudentPermissions()
 		ensureDeclarePermissions()
 		ensureReviewPermissions()
+		ensureUserManagePermissions()
 		ensureExpertUsers()
 		ensureTestUsers()
 		return
@@ -429,6 +457,8 @@ func InitData() {
 		{Name: "查看权限列表", Code: "perm:list", Type: 3, ParentID: permSub.ID, Description: "查看系统权限列表"},
 		{Name: "查看角色列表", Code: "role:list", Type: 3, ParentID: permSub.ID, Description: "查看系统角色列表"},
 		{Name: "分配权限", Code: "perm:assign", Type: 3, ParentID: permSub.ID, Description: "给角色分配权限"},
+		{Name: "查看用户列表", Code: "user:list", Type: 3, ParentID: permSub.ID, Description: "查看系统用户、角色和管理学院"},
+		{Name: "分配用户角色", Code: "user:assign_role", Type: 3, ParentID: permSub.ID, Description: "修改用户角色和院管理员管理学院"},
 
 		// 基础数据权限 (parent: basicSub)
 		{Name: "查看学院列表", Code: "college:list", Type: 3, ParentID: basicSub.ID, Description: "查看学院列表"},
@@ -489,7 +519,7 @@ func InitData() {
 		"comp", "declare", "award", "summary", "reg:config", "reg:audit", "basic",
 		// 具体权限
 		"comp:list", "comp:detail", "comp:years:list", "manager:list",
-		"declare:create", "declare:get", "declare:update", "declare:submit", "declare:list", "declare:delete", "declare:pending-list", "declare:audit", "declare:audited-list", "declare:revoke", "declare:all-declares",
+		"declare:create", "declare:get", "declare:update", "declare:submit", "declare:list", "declare:delete", "declare:pending-list", "declare:audited-list", "declare:revoke", "declare:all-declares",
 		"award:list", "award:comp:list",
 		"summary:list", "summary:detail",
 		"reg:config:view",
@@ -588,6 +618,7 @@ func InitData() {
 	ensureNoticeManagePermissions()
 	ensureCompetitionCorePermissions()
 	ensureAwardStudentPermissions()
+	ensureUserManagePermissions()
 
 	// --- G. 访客：无特殊权限 ---
 	// 不分配任何权限
@@ -628,16 +659,31 @@ func InitData() {
 		"S2024002": &studentRole,            // 陈思思 - 学生
 		"E2023001": &expertRole,             // 周杰 - 专家
 		"E2023002": &expertRole,             // 李专家 - 专家
-		// guest 用户不分配角色，用于测试无权限访问
+		"guest":    &guestRole,              // 访客账号使用 guest 角色
 	}
 
 	for _, u := range users {
-		if err := DB.Create(&u).Error; err != nil {
-			log.Printf("创建用户 %s 失败: %v", u.Username, err)
+		switch {
+		case strings.HasPrefix(u.Username, "S"):
+			u.IdentityType = "student"
+		case strings.HasPrefix(u.Username, "E") || u.Username == "guest":
+			u.IdentityType = "external"
+		default:
+			u.IdentityType = "staff"
+		}
+		role, ok := userRoleMap[u.Username]
+		if !ok {
+			log.Printf("用户 %s 未配置默认角色，跳过创建", u.Username)
 			continue
 		}
-		if role, ok := userRoleMap[u.Username]; ok {
-			DB.Model(&u).Association("Roles").Append(role)
+		if err := DB.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(&u).Error; err != nil {
+				return err
+			}
+			return SetUserRole(tx, u.ID, role.ID)
+		}); err != nil {
+			log.Printf("创建用户 %s 失败: %v", u.Username, err)
+			continue
 		}
 	}
 
@@ -661,13 +707,16 @@ func InitData() {
 			log.Printf("初始化学院数据失败: %v", err)
 		}
 	}
+	// 示例院管理员绑定管理学院。
+	DB.Model(&models.User{}).Where("username = ?", "T2023002").
+		Update("managed_college_id", uint(1))
 	log.Println("学院数据初始化完成")
 
 	log.Println("🎉 基础数据初始化完成（未写入任何比赛相关种子）！")
 	log.Println("================================")
 	log.Println("📋 用户账号信息：")
 	log.Println("  校级管理员: T2023001    密码: 123 (拥有所有权限)")
-	log.Println("  院级管理员: T2023002     密码: 123 (竞赛查看+申报审核+报名审核+报名配置查看)")
+	log.Println("  院级管理员: T2023002     密码: 123 (本学院竞赛/申报查看+报名审核+报名配置查看)")
 	log.Println("  赛事负责人: T2023003  密码: 123 (竞赛管理+申报管理+报名配置编辑+报名审核)")
 	log.Println("  老师:       T2023010/T2023011/T2023012  密码: 123 (用于指导教师选择)")
 	log.Println("  学生:       S2024001  密码: 123 (报名提交+通知查看)")

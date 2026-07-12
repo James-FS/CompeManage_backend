@@ -48,14 +48,14 @@ func TestCreateDeclare_Unauthorized(t *testing.T) {
 	defer mock.ExpectationsWereMet()
 
 	body := DeclareCreateReq{
-		CompName:  "测试赛事",
-		CompLevel: "校级",
-		CompType:  "学科竞赛",
-		Organizer: "教务处",
+		CompName:   "测试赛事",
+		CompLevel:  "校级",
+		CompType:   "学科竞赛",
+		Organizer:  "教务处",
 		Undertaker: "计算机学院",
-		CollegeID: 1,
-		ManagerID: 1,
-		Year:      2026,
+		CollegeID:  1,
+		ManagerID:  1,
+		Year:       2026,
 	}
 	_, w, c := buildAuthPOSTJSON(body)
 	// 不设置 user_id
@@ -75,14 +75,14 @@ func TestCreateDeclare_Success(t *testing.T) {
 	mock.ExpectCommit()
 
 	body := DeclareCreateReq{
-		CompName:  "测试赛事",
-		CompLevel: "校级",
-		CompType:  "学科竞赛",
-		Organizer: "教务处",
+		CompName:   "测试赛事",
+		CompLevel:  "校级",
+		CompType:   "学科竞赛",
+		Organizer:  "教务处",
 		Undertaker: "计算机学院",
-		CollegeID: 1,
-		ManagerID: 1,
-		Year:      2026,
+		CollegeID:  1,
+		ManagerID:  1,
+		Year:       2026,
 	}
 	_, w, c := buildAuthPOSTJSON(body)
 	c.Set("user_id", uint(1))
@@ -102,20 +102,44 @@ func TestCreateDeclare_DBError(t *testing.T) {
 	mock.ExpectRollback()
 
 	body := DeclareCreateReq{
-		CompName:  "测试赛事",
-		CompLevel: "校级",
-		CompType:  "学科竞赛",
-		Organizer: "教务处",
+		CompName:   "测试赛事",
+		CompLevel:  "校级",
+		CompType:   "学科竞赛",
+		Organizer:  "教务处",
 		Undertaker: "计算机学院",
-		CollegeID: 1,
-		ManagerID: 1,
-		Year:      2026,
+		CollegeID:  1,
+		ManagerID:  1,
+		Year:       2026,
 	}
 	_, w, c := buildAuthPOSTJSON(body)
 	c.Set("user_id", uint(1))
 	CreateDeclare(c)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestCreateDeclare_CollegeAdminCannotUseAnotherCollege(t *testing.T) {
+	setupDeclareDBMock(t)
+	managedCollegeID := uint(2)
+	body := DeclareCreateReq{
+		CompName:   "测试赛事",
+		CompLevel:  "校级",
+		CompType:   "学科竞赛",
+		Organizer:  "教务处",
+		Undertaker: "计算机学院",
+		CollegeID:  3,
+		ManagerID:  1,
+		Year:       2026,
+	}
+	_, w, c := buildAuthPOSTJSON(body)
+	c.Set("user_id", uint(10))
+	c.Set("role_code", "college_admin")
+	c.Set("managed_college_id", &managedCollegeID)
+
+	CreateDeclare(c)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "只能为所管理学院创建申报")
 }
 
 // ===================== GetDeclareDetail =====================
@@ -622,6 +646,21 @@ func TestAuditDeclare_BadRequest(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "参数错误")
+}
+
+func TestAuditDeclare_CollegeAdminForbidden(t *testing.T) {
+	setupDeclareDBMock(t)
+	managedCollegeID := uint(2)
+	body := map[string]interface{}{"declare_id": 1, "audit_status": 2}
+	_, w, c := buildAuthPOSTJSON(body)
+	c.Set("user_id", uint(10))
+	c.Set("role_code", "college_admin")
+	c.Set("managed_college_id", &managedCollegeID)
+
+	AuditDeclare(c)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "仅校级管理员")
 }
 
 func TestAuditDeclare_BadRequest_InvalidStatus(t *testing.T) {

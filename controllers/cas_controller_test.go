@@ -186,8 +186,8 @@ func TestExchangeCodeForToken_Success(t *testing.T) {
 	defer server.Close()
 
 	cfg := config.CasConfig{
-		ServerURL: server.URL,
-		ClientID:  "test_client",
+		ServerURL:    server.URL,
+		ClientID:     "test_client",
 		ClientSecret: "test_secret",
 	}
 
@@ -419,10 +419,20 @@ func TestFindOrCreateUser_NewUser(t *testing.T) {
 	// 用户不存在
 	mock.ExpectQuery("SELECT .* FROM `users`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "realname", "password", "college"}))
+	mock.ExpectQuery("SELECT .* FROM `roles`").
+		WithArgs("guest", 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "role_name", "role_code"}).
+			AddRow(7, "访客", "guest"))
 	// GORM Create 使用事务
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO `users`").
 		WillReturnResult(sqlmock.NewResult(2, 1))
+	mock.ExpectExec("DELETE FROM `user_roles` WHERE user_id = ?").
+		WithArgs(uint(2)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO `user_roles`").
+		WithArgs(uint(7), uint(2)).
+		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
 	casUser := &casProfileResponse{
@@ -448,6 +458,10 @@ func TestFindOrCreateUser_CreateError(t *testing.T) {
 
 	mock.ExpectQuery("SELECT .* FROM `users`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "username"}))
+	mock.ExpectQuery("SELECT .* FROM `roles`").
+		WithArgs("guest", 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "role_name", "role_code"}).
+			AddRow(7, "访客", "guest"))
 	// GORM Create 使用事务
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO `users`").
@@ -465,6 +479,24 @@ func TestFindOrCreateUser_CreateError(t *testing.T) {
 	_, err := findOrCreateUser(nil, casUser)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "创建用户失败")
+}
+
+func TestDefaultRoleCodeForIdentity(t *testing.T) {
+	tests := []struct {
+		identityType string
+		wantRole     string
+	}{
+		{identityType: "staff", wantRole: "competition_manager"},
+		{identityType: "student", wantRole: "student"},
+		{identityType: "postgraduate", wantRole: "student"},
+		{identityType: "external", wantRole: "guest"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.identityType, func(t *testing.T) {
+			assert.Equal(t, tt.wantRole, defaultRoleCodeForIdentity(tt.identityType))
+		})
+	}
 }
 
 // ===================== CasCallback =====================
@@ -499,9 +531,9 @@ func TestCasCallback_WithCode_TokenExchangeFails(t *testing.T) {
 	defer server.Close()
 
 	config.AppConfig.Cas = config.CasConfig{
-		ServerURL:   server.URL,
-		FrontendURL: "http://localhost:5219",
-		ClientID:    "test",
+		ServerURL:    server.URL,
+		FrontendURL:  "http://localhost:5219",
+		ClientID:     "test",
 		ClientSecret: "test",
 	}
 
@@ -534,9 +566,9 @@ func TestCasCallback_WithCode_ProfileFetchFails(t *testing.T) {
 	defer server.Close()
 
 	config.AppConfig.Cas = config.CasConfig{
-		ServerURL:   server.URL,
-		FrontendURL: "http://localhost:5219",
-		ClientID:    "test",
+		ServerURL:    server.URL,
+		FrontendURL:  "http://localhost:5219",
+		ClientID:     "test",
 		ClientSecret: "test",
 	}
 
