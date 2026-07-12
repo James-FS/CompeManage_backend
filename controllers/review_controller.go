@@ -28,11 +28,17 @@ func GetReviewCompList(c *gin.Context) {
 	if size < 1 || size > MaxPageSize {
 		size = 10
 	}
-
 	query := database.DB.WithContext(c.Request.Context()).
 		Table("comp_directories").
 		Joins("JOIN comp_details ON comp_details.comp_id = comp_directories.id").
 		Where("comp_details.need_review = ?", 1)
+	scope, ok := requestAccessScopeIfAvailable(c)
+	if !ok {
+		return
+	}
+	if scope != nil {
+		query = applyCompetitionScope(query, scope, "comp_directories")
+	}
 
 	if keyword != "" {
 		query = query.Where("comp_directories.comp_name LIKE ?", "%"+keyword+"%")
@@ -182,17 +188,22 @@ func GetExpertList(c *gin.Context) {
 	if size < 1 || size > MaxPageSize {
 		size = 10
 	}
-
 	query := database.DB.WithContext(c.Request.Context()).Model(&models.User{}).
 		Joins("JOIN user_roles ON user_roles.user_id = users.id").
 		Joins("JOIN roles ON roles.id = user_roles.role_id").
 		Where("roles.role_code = ?", "expert")
+	scope, ok := requestAccessScopeIfAvailable(c)
+	if !ok {
+		return
+	}
 
 	if keyword != "" {
 		query = query.Where("users.realname LIKE ? OR users.username LIKE ?", "%"+keyword+"%", "%"+keyword+"%")
 	}
-	if collegeID != "" {
-		query = query.Where("users.college_id = ?", collegeID)
+	if scope != nil && scope.IsCollegeAdmin() {
+		query = query.Where("users.college = (SELECT name FROM colleges WHERE id = ?)", *scope.ManagedCollegeID)
+	} else if collegeID != "" {
+		query = query.Where("users.college = (SELECT name FROM colleges WHERE id = ?)", collegeID)
 	}
 
 	var total int64
@@ -234,6 +245,9 @@ func GetReviewTaskList(c *gin.Context) {
 		utils.BadRequest(c, "comp_id 参数格式错误")
 		return
 	}
+	if !requireCompetitionAccessIfScoped(c, uint(compID)) {
+		return
+	}
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "10"))
@@ -249,15 +263,15 @@ func GetReviewTaskList(c *gin.Context) {
 		Where("comp_id = ?", compID).Count(&total)
 
 	type TaskItem struct {
-		TaskID        uint       `json:"task_id"`
-		ExpertID      uint       `json:"expert_id"`
-		ExpertName    string     `json:"expert_name"`
-		ExpertUsername string    `json:"expert_username"`
-		Status        int8       `json:"status"`
-		ReviewedCount int64      `json:"reviewed_count"`
-		TotalWorks    int64      `json:"total_works"`
-		AssignedAt    *time.Time `json:"assigned_at"`
-		CompletedAt   *time.Time `json:"completed_at"`
+		TaskID         uint       `json:"task_id"`
+		ExpertID       uint       `json:"expert_id"`
+		ExpertName     string     `json:"expert_name"`
+		ExpertUsername string     `json:"expert_username"`
+		Status         int8       `json:"status"`
+		ReviewedCount  int64      `json:"reviewed_count"`
+		TotalWorks     int64      `json:"total_works"`
+		AssignedAt     *time.Time `json:"assigned_at"`
+		CompletedAt    *time.Time `json:"completed_at"`
 	}
 
 	var tasks []models.ReviewTask
@@ -311,6 +325,9 @@ func AssignReviewTask(c *gin.Context) {
 		return
 	}
 	userID := userIDVal.(uint)
+	if !requireCompetitionAccessIfScoped(c, req.CompID) {
+		return
+	}
 
 	// 校验赛事存在且开启了评审
 	var detail models.CompDetail
@@ -446,6 +463,9 @@ func InitReviewTasks(c *gin.Context) {
 		utils.BadRequest(c, "参数错误")
 		return
 	}
+	if !requireCompetitionAccessIfScoped(c, req.CompID) {
+		return
+	}
 
 	// 校验赛事存在且 NeedReview=1
 	var detail models.CompDetail
@@ -541,6 +561,9 @@ func DeleteReviewTask(c *gin.Context) {
 		utils.NotFound(c, "任务不存在")
 		return
 	}
+	if !requireCompetitionAccessIfScoped(c, task.CompID) {
+		return
+	}
 
 	force := c.Query("force") == "true"
 
@@ -578,6 +601,9 @@ func GetReviewProgress(c *gin.Context) {
 		utils.BadRequest(c, "comp_id 参数格式错误")
 		return
 	}
+	if !requireCompetitionAccessIfScoped(c, uint(compID)) {
+		return
+	}
 
 	var comp models.CompDirectory
 	if err := database.DB.WithContext(c.Request.Context()).Select("id, comp_name").First(&comp, compID).Error; err != nil {
@@ -600,13 +626,13 @@ func GetReviewProgress(c *gin.Context) {
 	database.DB.WithContext(c.Request.Context()).Model(&models.ReviewRecord{}).Where("comp_id = ? AND status = 1", compID).Count(&reviewedCount)
 
 	type ExpertProgress struct {
-		ExpertID       uint   `json:"expert_id"`
-		ExpertName     string `json:"expert_name"`
-		ExpertUsername string `json:"expert_username"`
-		AssignedWorks  int64  `json:"assigned_works"`
-		ReviewedWorks  int64  `json:"reviewed_works"`
-		UnreviewedWorks int64 `json:"unreviewed_works"`
-		TaskStatus     int8   `json:"task_status"`
+		ExpertID        uint   `json:"expert_id"`
+		ExpertName      string `json:"expert_name"`
+		ExpertUsername  string `json:"expert_username"`
+		AssignedWorks   int64  `json:"assigned_works"`
+		ReviewedWorks   int64  `json:"reviewed_works"`
+		UnreviewedWorks int64  `json:"unreviewed_works"`
+		TaskStatus      int8   `json:"task_status"`
 	}
 
 	var tasks []models.ReviewTask
@@ -653,6 +679,9 @@ func GetReviewResultList(c *gin.Context) {
 	compID, err := strconv.ParseUint(compIDStr, 10, 32)
 	if err != nil {
 		utils.BadRequest(c, "comp_id 参数格式错误")
+		return
+	}
+	if !requireCompetitionAccessIfScoped(c, uint(compID)) {
 		return
 	}
 
@@ -827,13 +856,13 @@ func GetReviewResultList(c *gin.Context) {
 	}
 
 	utils.Success(c, gin.H{
-		"comp_id":        compID,
-		"comp_name":      comp.CompName,
+		"comp_id":         compID,
+		"comp_name":       comp.CompName,
 		"review_end_time": revEndStr,
-		"all_reviewed":   allReviewed,
-		"has_award":      hasAward,
-		"list":           list,
-		"total":          len(list),
+		"all_reviewed":    allReviewed,
+		"has_award":       hasAward,
+		"list":            list,
+		"total":           len(list),
 	})
 }
 
@@ -848,6 +877,9 @@ func ConfirmReviewResult(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "参数错误")
+		return
+	}
+	if !requireCompetitionAccessIfScoped(c, req.CompID) {
 		return
 	}
 
@@ -1270,8 +1302,8 @@ func GetReviewWorkDetail(c *gin.Context) {
 	database.DB.WithContext(c.Request.Context()).Preload("Members").First(&reg, regID)
 
 	type MemberInfo struct {
-		Name   string `json:"name"`
-		StuID  string `json:"stu_id"`
+		Name  string `json:"name"`
+		StuID string `json:"stu_id"`
 	}
 	var memberList []MemberInfo
 	for _, m := range reg.Members {
@@ -1291,11 +1323,11 @@ func GetReviewWorkDetail(c *gin.Context) {
 			"reviewed_at": record.ReviewedAt,
 		},
 		"work": gin.H{
-			"reg_id":               reg.ID,
-			"team_name":            reg.TeamName,
-			"members":              memberList,
-			"work_attachment_url":  reg.WorkAttachmentUrl,
-			"submitted_at":         reg.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			"reg_id":              reg.ID,
+			"team_name":           reg.TeamName,
+			"members":             memberList,
+			"work_attachment_url": reg.WorkAttachmentUrl,
+			"submitted_at":        reg.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		},
 		"competition": gin.H{
 			"comp_id":    comp.ID,

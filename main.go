@@ -44,6 +44,7 @@ func main() {
 	// 注册路由
 	routes.SetupRoutes(r)
 	utils.StartCompStatusScheduler(5 * time.Minute)
+	middleware.StartPermissionCacheInvalidationScheduler(time.Minute)
 	datasource.StartScheduler(6 * time.Hour)           // 每6小时全量同步本科生数据
 	datasource.StartStaffScheduler(6 * time.Hour)      // 每6小时全量同步教职工数据
 	datasource.StartPostgradScheduler(6 * time.Hour)   // 每6小时全量同步研究生数据

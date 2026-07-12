@@ -35,10 +35,15 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	roleCode := "user"
-	if len(user.Roles) > 0 {
-		roleCode = user.Roles[0].RoleCode
+	if len(user.Roles) == 0 {
+		utils.Forbidden(c, "账号尚未分配角色，请联系管理员")
+		return
 	}
+	if len(user.Roles) > 1 {
+		utils.InternalServerError(c, "账号存在多个角色，请联系管理员处理", database.ErrUserHasMultipleRoles)
+		return
+	}
+	roleCode := user.Roles[0].RoleCode
 
 	token, err := utils.GenerateToken(user.ID, user.Username, roleCode)
 	if err != nil {

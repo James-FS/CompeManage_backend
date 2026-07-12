@@ -56,6 +56,24 @@ func TestGetReviewCompList_CountError(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "服务器内部错误")
 }
 
+func TestGetReviewCompList_CollegeAdminForcesCollegeScope(t *testing.T) {
+	mock := setupReviewDBMock(t)
+	defer mock.ExpectationsWereMet()
+
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `comp_directories`.*comp_directories.college_id = .*").
+		WithArgs(1, uint(2)).
+		WillReturnError(fmt.Errorf("stop after scope assertion"))
+
+	managedCollegeID := uint(2)
+	_, w, c := buildGET("/api/review/comp/list")
+	c.Set("user_id", uint(10))
+	c.Set("role_code", "college_admin")
+	c.Set("managed_college_id", &managedCollegeID)
+	GetReviewCompList(c)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
 func TestGetReviewCompList_SuccessEmpty(t *testing.T) {
 	mock := setupReviewDBMock(t)
 	defer mock.ExpectationsWereMet()
@@ -186,6 +204,26 @@ func TestGetReviewTaskList_InvalidCompID(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "comp_id 参数格式错误")
+}
+
+func TestGetReviewTaskList_CollegeAdminCannotAccessAnotherCollege(t *testing.T) {
+	mock := setupReviewDBMock(t)
+	defer mock.ExpectationsWereMet()
+
+	otherCollegeID := uint(3)
+	mock.ExpectQuery("SELECT `id`,`manager_id`,`college_id` FROM `comp_directories`").
+		WithArgs(uint64(5), 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}).AddRow(5, 20, otherCollegeID))
+
+	managedCollegeID := uint(2)
+	_, w, c := buildGET("/api/review/task/list?comp_id=5")
+	c.Set("user_id", uint(10))
+	c.Set("role_code", "college_admin")
+	c.Set("managed_college_id", &managedCollegeID)
+	GetReviewTaskList(c)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "无权访问该赛事")
 }
 
 func TestGetReviewTaskList_SuccessEmpty(t *testing.T) {

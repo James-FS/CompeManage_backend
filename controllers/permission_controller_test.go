@@ -4,10 +4,14 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"CompeManage_backend/database"
+	"CompeManage_backend/middleware"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -69,8 +73,7 @@ func TestGetAllPermissions_DBError(t *testing.T) {
 	_, w, c := buildGET("/api/perm/permissions")
 	GetAllPermissions(c)
 
-	// Find 不返回 error，所以即使 DB 出错也会返回 200
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 // ===================== GetAllRoles =====================
@@ -211,6 +214,51 @@ func TestAssignPermissions_Success_EmptyPerms(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "权限分配成功")
 }
 
+func TestAssignPermissions_CacheAndRetryQueueFailureReturnsTruthfulResponse(t *testing.T) {
+	mock := setupPermDBMock(t)
+	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
+
+	mr := miniredis.RunT(t)
+	addr := mr.Addr()
+	mr.Close()
+	previousRedisClient := middleware.RedisClient
+	middleware.RedisClient = redis.NewClient(&redis.Options{
+		Addr:         addr,
+		MaxRetries:   -1,
+		DialTimeout:  50 * time.Millisecond,
+		ReadTimeout:  50 * time.Millisecond,
+		WriteTimeout: 50 * time.Millisecond,
+	})
+	t.Cleanup(func() {
+		_ = middleware.RedisClient.Close()
+		middleware.RedisClient = previousRedisClient
+	})
+
+	mock.ExpectQuery("SELECT .* FROM `roles`").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "role_name", "role_code"}).AddRow(1, "管理员", "admin"))
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `roles`").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("DELETE FROM `role_permissions`").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+	mock.ExpectQuery("SELECT `user_id` FROM `user_roles` WHERE role_id = .*").
+		WithArgs(uint(1)).
+		WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow(7))
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO `permission_cache_invalidation_tasks`").
+		WillReturnError(fmt.Errorf("queue db unavailable"))
+	mock.ExpectRollback()
+
+	body := AssignPermReq{RoleID: 1, PermIDs: []uint{}}
+	_, w, c := buildAuthPOSTJSON(body)
+	AssignPermissions(c)
+
+	assert.Equal(t, http.StatusAccepted, w.Code)
+	assert.Contains(t, w.Body.String(), "未能创建重试任务")
+	assert.Contains(t, w.Body.String(), `"retry_queue_failed_users":[7]`)
+	assert.Contains(t, w.Body.String(), `"manual_follow_up_required":true`)
+	assert.Contains(t, w.Body.String(), `"cache_ttl_seconds":300`)
+}
+
 func TestAssignPermissions_RoleDBError(t *testing.T) {
 	mock := setupPermDBMock(t)
 	defer mock.ExpectationsWereMet()
@@ -222,6 +270,6 @@ func TestAssignPermissions_RoleDBError(t *testing.T) {
 	_, w, c := buildAuthPOSTJSON(body)
 	AssignPermissions(c)
 
-	assert.Equal(t, http.StatusNotFound, w.Code)
-	assert.Contains(t, w.Body.String(), "角色不存在")
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "服务器内部错误")
 }

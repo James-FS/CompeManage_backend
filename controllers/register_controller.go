@@ -157,19 +157,14 @@ func SaveRegConfig(c *gin.Context) {
 		return
 	}
 
-	userIDVal, exists := c.Get("user_id")
-	if !exists {
-		utils.Unauthorized(c, "未登录")
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
 		return
 	}
-	userID := userIDVal.(uint)
 
 	var comp models.CompDirectory
 	db := database.DB.WithContext(c.Request.Context()).Model(&models.CompDirectory{}).Where("id = ?", req.CompID)
-
-	if !checkUserIsAdmin(c.Request.Context(), userID) {
-		db = db.Where("manager_id = ?", userID)
-	}
+	db = applyCompetitionScope(db, scope, "comp_directories")
 
 	if err := db.First(&comp).Error; err != nil {
 		utils.Forbidden(c, "您无权操作此赛事或赛事不存在")
@@ -297,7 +292,7 @@ func SaveRegConfig(c *gin.Context) {
 	// 同步评审专家
 	if detail.NeedReview == 1 || req.ForceCloseReview {
 		now := time.Now()
-		warnings := syncReviewTasks(c, req.CompID, req.ExpertIDs, userID, now, req.ForceCloseReview, "")
+		warnings := syncReviewTasks(c, req.CompID, req.ExpertIDs, scope.UserID, now, req.ForceCloseReview, "")
 		if len(warnings) > 0 {
 			utils.SuccessWithMessage(c, "报名设置保存成功，但有警告："+strings.Join(warnings, "；"), detail)
 			return
@@ -634,12 +629,10 @@ func GetRegList(c *gin.Context) {
 	compName := c.Query("comp_name")
 	pType := c.Query("participant_type")
 
-	userIDVal, exists := c.Get("user_id")
-	if !exists {
-		utils.Unauthorized(c, "未登录")
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
 		return
 	}
-	userID := userIDVal.(uint)
 
 	query := database.DB.WithContext(c.Request.Context()).Model(&models.Register{}).
 		Joins("LEFT JOIN comp_directories ON comp_directories.id = registers.comp_id").
@@ -649,9 +642,7 @@ func GetRegList(c *gin.Context) {
 		Preload("Leader").
 		Preload("Members")
 
-	if !checkUserIsAdmin(c.Request.Context(), userID) {
-		query = query.Where("comp_directories.manager_id = ?", userID)
-	}
+	query = applyCompetitionScope(query, scope, "comp_directories")
 
 	if compName != "" {
 		query = query.Where("comp_directories.comp_name LIKE ?", "%"+compName+"%")
@@ -788,9 +779,6 @@ func GetRegDetail(c *gin.Context) {
 		return
 	}
 
-	userIDVal, _ := c.Get("user_id")
-	userID := userIDVal.(uint)
-
 	var reg models.Register
 	err = database.DB.WithContext(c.Request.Context()).
 		Preload("Competition").
@@ -802,12 +790,14 @@ func GetRegDetail(c *gin.Context) {
 		utils.NotFound(c, "报名记录不存在")
 		return
 	}
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
+		return
+	}
 
-	if !checkUserIsAdmin(c.Request.Context(), userID) {
-		if reg.Competition.ManagerID != userID {
-			utils.Forbidden(c, "无权查看此记录")
-			return
-		}
+	if !canAccessCompetition(scope, reg.Competition) {
+		utils.Forbidden(c, "无权查看此记录")
+		return
 	}
 
 	leaderName := "未知"
@@ -871,12 +861,10 @@ func GetWorkAuditCompList(c *gin.Context) {
 		req.PageSize = MaxPageSize
 	}
 
-	userIDVal, exists := c.Get("user_id")
-	if !exists {
-		utils.Unauthorized(c, "未登录")
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
 		return
 	}
-	userID := userIDVal.(uint)
 	now := time.Now()
 
 	buildBaseQuery := func(withRegisterJoin bool) *gorm.DB {
@@ -891,9 +879,7 @@ func GetWorkAuditCompList(c *gin.Context) {
 			query = query.Joins("LEFT JOIN registers ON registers.comp_id = comp_directories.id")
 		}
 
-		if !checkUserIsAdmin(c.Request.Context(), userID) {
-			query = query.Where("comp_directories.manager_id = ?", userID)
-		}
+		query = applyCompetitionScope(query, scope, "comp_directories")
 
 		if strings.TrimSpace(req.CompName) != "" {
 			query = query.Where("comp_directories.comp_name LIKE ?", "%"+strings.TrimSpace(req.CompName)+"%")
@@ -971,20 +957,17 @@ func GetWorkAuditStudentList(c *gin.Context) {
 		req.PageSize = MaxPageSize
 	}
 
-	userIDVal, exists := c.Get("user_id")
-	if !exists {
-		utils.Unauthorized(c, "未登录")
-		return
-	}
-	userID := userIDVal.(uint)
-
 	var comp models.CompDirectory
-	if err := database.DB.WithContext(c.Request.Context()).Select("id", "manager_id").Where("id = ?", req.CompID).First(&comp).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Select("id", "manager_id", "college_id").Where("id = ?", req.CompID).First(&comp).Error; err != nil {
 		utils.NotFound(c, "赛事不存在")
 		return
 	}
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
+		return
+	}
 
-	if !checkUserIsAdmin(c.Request.Context(), userID) && comp.ManagerID != userID {
+	if !canAccessCompetition(scope, comp) {
 		utils.Forbidden(c, "无权查看该赛事提交信息")
 		return
 	}
@@ -1067,9 +1050,6 @@ func AuditRegister(c *gin.Context) {
 		return
 	}
 
-	userIDVal, _ := c.Get("user_id")
-	userID := userIDVal.(uint)
-
 	var reg models.Register
 	err := database.DB.WithContext(c.Request.Context()).Preload("Competition").Preload("Competition.Detail").First(&reg, req.ID).Error
 
@@ -1091,11 +1071,13 @@ func AuditRegister(c *gin.Context) {
 		return
 	}
 
-	if !checkUserIsAdmin(c.Request.Context(), userID) {
-		if reg.Competition.ManagerID != userID {
-			utils.Forbidden(c, "您无权审核此条记录")
-			return
-		}
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
+		return
+	}
+	if !canAccessCompetition(scope, reg.Competition) {
+		utils.Forbidden(c, "您无权审核此条记录")
+		return
 	}
 
 	updateMap := map[string]interface{}{

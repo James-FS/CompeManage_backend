@@ -15,6 +15,16 @@ var DB *gorm.DB // 全局DB实例
 
 // Init 初始化数据库连接
 func Init() {
+	initDatabase(true)
+}
+
+// InitWithoutMigrate 仅建立数据库连接，供 dry-run/verify 等迁移工具使用，
+// 避免只读检查在启动时被 AutoMigrate 意外改变数据库结构。
+func InitWithoutMigrate() {
+	initDatabase(false)
+}
+
+func initDatabase(runAutoMigrate bool) {
 	// 拼接DSN（MySQL连接字符串）
 	c := config.AppConfig.Database
 
@@ -42,8 +52,10 @@ func Init() {
 	sqlDB.SetMaxOpenConns(300) // 增大最大打开连接
 	log.Println("数据库连接成功")
 
-	// 自动迁移数据库表
-	autoMigrate()
+	if runAutoMigrate {
+		// 自动迁移数据库表
+		autoMigrate()
+	}
 }
 
 func autoMigrate() {
@@ -69,6 +81,8 @@ func autoMigrate() {
 		&models.FileRecord{},
 		&models.ReviewTask{},
 		&models.ReviewRecord{},
+		&models.UserRoleAudit{},
+		&models.PermissionCacheInvalidationTask{},
 	)
 
 	// 重新启用外键检查

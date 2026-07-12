@@ -22,11 +22,11 @@ import (
 const maxFileSize = 30 << 20
 
 var uploadDirs = map[string]string{
-	"notice":         "static/notices",
+	"notice":           "static/notices",
 	"reg_attachment":   "static/reg_attachments",
 	"competition_work": "static/reg_attachments",
 	"award_proof":      "static/award_proofs",
-	"temp":           "static/temp",
+	"temp":             "static/temp",
 }
 
 var allowedExts = map[string]bool{
@@ -234,9 +234,22 @@ func canAccessFile(ctx context.Context, c *gin.Context, fileType string, record 
 		return true
 	}
 
-	// 管理员
-	if checkUserIsAdmin(ctx, uid) {
-		return true
+	// 校管理员可访问全部受控文件；院管理员仅可访问管理学院赛事文件。
+	scope, err := GetUserAccessScope(ctx, uid)
+	if err == nil {
+		if scope.IsSchoolAdmin() {
+			return true
+		}
+		if scope.IsCollegeAdmin() && scope.ManagedCollegeID != nil {
+			compID := findCompIDByStoragePath(ctx, record.StoragePath)
+			if compID != 0 {
+				var comp models.CompDirectory
+				if database.DB.WithContext(ctx).Select("id", "manager_id", "college_id").First(&comp, compID).Error == nil &&
+					canAccessCompetition(scope, comp) {
+					return true
+				}
+			}
+		}
 	}
 
 	switch fileType {

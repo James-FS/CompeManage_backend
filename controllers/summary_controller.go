@@ -48,12 +48,10 @@ func GetSummaryList(c *gin.Context) {
 	}
 	offset := (req.Page - 1) * req.PageSize
 
-	userIDVal, exists := c.Get("user_id")
-	if !exists {
-		utils.Unauthorized(c, "未登录")
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
 		return
 	}
-	userID := userIDVal.(uint)
 
 	query := database.DB.WithContext(c.Request.Context()).Table("comp_directories").
 		Joins("LEFT JOIN comp_details ON comp_details.comp_id = comp_directories.id").
@@ -62,10 +60,7 @@ func GetSummaryList(c *gin.Context) {
 		Joins("LEFT JOIN summaries ON summaries.comp_id = comp_directories.id").
 		Where("comp_directories.status = ?", 2)
 
-	// 非管理员：只看自己负责的赛事
-	if !checkUserIsAdmin(c.Request.Context(), userID) {
-		query = query.Where("comp_directories.manager_id = ?", userID)
-	}
+	query = applyCompetitionScope(query, scope, "comp_directories")
 
 	if req.CompName != "" {
 		query = query.Where("comp_directories.comp_name LIKE ?", "%"+req.CompName+"%")
@@ -188,13 +183,10 @@ func GetSummaryDetail(c *gin.Context) {
 		return
 	}
 	compID := uint(compIDUint64)
-
-	userIDVal, exists := c.Get("user_id")
-	if !exists {
+	if _, exists := c.Get("user_id"); !exists {
 		utils.Unauthorized(c, "未登录")
 		return
 	}
-	userID := userIDVal.(uint)
 
 	// 1. 查询赛事基本信息
 	var comp models.CompDirectory
@@ -206,9 +198,13 @@ func GetSummaryDetail(c *gin.Context) {
 		utils.InternalServerError(c, "查询赛事失败", err)
 		return
 	}
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
+		return
+	}
 
 	// 权限检查
-	if !checkUserIsAdmin(c.Request.Context(), userID) && comp.ManagerID != userID {
+	if !canAccessCompetition(scope, comp) {
 		utils.Forbidden(c, "无权查看该赛事总结")
 		return
 	}
@@ -339,13 +335,10 @@ func SaveSummary(c *gin.Context) {
 		utils.BadRequest(c, "status 只能是 0 或 1")
 		return
 	}
-
-	userIDVal, exists := c.Get("user_id")
-	if !exists {
+	if _, exists := c.Get("user_id"); !exists {
 		utils.Unauthorized(c, "未登录")
 		return
 	}
-	userID := userIDVal.(uint)
 
 	var comp models.CompDirectory
 	if err := database.DB.WithContext(c.Request.Context()).First(&comp, compID).Error; err != nil {
@@ -356,8 +349,12 @@ func SaveSummary(c *gin.Context) {
 		utils.InternalServerError(c, "查询赛事失败", err)
 		return
 	}
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
+		return
+	}
 
-	if !checkUserIsAdmin(c.Request.Context(), userID) && comp.ManagerID != userID {
+	if !canAccessCompetition(scope, comp) {
 		utils.Forbidden(c, "无权操作该赛事总结")
 		return
 	}
@@ -397,8 +394,8 @@ func SaveSummary(c *gin.Context) {
 			Expenses:       string(expensesJSON),
 			Attachments:    string(attachmentsJSON),
 			Status:         req.Status,
-			CreatedBy:      userID,
-			UpdatedBy:      userID,
+			CreatedBy:      scope.UserID,
+			UpdatedBy:      scope.UserID,
 		}
 		if req.Status == 1 {
 			now := time.Now()
@@ -413,7 +410,7 @@ func SaveSummary(c *gin.Context) {
 		summary.Expenses = string(expensesJSON)
 		summary.Attachments = string(attachmentsJSON)
 		summary.Status = req.Status
-		summary.UpdatedBy = userID
+		summary.UpdatedBy = scope.UserID
 		if req.Status == 1 {
 			now := time.Now()
 			summary.ArchivedAt = &now

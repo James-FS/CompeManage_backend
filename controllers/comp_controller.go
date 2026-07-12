@@ -171,14 +171,12 @@ func GetCompetitionList(c *gin.Context) {
 	}
 
 	if req.IsMy {
-		userID, exists := c.Get("user_id")
-		if !exists {
-			utils.Unauthorized(c, "未登录")
+		scope, ok := requireUserAccessScope(c)
+		if !ok {
 			return
 		}
-		uid := userID.(uint)
-		if !checkUserIsAdmin(c.Request.Context(), uid) {
-			query = query.Where("manager_id = ?", userID)
+		query = applyCompetitionScope(query, scope, "comp_directories")
+		if !scope.IsSchoolAdmin() {
 			query = query.Preload("Detail", func(db *gorm.DB) *gorm.DB {
 				return db.Select("comp_id", "reg_start_time", "reg_end_time", "participant_type")
 			})

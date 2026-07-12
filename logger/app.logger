@@ -1,0 +1,208 @@
+{"time":"2026-07-12T21:13:44.2826621+08:00","level":"INFO","msg":"数据库连接成功"}
+{"time":"2026-07-12T21:13:49.3650401+08:00","level":"INFO","msg":"数据库自动迁移成功"}
+{"time":"2026-07-12T21:13:49.4015307+08:00","level":"INFO","msg":"数据库已有数据，跳过初始化..."}
+{"time":"2026-07-12T21:13:49.4430864+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-07-12T21:13:49.4833109+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-07-12T21:13:49.5180903+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-07-12T21:13:49.5623787+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-07-12T21:13:49.5948357+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-07-12T21:13:49.6281064+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-07-12T21:13:49.6784622+08:00","level":"INFO","msg":"已补齐角色 student 的通知权限"}
+{"time":"2026-07-12T21:13:49.7327522+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-07-12T21:13:49.7696098+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-07-12T21:13:49.795263+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-07-12T21:13:49.9285031+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-07-12T21:13:49.9618829+08:00","level":"INFO","msg":"已补齐角色 college_admin 的通知权限"}
+{"time":"2026-07-12T21:13:49.9890568+08:00","level":"INFO","msg":"已补齐角色 competition_manager 的通知权限"}
+{"time":"2026-07-12T21:13:50.0264024+08:00","level":"INFO","msg":"已补齐角色 expert 的通知权限"}
+{"time":"2026-07-12T21:13:50.1034038+08:00","level":"INFO","msg":"已补齐角色 school_admin 的通知权限"}
+{"time":"2026-07-12T21:13:50.4239181+08:00","level":"INFO","source":{"function":"CompeManage_backend/logger.Info","file":"D:/Code/CompeManage/CompeManage_backend/logger/logger.go","line":79},"msg":"Redis启动成功","host":"localhost","port":6379,"db":0}
+{"time":"2026-07-12T21:13:50.4268713+08:00","level":"INFO","msg":"服务器启动：http://localhost:8080"}
+{"time":"2026-07-12T21:14:20.4270295+08:00","level":"INFO","msg":"[DataHall] ========== 开始同步学生数据 =========="}
+{"time":"2026-07-12T21:14:20.5953331+08:00","level":"INFO","msg":"[DataHall] token 获取成功，有效期 7199 秒"}
+{"time":"2026-07-12T21:14:20.7038015+08:00","level":"INFO","msg":"[DataHall] 第 1/62 页拉取完成，本页 500 条，累计 500 条"}
+{"time":"2026-07-12T21:14:20.8526963+08:00","level":"INFO","msg":"[DataHall] 第 2/62 页拉取完成，本页 500 条，累计 1000 条"}
+{"time":"2026-07-12T21:14:20.9502092+08:00","level":"INFO","msg":"[DataHall] 第 3/62 页拉取完成，本页 500 条，累计 1500 条"}
+{"time":"2026-07-12T21:14:21.0409853+08:00","level":"INFO","msg":"[DataHall] 第 4/62 页拉取完成，本页 500 条，累计 2000 条"}
+{"time":"2026-07-12T21:14:21.1395393+08:00","level":"INFO","msg":"[DataHall] 第 5/62 页拉取完成，本页 500 条，累计 2500 条"}
+{"time":"2026-07-12T21:14:21.2394487+08:00","level":"INFO","msg":"[DataHall] 第 6/62 页拉取完成，本页 500 条，累计 3000 条"}
+{"time":"2026-07-12T21:14:21.3346572+08:00","level":"INFO","msg":"[DataHall] 第 7/62 页拉取完成，本页 500 条，累计 3500 条"}
+{"time":"2026-07-12T21:14:21.428485+08:00","level":"INFO","msg":"[DataHall] 第 8/62 页拉取完成，本页 500 条，累计 4000 条"}
+{"time":"2026-07-12T21:14:21.5252254+08:00","level":"INFO","msg":"[DataHall] 第 9/62 页拉取完成，本页 500 条，累计 4500 条"}
+{"time":"2026-07-12T21:14:21.6631979+08:00","level":"INFO","msg":"[DataHall] 第 10/62 页拉取完成，本页 500 条，累计 5000 条"}
+{"time":"2026-07-12T21:14:21.7596233+08:00","level":"INFO","msg":"[DataHall] 第 11/62 页拉取完成，本页 500 条，累计 5500 条"}
+{"time":"2026-07-12T21:14:21.8525687+08:00","level":"INFO","msg":"[DataHall] 第 12/62 页拉取完成，本页 500 条，累计 6000 条"}
+{"time":"2026-07-12T21:14:21.9505786+08:00","level":"INFO","msg":"[DataHall] 第 13/62 页拉取完成，本页 500 条，累计 6500 条"}
+{"time":"2026-07-12T21:14:22.0387451+08:00","level":"INFO","msg":"[DataHall] 第 14/62 页拉取完成，本页 500 条，累计 7000 条"}
+{"time":"2026-07-12T21:14:22.2222128+08:00","level":"INFO","msg":"[DataHall] 第 15/62 页拉取完成，本页 500 条，累计 7500 条"}
+{"time":"2026-07-12T21:14:22.4278091+08:00","level":"INFO","msg":"[DataHall-Dept] ========== 开始同步部门数据 =========="}
+{"time":"2026-07-12T21:14:22.5058505+08:00","level":"INFO","msg":"[DataHall-Dept] 第 1/1 页拉取完成，本页 215 条，累计 215 条"}
+{"time":"2026-07-12T21:14:22.5058505+08:00","level":"INFO","msg":"[DataHall-Dept] 拉取完成，共 215 条机构记录，开始写入数据库..."}
+{"time":"2026-07-12T21:14:22.5225696+08:00","level":"INFO","msg":"[DataHall] 第 16/62 页拉取完成，本页 500 条，累计 8000 条"}
+{"time":"2026-07-12T21:14:22.6184465+08:00","level":"INFO","msg":"[DataHall] 第 17/62 页拉取完成，本页 500 条，累计 8500 条"}
+{"time":"2026-07-12T21:14:22.9304161+08:00","level":"INFO","msg":"[DataHall] 第 18/62 页拉取完成，本页 500 条，累计 9000 条"}
+{"time":"2026-07-12T21:14:23.0446634+08:00","level":"INFO","msg":"[DataHall] 第 19/62 页拉取完成，本页 500 条，累计 9500 条"}
+{"time":"2026-07-12T21:14:23.1388073+08:00","level":"INFO","msg":"[DataHall] 第 20/62 页拉取完成，本页 500 条，累计 10000 条"}
+{"time":"2026-07-12T21:14:23.2359559+08:00","level":"INFO","msg":"[DataHall] 第 21/62 页拉取完成，本页 500 条，累计 10500 条"}
+{"time":"2026-07-12T21:14:23.327074+08:00","level":"INFO","msg":"[DataHall-Dept] 同步完成: 总数=215 新增=0 更新=14 跳过=201 失败=0 耗时=899.2649ms"}
+{"time":"2026-07-12T21:14:23.327074+08:00","level":"INFO","msg":"[DataHall-Dept] ========== 部门数据同步结束 =========="}
+{"time":"2026-07-12T21:14:23.4279501+08:00","level":"INFO","msg":"[DataHall-College] ========== 开始同步组织机构数据 =========="}
+{"time":"2026-07-12T21:14:23.482441+08:00","level":"INFO","msg":"[DataHall-College] 第 1/1 页拉取完成，本页 215 条，累计 215 条"}
+{"time":"2026-07-12T21:14:23.4829475+08:00","level":"INFO","msg":"[DataHall-College] 拉取完成，共 215 条机构记录，开始写入数据库..."}
+{"time":"2026-07-12T21:14:23.5350883+08:00","level":"INFO","msg":"[DataHall] 第 22/62 页拉取完成，本页 500 条，累计 11000 条"}
+{"time":"2026-07-12T21:14:23.6306526+08:00","level":"INFO","msg":"[DataHall] 第 23/62 页拉取完成，本页 500 条，累计 11500 条"}
+{"time":"2026-07-12T21:14:23.6590816+08:00","level":"INFO","msg":"[DataHall-College] 同步完成: 总数=215 新增=0 更新=2 跳过=213 失败=0 耗时=231.1315ms"}
+{"time":"2026-07-12T21:14:23.6595946+08:00","level":"INFO","msg":"[DataHall-College] ========== 组织机构数据同步结束 =========="}
+{"time":"2026-07-12T21:14:23.7227674+08:00","level":"INFO","msg":"[DataHall] 第 24/62 页拉取完成，本页 500 条，累计 12000 条"}
+{"time":"2026-07-12T21:14:23.8281489+08:00","level":"INFO","msg":"[DataHall] 第 25/62 页拉取完成，本页 500 条，累计 12500 条"}
+{"time":"2026-07-12T21:14:23.9324714+08:00","level":"INFO","msg":"[DataHall] 第 26/62 页拉取完成，本页 500 条，累计 13000 条"}
+{"time":"2026-07-12T21:14:24.0265081+08:00","level":"INFO","msg":"[DataHall] 第 27/62 页拉取完成，本页 500 条，累计 13500 条"}
+{"time":"2026-07-12T21:14:24.1166421+08:00","level":"INFO","msg":"[DataHall] 第 28/62 页拉取完成，本页 500 条，累计 14000 条"}
+{"time":"2026-07-12T21:14:24.4140489+08:00","level":"INFO","msg":"[DataHall] 第 29/62 页拉取完成，本页 500 条，累计 14500 条"}
+{"time":"2026-07-12T21:14:24.7107472+08:00","level":"ERROR","source":{"function":"CompeManage_backend/utils.InternalServerError","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":120},"msg":"服务器内部错误","path":"/api/login","msg":"账号存在多个角色，请联系管理员处理","error":"用户存在多个角色"}
+{"time":"2026-07-12T21:14:24.7107472+08:00","level":"WARN","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":37},"msg":"接口响应错误","path":"/api/login","method":"POST","biz_code":500,"msg":"服务器内部错误，请稍后重试","ip":"127.0.0.1"}
+{"time":"2026-07-12T21:14:24.92221+08:00","level":"INFO","msg":"[DataHall] 第 30/62 页拉取完成，本页 500 条，累计 15000 条"}
+{"time":"2026-07-12T21:14:25.0224481+08:00","level":"INFO","msg":"[DataHall] 第 31/62 页拉取完成，本页 500 条，累计 15500 条"}
+{"time":"2026-07-12T21:14:25.1252792+08:00","level":"INFO","msg":"[DataHall] 第 32/62 页拉取完成，本页 500 条，累计 16000 条"}
+{"time":"2026-07-12T21:14:25.2161417+08:00","level":"INFO","msg":"[DataHall] 第 33/62 页拉取完成，本页 500 条，累计 16500 条"}
+{"time":"2026-07-12T21:14:25.3090303+08:00","level":"INFO","msg":"[DataHall] 第 34/62 页拉取完成，本页 500 条，累计 17000 条"}
+{"time":"2026-07-12T21:14:25.4278706+08:00","level":"INFO","msg":"[DataHall-Staff] ========== 开始同步教职工数据 =========="}
+{"time":"2026-07-12T21:14:25.4402562+08:00","level":"INFO","msg":"[DataHall-Staff] token 获取成功，有效期 7195 秒"}
+{"time":"2026-07-12T21:14:25.6211737+08:00","level":"INFO","msg":"[DataHall] 第 35/62 页拉取完成，本页 500 条，累计 17500 条"}
+{"time":"2026-07-12T21:14:25.7275141+08:00","level":"INFO","msg":"[DataHall] 第 36/62 页拉取完成，本页 500 条，累计 18000 条"}
+{"time":"2026-07-12T21:14:25.7294813+08:00","level":"INFO","msg":"[DataHall-Staff] 第 1/20 页拉取完成，本页 500 条，累计 500 条"}
+{"time":"2026-07-12T21:14:25.8156593+08:00","level":"INFO","msg":"[DataHall-Staff] 第 2/20 页拉取完成，本页 500 条，累计 1000 条"}
+{"time":"2026-07-12T21:14:25.8508491+08:00","level":"INFO","msg":"[DataHall] 第 37/62 页拉取完成，本页 500 条，累计 18500 条"}
+{"time":"2026-07-12T21:14:25.9053453+08:00","level":"INFO","msg":"[DataHall-Staff] 第 3/20 页拉取完成，本页 500 条，累计 1500 条"}
+{"time":"2026-07-12T21:14:25.9457732+08:00","level":"INFO","msg":"[DataHall] 第 38/62 页拉取完成，本页 500 条，累计 19000 条"}
+{"time":"2026-07-12T21:14:25.9734293+08:00","level":"INFO","msg":"[DataHall-Staff] 第 4/20 页拉取完成，本页 500 条，累计 2000 条"}
+{"time":"2026-07-12T21:14:26.0352087+08:00","level":"INFO","msg":"[DataHall] 第 39/62 页拉取完成，本页 500 条，累计 19500 条"}
+{"time":"2026-07-12T21:14:26.0482715+08:00","level":"INFO","msg":"[DataHall-Staff] 第 5/20 页拉取完成，本页 500 条，累计 2500 条"}
+{"time":"2026-07-12T21:14:26.1324187+08:00","level":"INFO","msg":"[DataHall] 第 40/62 页拉取完成，本页 500 条，累计 20000 条"}
+{"time":"2026-07-12T21:14:26.2247794+08:00","level":"INFO","msg":"[DataHall] 第 41/62 页拉取完成，本页 500 条，累计 20500 条"}
+{"time":"2026-07-12T21:14:26.3229905+08:00","level":"INFO","msg":"[DataHall] 第 42/62 页拉取完成，本页 500 条，累计 21000 条"}
+{"time":"2026-07-12T21:14:26.3264164+08:00","level":"INFO","msg":"[DataHall-Staff] 第 6/20 页拉取完成，本页 500 条，累计 3000 条"}
+{"time":"2026-07-12T21:14:26.3984102+08:00","level":"INFO","msg":"[DataHall-Staff] 第 7/20 页拉取完成，本页 500 条，累计 3500 条"}
+{"time":"2026-07-12T21:14:26.4149454+08:00","level":"INFO","msg":"[DataHall] 第 43/62 页拉取完成，本页 500 条，累计 21500 条"}
+{"time":"2026-07-12T21:14:26.5145721+08:00","level":"INFO","msg":"[DataHall] 第 44/62 页拉取完成，本页 500 条，累计 22000 条"}
+{"time":"2026-07-12T21:14:26.6046599+08:00","level":"INFO","msg":"[DataHall] 第 45/62 页拉取完成，本页 500 条，累计 22500 条"}
+{"time":"2026-07-12T21:14:26.6795233+08:00","level":"INFO","msg":"[DataHall-Staff] 第 8/20 页拉取完成，本页 500 条，累计 4000 条"}
+{"time":"2026-07-12T21:14:26.6965033+08:00","level":"INFO","msg":"[DataHall] 第 46/62 页拉取完成，本页 500 条，累计 23000 条"}
+{"time":"2026-07-12T21:14:26.7480107+08:00","level":"INFO","msg":"[DataHall-Staff] 第 9/20 页拉取完成，本页 500 条，累计 4500 条"}
+{"time":"2026-07-12T21:14:26.7876799+08:00","level":"INFO","msg":"[DataHall] 第 47/62 页拉取完成，本页 500 条，累计 23500 条"}
+{"time":"2026-07-12T21:14:26.8841634+08:00","level":"INFO","msg":"[DataHall] 第 48/62 页拉取完成，本页 500 条，累计 24000 条"}
+{"time":"2026-07-12T21:14:26.9773104+08:00","level":"INFO","msg":"[DataHall] 第 49/62 页拉取完成，本页 500 条，累计 24500 条"}
+{"time":"2026-07-12T21:14:27.0144039+08:00","level":"INFO","msg":"[DataHall-Staff] 第 10/20 页拉取完成，本页 500 条，累计 5000 条"}
+{"time":"2026-07-12T21:14:27.0744956+08:00","level":"INFO","msg":"[DataHall] 第 50/62 页拉取完成，本页 500 条，累计 25000 条"}
+{"time":"2026-07-12T21:14:27.1786291+08:00","level":"INFO","msg":"[DataHall] 第 51/62 页拉取完成，本页 500 条，累计 25500 条"}
+{"time":"2026-07-12T21:14:27.2846411+08:00","level":"INFO","msg":"[DataHall] 第 52/62 页拉取完成，本页 500 条，累计 26000 条"}
+{"time":"2026-07-12T21:14:27.2857306+08:00","level":"INFO","msg":"[DataHall-Staff] 第 11/20 页拉取完成，本页 500 条，累计 5500 条"}
+{"time":"2026-07-12T21:14:27.3897872+08:00","level":"INFO","msg":"[DataHall] 第 53/62 页拉取完成，本页 500 条，累计 26500 条"}
+{"time":"2026-07-12T21:14:27.4976275+08:00","level":"INFO","msg":"[DataHall] 第 54/62 页拉取完成，本页 500 条，累计 27000 条"}
+{"time":"2026-07-12T21:14:27.578203+08:00","level":"INFO","msg":"[DataHall-Staff] 第 12/20 页拉取完成，本页 500 条，累计 6000 条"}
+{"time":"2026-07-12T21:14:27.5963522+08:00","level":"INFO","msg":"[DataHall] 第 55/62 页拉取完成，本页 500 条，累计 27500 条"}
+{"time":"2026-07-12T21:14:27.6554094+08:00","level":"INFO","msg":"[DataHall-Staff] 第 13/20 页拉取完成，本页 500 条，累计 6500 条"}
+{"time":"2026-07-12T21:14:27.6902679+08:00","level":"INFO","msg":"[DataHall] 第 56/62 页拉取完成，本页 500 条，累计 28000 条"}
+{"time":"2026-07-12T21:14:27.7228162+08:00","level":"INFO","msg":"[DataHall-Staff] 第 14/20 页拉取完成，本页 500 条，累计 7000 条"}
+{"time":"2026-07-12T21:14:27.7968689+08:00","level":"INFO","msg":"[DataHall-Staff] 第 15/20 页拉取完成，本页 500 条，累计 7500 条"}
+{"time":"2026-07-12T21:14:27.7979268+08:00","level":"INFO","msg":"[DataHall] 第 57/62 页拉取完成，本页 500 条，累计 28500 条"}
+{"time":"2026-07-12T21:14:27.8584032+08:00","level":"INFO","msg":"[DataHall-Staff] 第 16/20 页拉取完成，本页 500 条，累计 8000 条"}
+{"time":"2026-07-12T21:14:27.899138+08:00","level":"INFO","msg":"[DataHall] 第 58/62 页拉取完成，本页 500 条，累计 29000 条"}
+{"time":"2026-07-12T21:14:27.934238+08:00","level":"INFO","msg":"[DataHall-Staff] 第 17/20 页拉取完成，本页 500 条，累计 8500 条"}
+{"time":"2026-07-12T21:14:28.0049049+08:00","level":"INFO","msg":"[DataHall] 第 59/62 页拉取完成，本页 500 条，累计 29500 条"}
+{"time":"2026-07-12T21:14:28.0084175+08:00","level":"INFO","msg":"[DataHall-Staff] 第 18/20 页拉取完成，本页 500 条，累计 9000 条"}
+{"time":"2026-07-12T21:14:28.0986892+08:00","level":"INFO","msg":"[DataHall-Staff] 第 19/20 页拉取完成，本页 500 条，累计 9500 条"}
+{"time":"2026-07-12T21:14:28.1096106+08:00","level":"INFO","msg":"[DataHall] 第 60/62 页拉取完成，本页 500 条，累计 30000 条"}
+{"time":"2026-07-12T21:14:28.2021652+08:00","level":"INFO","msg":"[DataHall] 第 61/62 页拉取完成，本页 500 条，累计 30500 条"}
+{"time":"2026-07-12T21:14:28.2979505+08:00","level":"INFO","msg":"[DataHall] 第 62/62 页拉取完成，本页 353 条，累计 30853 条"}
+{"time":"2026-07-12T21:14:28.2979505+08:00","level":"INFO","msg":"[DataHall] 拉取完成，共 30853 条学生记录，开始写入数据库..."}
+{"time":"2026-07-12T21:14:28.3640652+08:00","level":"INFO","msg":"[DataHall-Staff] 第 20/20 页拉取完成，本页 269 条，累计 9769 条"}
+{"time":"2026-07-12T21:14:28.3640652+08:00","level":"INFO","msg":"[DataHall-Staff] 拉取完成，共 9769 条教职工记录，开始写入数据库..."}
+{"time":"2026-07-12T21:14:30.0962635+08:00","level":"ERROR","source":{"function":"CompeManage_backend/utils.InternalServerError","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":120},"msg":"服务器内部错误","path":"/api/login","msg":"账号存在多个角色，请联系管理员处理","error":"用户存在多个角色"}
+{"time":"2026-07-12T21:14:30.0962635+08:00","level":"WARN","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":37},"msg":"接口响应错误","path":"/api/login","method":"POST","biz_code":500,"msg":"服务器内部错误，请稍后重试","ip":"127.0.0.1"}
+{"time":"2026-07-12T21:14:30.427951+08:00","level":"INFO","msg":"[DataHall-Postgrad] ========== 开始同步研究生数据 =========="}
+{"time":"2026-07-12T21:14:30.4465131+08:00","level":"INFO","msg":"[DataHall-Postgrad] token 获取成功，有效期 7190 秒"}
+{"time":"2026-07-12T21:14:30.5455968+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 1/34 页拉取完成，本页 500 条，累计 500 条"}
+{"time":"2026-07-12T21:14:31.1129349+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 2/34 页拉取完成，本页 500 条，累计 1000 条"}
+{"time":"2026-07-12T21:14:31.4423658+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 3/34 页拉取完成，本页 500 条，累计 1500 条"}
+{"time":"2026-07-12T21:14:31.5392158+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 4/34 页拉取完成，本页 500 条，累计 2000 条"}
+{"time":"2026-07-12T21:14:31.6408778+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 5/34 页拉取完成，本页 500 条，累计 2500 条"}
+{"time":"2026-07-12T21:14:32.3764363+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 6/34 页拉取完成，本页 500 条，累计 3000 条"}
+{"time":"2026-07-12T21:14:32.4749275+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 7/34 页拉取完成，本页 500 条，累计 3500 条"}
+{"time":"2026-07-12T21:14:32.5731834+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 8/34 页拉取完成，本页 500 条，累计 4000 条"}
+{"time":"2026-07-12T21:14:32.6624269+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 9/34 页拉取完成，本页 500 条，累计 4500 条"}
+{"time":"2026-07-12T21:14:32.9565503+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 10/34 页拉取完成，本页 500 条，累计 5000 条"}
+{"time":"2026-07-12T21:14:33.0529746+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 11/34 页拉取完成，本页 500 条，累计 5500 条"}
+{"time":"2026-07-12T21:14:33.1467122+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 12/34 页拉取完成，本页 500 条，累计 6000 条"}
+{"time":"2026-07-12T21:14:33.2311186+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 13/34 页拉取完成，本页 500 条，累计 6500 条"}
+{"time":"2026-07-12T21:14:33.3218206+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 14/34 页拉取完成，本页 500 条，累计 7000 条"}
+{"time":"2026-07-12T21:14:33.4123174+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 15/34 页拉取完成，本页 500 条，累计 7500 条"}
+{"time":"2026-07-12T21:14:33.501245+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 16/34 页拉取完成，本页 500 条，累计 8000 条"}
+{"time":"2026-07-12T21:14:33.5910643+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 17/34 页拉取完成，本页 500 条，累计 8500 条"}
+{"time":"2026-07-12T21:14:33.6760653+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 18/34 页拉取完成，本页 500 条，累计 9000 条"}
+{"time":"2026-07-12T21:14:33.7636247+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 19/34 页拉取完成，本页 500 条，累计 9500 条"}
+{"time":"2026-07-12T21:14:33.8528506+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 20/34 页拉取完成，本页 500 条，累计 10000 条"}
+{"time":"2026-07-12T21:14:33.9429003+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 21/34 页拉取完成，本页 500 条，累计 10500 条"}
+{"time":"2026-07-12T21:14:34.0262285+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 22/34 页拉取完成，本页 500 条，累计 11000 条"}
+{"time":"2026-07-12T21:14:34.1136843+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 23/34 页拉取完成，本页 500 条，累计 11500 条"}
+{"time":"2026-07-12T21:14:34.2025426+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 24/34 页拉取完成，本页 500 条，累计 12000 条"}
+{"time":"2026-07-12T21:14:34.2964563+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 25/34 页拉取完成，本页 500 条，累计 12500 条"}
+{"time":"2026-07-12T21:14:34.3846391+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 26/34 页拉取完成，本页 500 条，累计 13000 条"}
+{"time":"2026-07-12T21:14:34.4794347+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 27/34 页拉取完成，本页 500 条，累计 13500 条"}
+{"time":"2026-07-12T21:14:34.5693468+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 28/34 页拉取完成，本页 500 条，累计 14000 条"}
+{"time":"2026-07-12T21:14:34.6648785+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 29/34 页拉取完成，本页 500 条，累计 14500 条"}
+{"time":"2026-07-12T21:14:34.7542844+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 30/34 页拉取完成，本页 500 条，累计 15000 条"}
+{"time":"2026-07-12T21:14:34.8435831+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 31/34 页拉取完成，本页 500 条，累计 15500 条"}
+{"time":"2026-07-12T21:14:34.9317142+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 32/34 页拉取完成，本页 500 条，累计 16000 条"}
+{"time":"2026-07-12T21:14:35.0262303+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 33/34 页拉取完成，本页 500 条，累计 16500 条"}
+{"time":"2026-07-12T21:14:35.1104942+08:00","level":"INFO","msg":"[DataHall-Postgrad] 第 34/34 页拉取完成，本页 416 条，累计 16916 条"}
+{"time":"2026-07-12T21:14:35.1104942+08:00","level":"INFO","msg":"[DataHall-Postgrad] 拉取完成，共 16916 条研究生记录，开始写入数据库..."}
+{"time":"2026-07-12T21:14:41.6868256+08:00","level":"ERROR","source":{"function":"CompeManage_backend/utils.InternalServerError","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":120},"msg":"服务器内部错误","path":"/api/login","msg":"账号存在多个角色，请联系管理员处理","error":"用户存在多个角色"}
+{"time":"2026-07-12T21:14:41.6868893+08:00","level":"WARN","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":37},"msg":"接口响应错误","path":"/api/login","method":"POST","biz_code":500,"msg":"服务器内部错误，请稍后重试","ip":"127.0.0.1"}
+{"time":"2026-07-12T21:14:45.2004964+08:00","level":"INFO","msg":"[DataHall-Staff] 创建用户 204764 失败: Error 1406 (22001): Data too long for column 'realname' at row 1"}
+{"time":"2026-07-12T21:15:43.2647596+08:00","level":"INFO","msg":"[DataHall-Postgrad] 创建用户 1112308034 失败: Error 1406 (22001): Data too long for column 'realname' at row 1"}
+{"time":"2026-07-12T21:15:45.4676082+08:00","level":"INFO","msg":"[DataHall-Staff] 创建用户 339107 失败: Error 1406 (22001): Data too long for column 'realname' at row 1"}
+{"time":"2026-07-12T21:17:18.611285+08:00","level":"INFO","msg":"[DataHall-Staff] 同步完成: 总数=9769 新增=28 更新=9739 跳过=0 失败=2 耗时=2m53.1834144s"}
+{"time":"2026-07-12T21:17:18.611285+08:00","level":"INFO","msg":"[DataHall-Staff] ========== 教职工数据同步结束 =========="}
+{"time":"2026-07-12T21:19:19.4855565+08:00","level":"INFO","msg":"[DataHall-Postgrad] 同步完成: 总数=16916 新增=0 更新=16912 跳过=3 失败=1 耗时=4m49.0576055s"}
+{"time":"2026-07-12T21:19:19.4855565+08:00","level":"INFO","msg":"[DataHall-Postgrad] ========== 研究生数据同步结束 =========="}
+{"time":"2026-07-12T21:22:21.2601196+08:00","level":"INFO","msg":"[DataHall] 同步完成: 总数=30853 新增=1 更新=29395 跳过=1457 失败=0 耗时=8m0.8330901s"}
+{"time":"2026-07-12T21:22:21.2601196+08:00","level":"INFO","msg":"[DataHall] ========== 学生数据同步结束 =========="}
+{"time":"2026-07-12T21:27:17.675713+08:00","level":"ERROR","source":{"function":"CompeManage_backend/utils.InternalServerError","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":120},"msg":"服务器内部错误","path":"/api/login","msg":"账号存在多个角色，请联系管理员处理","error":"用户存在多个角色"}
+{"time":"2026-07-12T21:27:17.6772324+08:00","level":"WARN","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":37},"msg":"接口响应错误","path":"/api/login","method":"POST","biz_code":500,"msg":"服务器内部错误，请稍后重试","ip":"127.0.0.1"}
+{"time":"2026-07-12T21:38:26.1288105+08:00","level":"ERROR","source":{"function":"CompeManage_backend/utils.InternalServerError","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":120},"msg":"服务器内部错误","path":"/api/login","msg":"账号存在多个角色，请联系管理员处理","error":"用户存在多个角色"}
+{"time":"2026-07-12T21:38:26.1288105+08:00","level":"WARN","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":37},"msg":"接口响应错误","path":"/api/login","method":"POST","biz_code":500,"msg":"服务器内部错误，请稍后重试","ip":"127.0.0.1"}
+{"time":"2026-07-12T22:07:04.3606687+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/login","method":"POST","biz_code":200}
+{"time":"2026-07-12T22:07:14.6964119+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/login","method":"POST","biz_code":200}
+{"time":"2026-07-12T22:14:30.6452178+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/login","method":"POST","biz_code":200}
+{"time":"2026-07-12T22:14:31.1922532+08:00","level":"ERROR","source":{"function":"CompeManage_backend/logger.Debug","file":"D:/Code/CompeManage/CompeManage_backend/logger/logger.go","line":88},"msg":"赛事列表缓存未命中","cache_key":"cache:comp_list:5fcd6674a4f09d695c38aec2a4353bc3"}
+{"time":"2026-07-12T22:14:31.1922532+08:00","level":"ERROR","source":{"function":"CompeManage_backend/logger.Debug","file":"D:/Code/CompeManage/CompeManage_backend/logger/logger.go","line":88},"msg":"赛事列表缓存未命中","cache_key":"cache:comp_list:07ad0bbc31d876596ce6a569a45e9594"}
+{"time":"2026-07-12T22:14:31.1989608+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/notice/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:14:31.2104476+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:14:31.2166022+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:14:31.2322296+08:00","level":"INFO","source":{"function":"CompeManage_backend/logger.Info","file":"D:/Code/CompeManage/CompeManage_backend/logger/logger.go","line":79},"msg":"赛事列表缓存命中","cache_key":"cache:comp_list:07ad0bbc31d876596ce6a569a45e9594"}
+{"time":"2026-07-12T22:14:31.2322296+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/comp/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:14:31.2560351+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/declare/pending/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:14:34.3571444+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/perm/role/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:14:34.4573904+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/perm/permission/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:14:36.1571845+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/college/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:14:36.1766439+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/perm/role/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:14:36.3377481+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/perm/user/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:14:42.0940484+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/perm/user/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:15:00.4994062+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/perm/user/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:15:03.3359551+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/perm/user/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:15:06.1007007+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/perm/user/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:15:08.3035898+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/perm/user/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:15:10.9962488+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/perm/user/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:15:15.323436+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/perm/user/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:15:18.2098598+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/perm/user/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:16:14.5317535+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/perm/role/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:16:14.8210313+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/perm/permission/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:16:15.5281811+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/college/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:16:15.5433093+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/perm/role/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:16:15.8983527+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/perm/user/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:17:00.2192476+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/perm/user/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:41:03.8112841+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/login","method":"POST","biz_code":200}
+{"time":"2026-07-12T22:41:04.0525562+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/perm/user/list","method":"GET","biz_code":200}
+{"time":"2026-07-12T22:41:04.1282225+08:00","level":"INFO","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":54},"msg":"接口响应成功","path":"/api/login","method":"POST","biz_code":200}
+{"time":"2026-07-12T22:41:04.1383903+08:00","level":"WARN","source":{"function":"CompeManage_backend/utils.newResponse","file":"D:/Code/CompeManage/CompeManage_backend/utils/response.go","line":37},"msg":"接口响应错误","path":"/api/perm/user/list","method":"GET","biz_code":403,"msg":"当前角色无权访问该功能","ip":"127.0.0.1"}
