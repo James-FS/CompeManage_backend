@@ -6,3 +6,4 @@ mysql/
 *.logger
 tmp/
 static/
+.env
