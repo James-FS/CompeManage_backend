@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 const casHTTPTimeout = 15 * time.Second
@@ -69,18 +71,11 @@ func CasCallback(c *gin.Context) {
 		return
 	}
 
-	// Step 4: 获取角色
-	roleCode := "student"
-	if len(user.Roles) == 0 {
-		var defaultRole models.Role
-		database.DB.WithContext(ctx).Where("role_code = ?", "student").First(&defaultRole)
-		if defaultRole.ID > 0 {
-			database.DB.WithContext(ctx).Model(&user).Association("Roles").Append(&defaultRole)
-			user.Roles = append(user.Roles, &defaultRole)
-		}
-	}
-	if len(user.Roles) > 0 {
-		roleCode = user.Roles[0].RoleCode
+	// Step 4: 获取唯一角色。未知身份不再默认授予 student。
+	roleCode, err := ensureCASUserSingleRole(ctx, user)
+	if err != nil {
+		redirectWithError(c, cfg.FrontendURL, err, "用户角色异常，请联系管理员")
+		return
 	}
 
 	// Step 5: 签发JWT
@@ -222,15 +217,88 @@ func findOrCreateUser(ctx context.Context, casUser *casProfileResponse) (*models
 	)
 
 	user = models.User{
-		Username: idNumber,
-		Realname: userName,
-		Password: string(randomPassword),
-		College:  unitName,
+		Username:     idNumber,
+		Realname:     userName,
+		Password:     string(randomPassword),
+		College:      unitName,
+		IdentityType: "external",
 	}
 
-	if err := database.DB.WithContext(ctx).Create(&user).Error; err != nil {
+	var guestRole models.Role
+	if err := database.DB.WithContext(ctx).Where("role_code = ?", "guest").First(&guestRole).Error; err != nil {
+		return nil, fmt.Errorf("默认访客角色不存在: %w", err)
+	}
+
+	if err := database.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&user).Error; err != nil {
+			return err
+		}
+		return database.SetUserRole(tx, user.ID, guestRole.ID)
+	}); err != nil {
 		return nil, fmt.Errorf("创建用户失败: %w", err)
 	}
+	user.Roles = []*models.Role{&guestRole}
 
 	return &user, nil
+}
+
+func ensureCASUserSingleRole(ctx context.Context, user *models.User) (string, error) {
+	if user == nil || user.ID == 0 {
+		return "", errors.New("用户信息无效")
+	}
+	if len(user.Roles) == 1 {
+		return user.Roles[0].RoleCode, nil
+	}
+	if len(user.Roles) > 1 {
+		return "", database.ErrUserHasMultipleRoles
+	}
+
+	identityType := strings.TrimSpace(user.IdentityType)
+	if identityType == "" {
+		identityType = inferLegacyIdentityType(*user)
+	}
+	roleCode := defaultRoleCodeForIdentity(identityType)
+
+	var role models.Role
+	if err := database.DB.WithContext(ctx).Where("role_code = ?", roleCode).First(&role).Error; err != nil {
+		return "", fmt.Errorf("默认角色不存在(%s): %w", roleCode, err)
+	}
+
+	if err := database.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.User{}).Where("id = ?", user.ID).
+			Update("identity_type", identityType).Error; err != nil {
+			return err
+		}
+		return database.SetUserRole(tx, user.ID, role.ID)
+	}); err != nil {
+		return "", fmt.Errorf("补齐用户默认角色失败: %w", err)
+	}
+
+	user.IdentityType = identityType
+	user.Roles = []*models.Role{&role}
+	return role.RoleCode, nil
+}
+
+func defaultRoleCodeForIdentity(identityType string) string {
+	switch identityType {
+	case "student", "postgraduate":
+		return "student"
+	case "staff":
+		// P1-2：教职工默认角色为教师；赛事负责人由管理员在赛事写入路径按需提升。
+		return "teacher"
+	default:
+		return "guest"
+	}
+}
+
+func inferLegacyIdentityType(user models.User) string {
+	username := strings.ToUpper(strings.TrimSpace(user.Username))
+	grade := strings.TrimSpace(user.Grade)
+	if strings.Contains(grade, "教职") || strings.HasPrefix(username, "T") {
+		return "staff"
+	}
+	if strings.Contains(grade, "级") || strings.HasPrefix(username, "S") {
+		return "student"
+	}
+	return "external"
 }

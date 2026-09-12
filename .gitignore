@@ -41,6 +41,7 @@ go. work
 Thumbs.db
 
 # Project specific
+dist/
 public/upload/*
 !public/upload/.gitkeep
 
@@ -52,4 +53,5 @@ coverage.txt
 mysql_data/
 app.logger
 server
+logger/app.logger
 logger/app.logger

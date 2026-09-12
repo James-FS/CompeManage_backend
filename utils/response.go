@@ -82,6 +82,11 @@ func SuccessCreated(c *gin.Context, data interface{}) {
 	c.JSON(http.StatusCreated, newResponse(c, SuccessCode, "created", data))
 }
 
+// SuccessAccepted 表示主操作已完成，但仍有异步收尾任务需要重试。
+func SuccessAccepted(c *gin.Context, message string, data interface{}) {
+	c.JSON(http.StatusAccepted, newResponse(c, SuccessCode, message, data))
+}
+
 // 内部通用错误响应
 func errorResponse(c *gin.Context, httpStatus int, code int, message string) {
 	resp := newResponse(c, code, message, nil)

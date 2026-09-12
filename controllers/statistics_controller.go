@@ -59,14 +59,15 @@ func calcPercent(numerator int64, denominator int64) float64 {
 
 // GetStatisticsDashboard 统计看板数据聚合接口
 func GetStatisticsDashboard(c *gin.Context) {
-	userIDVal, exists := c.Get("user_id")
-	if !exists {
-		utils.Unauthorized(c, "未登录")
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
 		return
 	}
-	userID := userIDVal.(uint)
-	isAdmin := checkUserIsAdmin(c.Request.Context(), userID)
-	cacheKey := fmt.Sprintf("cache:stats:dashboard:%v:%t", userID, isAdmin)
+	managedCollegeID := uint(0)
+	if scope.ManagedCollegeID != nil {
+		managedCollegeID = *scope.ManagedCollegeID
+	}
+	cacheKey := fmt.Sprintf("cache:stats:dashboard:%d:%s:%d", scope.UserID, scope.RoleCode, managedCollegeID)
 	rdb := middleware.GetRedisClient()
 	ctx := c.Request.Context()
 
@@ -86,46 +87,38 @@ func GetStatisticsDashboard(c *gin.Context) {
 
 	newCompBase := func() *gorm.DB {
 		q := database.DB.WithContext(ctx).Model(&models.CompDirectory{})
-		if !isAdmin {
-			q = q.Where("manager_id = ?", userID)
-		}
-		return q
+		return applyCompetitionScope(q, scope, "comp_directories")
 	}
 
 	newRegBase := func() *gorm.DB {
 		q := database.DB.WithContext(ctx).Model(&models.Register{}).
 			Joins("JOIN comp_directories ON comp_directories.id = registers.comp_id")
-		if !isAdmin {
-			q = q.Where("comp_directories.manager_id = ?", userID)
-		}
-		return q
+		return applyCompetitionScope(q, scope, "comp_directories")
 	}
 
 	newAwardBase := func() *gorm.DB {
 		q := database.DB.WithContext(ctx).Model(&models.Award{}).
 			Joins("JOIN registers ON registers.id = awards.reg_id").
 			Joins("JOIN comp_directories ON comp_directories.id = registers.comp_id")
-		if !isAdmin {
-			q = q.Where("comp_directories.manager_id = ?", userID)
-		}
-		return q
+		return applyCompetitionScope(q, scope, "comp_directories")
 	}
 
 	newSummaryBase := func() *gorm.DB {
 		q := database.DB.WithContext(ctx).Model(&models.Summary{}).
 			Joins("JOIN comp_directories ON comp_directories.id = summaries.comp_id")
-		if !isAdmin {
-			q = q.Where("comp_directories.manager_id = ?", userID)
-		}
-		return q
+		return applyCompetitionScope(q, scope, "comp_directories")
 	}
 
 	newDeclareBase := func() *gorm.DB {
 		q := database.DB.WithContext(ctx).Model(&models.CompDeclaration{})
-		if !isAdmin {
-			q = q.Where("created_by = ?", userID)
+		switch scope.RoleCode {
+		case "school_admin":
+			return q
+		case "college_admin":
+			return q.Where("college_id = ?", *scope.ManagedCollegeID)
+		default:
+			return q.Where("created_by = ?", scope.UserID)
 		}
-		return q
 	}
 
 	var totalCompetitions int64

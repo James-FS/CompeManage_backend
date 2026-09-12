@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -14,6 +15,8 @@ import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/middleware"
 	"CompeManage_backend/models"
+
+	"gorm.io/gorm"
 )
 
 const (
@@ -169,16 +172,8 @@ func SyncStaff() {
 
 	var teacherRole models.Role
 	if err := database.DB.Where("role_code = ?", "teacher").First(&teacherRole).Error; err != nil {
-		log.Printf("[DataHall-Staff] 未找到 teacher 角色: %v，新用户将不分配角色", err)
-	}
-
-	var teacherUserIDs []uint
-	database.DB.Table("user_roles").
-		Where("role_id = ?", teacherRole.ID).
-		Pluck("user_id", &teacherUserIDs)
-	teacherSet := make(map[uint]bool, len(teacherUserIDs))
-	for _, uid := range teacherUserIDs {
-		teacherSet[uid] = true
+		log.Printf("[DataHall-Staff] 未找到 teacher 角色: %v，终止本次同步", err)
+		return
 	}
 
 	var created, updated, skipped, failed int
@@ -193,7 +188,7 @@ func SyncStaff() {
 		var user models.User
 		result := database.DB.Where("username = ?", sid).First(&user)
 
-		if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			hashedPwd, pwdErr := hashPassword(lastNChars(sid, 6))
 			if pwdErr != nil {
 				log.Printf("[DataHall-Staff] 密码加密失败(职工号=%s): %v，跳过该用户", sid, pwdErr)
@@ -202,27 +197,34 @@ func SyncStaff() {
 			}
 
 			user = models.User{
-				Username: sid,
-				Realname: derefStr(item.Name),
-				Password: hashedPwd,
-				College:  derefStr(item.Org),
-				Sex:      item.Sex,
-				Title:    item.TecTitle,
+				Username:     sid,
+				Realname:     derefStr(item.Name),
+				Password:     hashedPwd,
+				College:      derefStr(item.Org),
+				Sex:          item.Sex,
+				Title:        item.TecTitle,
+				IdentityType: "staff",
 			}
 
-			if err := database.DB.Create(&user).Error; err != nil {
+			// P0-4 配套：唯一索引下并发同步易死锁，整体事务重试（Error 1213 回滚整个事务）
+			if err := database.TransactionWithDeadlockRetry(database.DB, func(tx *gorm.DB) error {
+				if err := tx.Create(&user).Error; err != nil {
+					return err
+				}
+				return database.SetUserRole(tx, user.ID, teacherRole.ID)
+			}); err != nil {
 				log.Printf("[DataHall-Staff] 创建用户 %s 失败: %v", sid, err)
 				failed++
 				continue
 			}
 
-			if teacherRole.ID != 0 {
-				database.DB.Model(&user).Association("Roles").Append(&teacherRole)
-			}
-
 			created++
+		} else if result.Error != nil {
+			log.Printf("[DataHall-Staff] 查询用户 %s 失败: %v", sid, result.Error)
+			failed++
+			continue
 		} else {
-			if !teacherSet[user.ID] {
+			if user.IdentityType != "" && user.IdentityType != "staff" {
 				skipped++
 				continue
 			}
@@ -232,7 +234,8 @@ func SyncStaff() {
 			newSex := derefStr(item.Sex)
 			newTitle := derefStr(item.TecTitle)
 
-			if user.Realname == newRealname &&
+			if user.IdentityType == "staff" &&
+				user.Realname == newRealname &&
 				user.College == newCollege &&
 				derefStr(user.Sex) == newSex &&
 				derefStr(user.Title) == newTitle {
@@ -241,10 +244,11 @@ func SyncStaff() {
 			}
 
 			updates := map[string]interface{}{
-				"realname": newRealname,
-				"college":  newCollege,
-				"sex":      item.Sex,
-				"title":    item.TecTitle,
+				"identity_type": "staff",
+				"realname":      newRealname,
+				"college":       newCollege,
+				"sex":           item.Sex,
+				"title":         item.TecTitle,
 			}
 			if err := database.DB.Model(&user).Updates(updates).Error; err != nil {
 				log.Printf("[DataHall-Staff] 更新用户 %s 失败: %v", sid, err)

@@ -118,8 +118,10 @@ func getLeaderMember(members []models.RegMember, fallback models.User) (string, 
 }
 
 func GetAwardCompList(c *gin.Context) {
-	userIDVal, _ := c.Get("user_id")
-	userID := userIDVal.(uint)
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
+		return
+	}
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("size", "10"))
@@ -130,9 +132,7 @@ func GetAwardCompList(c *gin.Context) {
 
 	db := database.DB.WithContext(c.Request.Context()).Model(&models.CompDirectory{})
 
-	if !checkUserIsAdmin(c.Request.Context(), userID) {
-		db = db.Where("manager_id = ?", userID)
-	}
+	db = applyCompetitionScope(db, scope, "comp_directories")
 
 	db.Count(&total)
 
@@ -768,7 +768,7 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 		tx.Rollback()
 		utils.InternalServerError(c, "查询已有申报记录失败", err)
 		return
-}
+	}
 
 	award := models.Award{
 		CompID:     req.CompID,
@@ -802,9 +802,6 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 }
 
 func GetAwardAuditList(c *gin.Context) {
-	userIDVal, _ := c.Get("user_id")
-	userID := userIDVal.(uint)
-
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
 	if pageSize == 0 {
@@ -843,9 +840,11 @@ func GetAwardAuditList(c *gin.Context) {
 		db = db.Where("comp_directories.comp_name LIKE ?", "%"+compName+"%")
 	}
 
-	if !checkUserIsAdmin(c.Request.Context(), userID) {
-		db = db.Where("comp_directories.manager_id = ?", userID)
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
+		return
 	}
+	db = applyCompetitionScope(db, scope, "comp_directories")
 
 	var awards []models.Award
 	if err := db.Order("awards.create_time DESC").Find(&awards).Error; err != nil {

@@ -8,8 +8,11 @@ import (
 	"testing"
 
 	"CompeManage_backend/database"
+	"CompeManage_backend/middleware"
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -24,6 +27,16 @@ func setupNoticeDBMock(t *testing.T) sqlmock.Sqlmock {
 	}), &gorm.Config{})
 	assert.NoError(t, err)
 	database.DB = gormDB
+
+	// 启动 miniredis，避免缓存逻辑 panic（cache miss 后走 DB）
+	mr := miniredis.RunT(t)
+	previousRedisClient := middleware.RedisClient
+	middleware.RedisClient = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() {
+		_ = middleware.RedisClient.Close()
+		middleware.RedisClient = previousRedisClient
+	})
+
 	return mock
 }
 

@@ -3,8 +3,10 @@ package database
 import (
 	"CompeManage_backend/models"
 	"log"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 func hashPassword(password string) string {
@@ -47,7 +49,21 @@ func grantRolePermissionsByCode(roleCode string, permCodes []string) {
 }
 
 func ensureNoticeManagePermissions() {
-	noticeManagePerms := []string{"notice:create", "notice:publish", "notice:delete"}
+	// P0-2/A-1：对存量库生效——先确保权限行存在（InitData 在已有数据时只走 ensure* 路径，
+	// 不会执行权限定义列表），再授予三个角色。
+	var noticeDir models.Permission
+	if err := DB.Where("code = ?", "notice").First(&noticeDir).Error; err == nil {
+		var existed models.Permission
+		if DB.Where("code = ?", "notice:update").First(&existed).Error != nil {
+			if err := DB.Create(&models.Permission{
+				Name: "编辑通知", Code: "notice:update", Type: 3,
+				ParentID: noticeDir.ID, Description: "编辑通知",
+			}).Error; err != nil {
+				log.Printf("补齐权限失败(notice:update): %v", err)
+			}
+		}
+	}
+	noticeManagePerms := []string{"notice:create", "notice:publish", "notice:delete", "notice:update"}
 	grantRolePermissionsByCode("competition_manager", noticeManagePerms)
 	grantRolePermissionsByCode("college_admin", noticeManagePerms)
 	grantRolePermissionsByCode("school_admin", noticeManagePerms)
@@ -113,8 +129,13 @@ func ensureAwardStudentPermissions() {
 
 	ensurePerm("award:student:my-list", "查看我的获奖", "学生查看个人获奖申报列表")
 	ensurePerm("award:student:supplement", "学生补录获奖", "学生提交获奖补录")
+	// P0-2/A-2：补齐获奖审核权限行（对存量库生效），并显式授予管理员——
+	// 存量库中 school_admin 的权限是初始化时一次性写入的，新增权限不会自动追加。
+	ensurePerm("award:audit", "获奖审核", "审核学生获奖申报")
 
 	grantRolePermissionsByCode("student", []string{"award:student:my-list", "award:student:supplement"})
+	grantRolePermissionsByCode("school_admin", []string{"award:audit"})
+	grantRolePermissionsByCode("college_admin", []string{"award:audit"})
 }
 
 func ensureDeclarePermissions() {
@@ -150,6 +171,171 @@ func ensureDeclarePermissions() {
 	grantRolePermissionsByCode("competition_manager", []string{"declare:audited-list"})
 }
 
+func ensureReviewPermissions() {
+	var reviewParent models.Permission
+	if err := DB.Where("code = ?", "review").First(&reviewParent).Error; err != nil {
+		// 创建 review 目录权限
+		reviewParent = models.Permission{
+			Name:        "专家评审",
+			Code:        "review",
+			Type:        1,
+			ParentID:    0,
+			Description: "专家评审相关功能",
+		}
+		if err := DB.Create(&reviewParent).Error; err != nil {
+			log.Printf("创建 review 权限目录失败: %v", err)
+			return
+		}
+		log.Println("已创建 review 权限目录")
+	}
+
+	ensurePerm := func(code, name, desc string) {
+		var existed models.Permission
+		if err := DB.Where("code = ?", code).First(&existed).Error; err == nil {
+			return
+		}
+
+		perm := models.Permission{
+			Name:        name,
+			Code:        code,
+			Type:        3,
+			ParentID:    reviewParent.ID,
+			Description: desc,
+		}
+		if err := DB.Create(&perm).Error; err != nil {
+			log.Printf("补齐权限失败(%s): %v", code, err)
+		}
+	}
+
+	// 管理员评审权限
+	ensurePerm("review:comp:list", "评审赛事列表", "查看评审赛事列表")
+	ensurePerm("review:expert:list", "获取专家列表", "获取可选的评审专家列表")
+	ensurePerm("review:task:list", "查看评审任务", "查看评审任务列表")
+	ensurePerm("review:task:assign", "分配评审任务", "分配评审专家")
+	ensurePerm("review:task:init", "初始化评审任务", "初始化评审任务")
+	ensurePerm("review:task:delete", "删除评审任务", "删除评审任务")
+	ensurePerm("review:progress", "查看评审进度", "查看评审进度")
+	ensurePerm("review:result:list", "查看评审结果", "查看评审结果汇总")
+	ensurePerm("review:result:confirm", "确认评审结果", "确认评审结果生成获奖")
+
+	// 专家评审权限
+	ensurePerm("review:my:list", "我的评审任务", "查看我的评审任务列表")
+	ensurePerm("review:my:works", "待评审作品", "查看待评审作品列表")
+	ensurePerm("review:my:work:detail", "作品详情", "查看作品详情")
+	ensurePerm("review:my:submit", "提交评审", "提交评审打分")
+	ensurePerm("review:my:update", "修改评审", "修改已提交的评审结果")
+
+	// 为已有角色补齐评审权限
+	grantRolePermissionsByCode("school_admin", []string{
+		"review:comp:list", "review:expert:list", "review:task:list", "review:task:assign",
+		"review:task:init", "review:task:delete", "review:progress", "review:result:list",
+		"review:result:confirm", "review:my:list", "review:my:works", "review:my:work:detail",
+		"review:my:submit", "review:my:update",
+	})
+	grantRolePermissionsByCode("college_admin", []string{
+		"review:comp:list", "review:expert:list", "review:task:list", "review:task:assign",
+		"review:task:init", "review:task:delete", "review:progress", "review:result:list",
+		"review:result:confirm",
+	})
+	grantRolePermissionsByCode("competition_manager", []string{
+		"review:comp:list", "review:expert:list", "review:task:list", "review:task:assign",
+		"review:task:init", "review:task:delete", "review:progress", "review:result:list",
+		"review:result:confirm",
+	})
+	grantRolePermissionsByCode("expert", []string{
+		"review:my:list", "review:my:works", "review:my:work:detail", "review:my:submit",
+		"review:my:update",
+	})
+}
+
+func ensureUserManagePermissions() {
+	var permParent models.Permission
+	if err := DB.Where("code = ?", "perm").First(&permParent).Error; err != nil {
+		log.Printf("未找到权限目录 perm，跳过用户管理权限补齐: %v", err)
+		return
+	}
+
+	definitions := []models.Permission{
+		{Name: "查看用户列表", Code: "user:list", Type: 3, ParentID: permParent.ID, Description: "查看系统用户、角色和管理学院"},
+		{Name: "分配用户角色", Code: "user:assign_role", Type: 3, ParentID: permParent.ID, Description: "修改用户角色和院管理员管理学院"},
+	}
+	for _, definition := range definitions {
+		var existing models.Permission
+		if err := DB.Where("code = ?", definition.Code).First(&existing).Error; err == nil {
+			continue
+		}
+		if err := DB.Create(&definition).Error; err != nil {
+			log.Printf("补齐用户管理权限失败(%s): %v", definition.Code, err)
+		}
+	}
+	grantRolePermissionsByCode("school_admin", []string{"user:list", "user:assign_role"})
+}
+
+// ensureTestUsers 确保测试账号存在（用于人工登录测试）
+func ensureTestUsers() {
+	type testUser struct {
+		User     models.User
+		RoleCode string
+	}
+
+	testUsers := []testUser{
+		{User: models.User{Username: "900001", Realname: "测试校管理员", Password: hashPassword("Pw@yy03"), College: "教务处", Grade: "教职员工", Major: "管理", IdentityType: "staff"}, RoleCode: "school_admin"},
+		{User: models.User{Username: "900006", Realname: "测试学生", Password: hashPassword("Pw@yy03"), College: "计算机科学与网络工程学院", Grade: "2024级", Major: "计算机科学与技术", IdentityType: "student"}, RoleCode: "student"},
+	}
+
+	for _, tu := range testUsers {
+		var existing models.User
+		if DB.Where("username = ?", tu.User.Username).First(&existing).Error == nil {
+			continue
+		}
+		var role models.Role
+		if DB.Where("role_code = ?", tu.RoleCode).First(&role).Error != nil {
+			log.Printf("未找到角色 %s，跳过测试用户 %s 角色分配", tu.RoleCode, tu.User.Username)
+			continue
+		}
+		if err := DB.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(&tu.User).Error; err != nil {
+				return err
+			}
+			return SetUserRole(tx, tu.User.ID, role.ID)
+		}); err != nil {
+			log.Printf("创建测试用户 %s 失败: %v", tu.User.Username, err)
+			continue
+		}
+		log.Printf("已创建测试用户: %s (角色: %s)", tu.User.Username, tu.RoleCode)
+	}
+}
+
+// ensureExpertUsers 确保种子专家用户存在（增量更新时不会丢失新增的专家账号）
+func ensureExpertUsers() {
+	var expertRole models.Role
+	if err := DB.Where("role_code = ?", "expert").First(&expertRole).Error; err != nil {
+		return
+	}
+
+	experts := []models.User{
+		{Username: "E2023001", Realname: "周杰", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子工程", IdentityType: "external"},
+		{Username: "E2023002", Realname: "李专家", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "计算机科学与技术", IdentityType: "external"},
+	}
+
+	for _, u := range experts {
+		var existing models.User
+		if DB.Where("username = ?", u.Username).First(&existing).Error == nil {
+			continue
+		}
+		if err := DB.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(&u).Error; err != nil {
+				return err
+			}
+			return SetUserRole(tx, u.ID, expertRole.ID)
+		}); err != nil {
+			log.Printf("创建专家用户 %s 失败: %v", u.Username, err)
+			continue
+		}
+		log.Printf("已补创建专家用户: %s", u.Username)
+	}
+}
+
 // ensureCompetitionRegConfigForAll 为已有赛事补齐报名设置的关键字段：
 // 报名开始/结束时间 + 个人赛/团队赛(ParticipantType)。
 // InitData 扩展版测试数据初始化
@@ -168,6 +354,10 @@ func InitData() {
 		ensureCompetitionCorePermissions()
 		ensureAwardStudentPermissions()
 		ensureDeclarePermissions()
+		ensureReviewPermissions()
+		ensureUserManagePermissions()
+		ensureExpertUsers()
+		ensureTestUsers()
 		return
 	}
 
@@ -182,11 +372,13 @@ func InitData() {
 	registrationDir := models.Permission{Name: "报名管理", Code: "registration", Type: 1, ParentID: 0, Description: "报名配置、审核、提交相关功能"}
 	noticeDir := models.Permission{Name: "通知管理", Code: "notice", Type: 1, ParentID: 0, Description: "通知发布和管理功能"}
 	systemDir := models.Permission{Name: "系统管理", Code: "system", Type: 1, ParentID: 0, Description: "权限、角色、基础数据管理"}
+	reviewDir := models.Permission{Name: "专家评审", Code: "review", Type: 1, ParentID: 0, Description: "专家评审相关功能"}
 
 	DB.Create(&competitionDir)
 	DB.Create(&registrationDir)
 	DB.Create(&noticeDir)
 	DB.Create(&systemDir)
+	DB.Create(&reviewDir)
 
 	// --- Level 2: 子分类（中间层父目录）Type=1(作为目录), ParentID=Level1.ID ---
 
@@ -253,6 +445,8 @@ func InitData() {
 		{Name: "查看获奖赛事列表", Code: "award:list", Type: 3, ParentID: awardSub.ID, Description: "查看获奖赛事列表"},
 		{Name: "查看赛事获奖信息", Code: "award:comp:list", Type: 3, ParentID: awardSub.ID, Description: "查看具体赛事的获奖信息"},
 		{Name: "导入获奖信息", Code: "award:import", Type: 3, ParentID: awardSub.ID, Description: "导入获奖信息"},
+		// P0-2/A-2：补齐获奖审核权限（此前 4 个审核路由要求该权限但从未创建，导致所有角色 403）
+		{Name: "获奖审核", Code: "award:audit", Type: 3, ParentID: awardSub.ID, Description: "审核学生获奖申报"},
 		{Name: "查看我的获奖", Code: "award:student:my-list", Type: 3, ParentID: awardSub.ID, Description: "学生查看个人获奖申报列表"},
 		{Name: "学生补录获奖", Code: "award:student:supplement", Type: 3, ParentID: awardSub.ID, Description: "学生提交获奖补录"},
 
@@ -279,15 +473,35 @@ func InitData() {
 		{Name: "创建通知", Code: "notice:create", Type: 3, ParentID: noticeDir.ID, Description: "创建新通知"},
 		{Name: "发布通知", Code: "notice:publish", Type: 3, ParentID: noticeDir.ID, Description: "发布通知"},
 		{Name: "删除通知", Code: "notice:delete", Type: 3, ParentID: noticeDir.ID, Description: "删除通知"},
+		// P0-2/A-1：补齐编辑通知权限（此前路由要求该权限但从未创建，导致所有角色 403）
+		{Name: "编辑通知", Code: "notice:update", Type: 3, ParentID: noticeDir.ID, Description: "编辑通知"},
 
 		// 权限管理权限 (parent: permSub)
 		{Name: "查看权限列表", Code: "perm:list", Type: 3, ParentID: permSub.ID, Description: "查看系统权限列表"},
 		{Name: "查看角色列表", Code: "role:list", Type: 3, ParentID: permSub.ID, Description: "查看系统角色列表"},
 		{Name: "分配权限", Code: "perm:assign", Type: 3, ParentID: permSub.ID, Description: "给角色分配权限"},
+		{Name: "查看用户列表", Code: "user:list", Type: 3, ParentID: permSub.ID, Description: "查看系统用户、角色和管理学院"},
+		{Name: "分配用户角色", Code: "user:assign_role", Type: 3, ParentID: permSub.ID, Description: "修改用户角色和院管理员管理学院"},
 
 		// 基础数据权限 (parent: basicSub)
 		{Name: "查看学院列表", Code: "college:list", Type: 3, ParentID: basicSub.ID, Description: "查看学院列表"},
 		{Name: "文件上传", Code: "upload:file", Type: 3, ParentID: basicSub.ID, Description: "上传文件"},
+
+		// 专家评审权限 (parent: reviewDir)
+		{Name: "评审赛事列表", Code: "review:comp:list", Type: 3, ParentID: reviewDir.ID, Description: "查看评审赛事列表"},
+		{Name: "获取专家列表", Code: "review:expert:list", Type: 3, ParentID: reviewDir.ID, Description: "获取可选的评审专家列表"},
+		{Name: "查看评审任务", Code: "review:task:list", Type: 3, ParentID: reviewDir.ID, Description: "查看评审任务列表"},
+		{Name: "分配评审任务", Code: "review:task:assign", Type: 3, ParentID: reviewDir.ID, Description: "分配评审专家"},
+		{Name: "初始化评审任务", Code: "review:task:init", Type: 3, ParentID: reviewDir.ID, Description: "初始化评审任务"},
+		{Name: "删除评审任务", Code: "review:task:delete", Type: 3, ParentID: reviewDir.ID, Description: "删除评审任务"},
+		{Name: "查看评审进度", Code: "review:progress", Type: 3, ParentID: reviewDir.ID, Description: "查看评审进度"},
+		{Name: "查看评审结果", Code: "review:result:list", Type: 3, ParentID: reviewDir.ID, Description: "查看评审结果汇总"},
+		{Name: "确认评审结果", Code: "review:result:confirm", Type: 3, ParentID: reviewDir.ID, Description: "确认评审结果生成获奖"},
+		{Name: "我的评审任务", Code: "review:my:list", Type: 3, ParentID: reviewDir.ID, Description: "查看我的评审任务列表"},
+		{Name: "待评审作品", Code: "review:my:works", Type: 3, ParentID: reviewDir.ID, Description: "查看待评审作品列表"},
+		{Name: "作品详情", Code: "review:my:work:detail", Type: 3, ParentID: reviewDir.ID, Description: "查看作品详情"},
+		{Name: "提交评审", Code: "review:my:submit", Type: 3, ParentID: reviewDir.ID, Description: "提交评审打分"},
+		{Name: "修改评审", Code: "review:my:update", Type: 3, ParentID: reviewDir.ID, Description: "修改已提交的评审结果"},
 	}
 	DB.Create(&perms)
 
@@ -319,30 +533,32 @@ func InitData() {
 	DB.Find(&allPerms)
 	DB.Model(&schoolAdminRole).Association("Permissions").Append(&allPerms)
 
-	// --- B. 院级管理员：竞赛查看、申报审核、报名审核、基础数据查看 ---
+	// --- B. 院级管理员：竞赛查看、申报审核、报名审核、基础数据查看、专家评审管理 ---
 	var collegePerms []models.Permission
 	DB.Where("code IN ?", []string{
 		// 大分类（目录权限）
-		"competition", "registration", "notice", "system",
+		"competition", "registration", "notice", "system", "review",
 		// 子分类（目录权限）
 		"comp", "declare", "award", "summary", "reg:config", "reg:audit", "basic",
 		// 具体权限
 		"comp:list", "comp:detail", "comp:years:list", "manager:list",
-		"declare:create", "declare:get", "declare:update", "declare:submit", "declare:list", "declare:delete", "declare:pending-list", "declare:audit", "declare:audited-list", "declare:revoke", "declare:all-declares",
-		"award:list", "award:comp:list",
+		"declare:create", "declare:get", "declare:update", "declare:submit", "declare:list", "declare:delete", "declare:pending-list", "declare:audited-list", "declare:revoke", "declare:all-declares",
+		"award:list", "award:comp:list", "award:audit",
 		"summary:list", "summary:detail",
 		"reg:config:view",
 		"reg:audit:list", "reg:audit:detail", "reg:audit:update",
-		"notice:list", "notice:detail", "notice:create", "notice:publish", "notice:delete",
+		"notice:list", "notice:detail", "notice:create", "notice:publish", "notice:delete", "notice:update",
 		"college:list",
+		// 专家评审管理
+		"review:comp:list", "review:expert:list", "review:task:list", "review:task:assign", "review:task:init", "review:task:delete", "review:progress", "review:result:list", "review:result:confirm",
 	}).Find(&collegePerms)
 	DB.Model(&collegeAdminRole).Association("Permissions").Append(&collegePerms)
 
-	// --- C. 赛事负责人：竞赛目录/赛事申报仅查看，其他模块保持原有权限 ---
+	// --- C. 赛事负责人：竞赛目录/赛事申报仅查看，其他模块保持原有权限、专家评审管理 ---
 	var managerPerms []models.Permission
 	DB.Where("code IN ?", []string{
 		// 大分类
-		"competition", "registration", "notice",
+		"competition", "registration", "notice", "review",
 		// 子分类
 		"comp", "declare", "award", "summary", "reg:config", "reg:audit", "reg:submit",
 		// 竞赛目录（仅查看）
@@ -358,9 +574,11 @@ func InitData() {
 		// 报名审核（全权限）
 		"reg:audit:list", "reg:audit:detail", "reg:audit:update",
 		// 通知管理
-		"notice:list", "notice:detail", "notice:create", "notice:publish", "notice:delete",
+		"notice:list", "notice:detail", "notice:create", "notice:publish", "notice:delete", "notice:update",
 		// 基础数据
 		"college:list", "upload:file",
+		// 专家评审管理
+		"review:comp:list", "review:expert:list", "review:task:list", "review:task:assign", "review:task:init", "review:task:delete", "review:progress", "review:result:list", "review:result:confirm",
 	}).Find(&managerPerms)
 	DB.Model(&competitionManagerRole).Association("Permissions").Append(&managerPerms)
 
@@ -400,27 +618,30 @@ func InitData() {
 	}).Find(&studentPerms)
 	DB.Model(&studentRole).Association("Permissions").Append(&studentPerms)
 
-	// --- F. 专家：竞赛查看、申报查看、获奖查看、通知查看 ---
+	// --- F. 专家：竞赛查看、申报查看、获奖查看、通知查看、专家评审 ---
 	var expertPerms []models.Permission
 	DB.Where("code IN ?", []string{
 		// 大分类
-		"competition", "notice",
+		"competition", "notice", "review",
 		// 子分类
 		"comp", "declare", "award",
-		// 竞赛查看
-		"comp:list", "comp:years:list", "manager:list",
+		// 竞赛查看（P2-C：专家不授予 manager:list，避免枚举全体教职工名单）
+		"comp:list", "comp:years:list",
 		// 申报查看
 		"declare:get", "declare:list", "declare:all-declares",
 		// 获奖查看
 		"award:list", "award:comp:list",
 		// 通知查看
 		"notice:list", "notice:detail",
+		// 专家评审
+		"review:my:list", "review:my:works", "review:my:work:detail", "review:my:submit", "review:my:update",
 	}).Find(&expertPerms)
 	DB.Model(&expertRole).Association("Permissions").Append(&expertPerms)
 
 	ensureNoticeManagePermissions()
 	ensureCompetitionCorePermissions()
 	ensureAwardStudentPermissions()
+	ensureUserManagePermissions()
 
 	// --- G. 访客：无特殊权限 ---
 	// 不分配任何权限
@@ -433,14 +654,13 @@ func InitData() {
 		{Username: "T2023002", Realname: "王老师", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "管理"},
 		{Username: "T2023003", Realname: "张伟", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "计算机科学"},
 		{Username: "T2023004", Realname: "李华", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子信息"},
-		{Username: "T2023005", Realname: "王强", Password: hashPassword("123"), College: "经济管理学院", Grade: "教职员工", Major: "经济管理"},
-		{Username: "T2023006", Realname: "赵敏", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "软件工程"},
 		{Username: "T2023010", Realname: "陈老师", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "软件工程"},
 		{Username: "T2023011", Realname: "刘老师", Password: hashPassword("123"), College: "数学学院", Grade: "教职员工", Major: "数学与应用数学"},
 		{Username: "T2023012", Realname: "何老师", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子科学与技术"},
 		{Username: "S2024001", Realname: "林晓明", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "2024级", Major: "计算机科学与技术"},
 		{Username: "S2024002", Realname: "陈思思", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "2024级", Major: "软件工程"},
 		{Username: "E2023001", Realname: "周杰", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子工程"},
+		{Username: "E2023002", Realname: "李专家", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "计算机科学与技术"},
 		// 新增：无权限测试用户
 		{Username: "guest", Realname: "访客用户", Password: hashPassword("123"), College: "其他", Grade: "访客", Major: ""},
 	}
@@ -451,24 +671,38 @@ func InitData() {
 		"T2023002": &collegeAdminRole,       // 王院长 - 院级管理员
 		"T2023003": &competitionManagerRole, // 张伟 - 赛事负责人
 		"T2023004": &competitionManagerRole, // 李华 - 赛事负责人
-		"T2023005": &competitionManagerRole, // 王强 - 赛事负责人
-		"T2023006": &competitionManagerRole, // 赵敏 - 赛事负责人
 		"T2023010": &teacherRole,            // 陈老师 - 老师
 		"T2023011": &teacherRole,            // 刘老师 - 老师
 		"T2023012": &teacherRole,            // 何老师 - 老师
 		"S2024001": &studentRole,            // 林晓明 - 学生
 		"S2024002": &studentRole,            // 陈思思 - 学生
 		"E2023001": &expertRole,             // 周杰 - 专家
-		// guest 用户不分配角色，用于测试无权限访问
+		"E2023002": &expertRole,             // 李专家 - 专家
+		"guest":    &guestRole,              // 访客账号使用 guest 角色
 	}
 
 	for _, u := range users {
-		if err := DB.Create(&u).Error; err != nil {
-			log.Printf("创建用户 %s 失败: %v", u.Username, err)
+		switch {
+		case strings.HasPrefix(u.Username, "S"):
+			u.IdentityType = "student"
+		case strings.HasPrefix(u.Username, "E") || u.Username == "guest":
+			u.IdentityType = "external"
+		default:
+			u.IdentityType = "staff"
+		}
+		role, ok := userRoleMap[u.Username]
+		if !ok {
+			log.Printf("用户 %s 未配置默认角色，跳过创建", u.Username)
 			continue
 		}
-		if role, ok := userRoleMap[u.Username]; ok {
-			DB.Model(&u).Association("Roles").Append(role)
+		if err := DB.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(&u).Error; err != nil {
+				return err
+			}
+			return SetUserRole(tx, u.ID, role.ID)
+		}); err != nil {
+			log.Printf("创建用户 %s 失败: %v", u.Username, err)
+			continue
 		}
 	}
 
@@ -492,17 +726,20 @@ func InitData() {
 			log.Printf("初始化学院数据失败: %v", err)
 		}
 	}
+	// 示例院管理员绑定管理学院。
+	DB.Model(&models.User{}).Where("username = ?", "T2023002").
+		Update("managed_college_id", uint(1))
 	log.Println("学院数据初始化完成")
 
 	log.Println("🎉 基础数据初始化完成（未写入任何比赛相关种子）！")
 	log.Println("================================")
 	log.Println("📋 用户账号信息：")
 	log.Println("  校级管理员: T2023001    密码: 123 (拥有所有权限)")
-	log.Println("  院级管理员: T2023002     密码: 123 (竞赛查看+申报审核+报名审核+报名配置查看)")
-	log.Println("  赛事负责人: T2023003  密码: 123 (竞赛管理+申报管理+报名配置编辑+报名审核)")
+	log.Println("  院级管理员: T2023002     密码: 123 (本学院竞赛/申报查看+报名审核+报名配置查看)")
+	log.Println("  赛事负责人: T2023003/T2023004  密码: 123 (竞赛管理+申报管理+报名配置编辑+报名审核)")
 	log.Println("  老师:       T2023010/T2023011/T2023012  密码: 123 (用于指导教师选择)")
 	log.Println("  学生:       S2024001  密码: 123 (报名提交+通知查看)")
-	log.Println("  专家:       E2023001   密码: 123 (竞赛查看+申报查看+获奖查看+通知查看)")
+	log.Println("  专家:       E2023001/E2023002   密码: 123 (竞赛查看+申报查看+获奖查看+通知查看)")
 	log.Println("  访客:       guest    密码: 123 (无任何权限-测试用)")
 	log.Println("================================")
 	log.Println("🔐 新权限结构说明：")
@@ -510,4 +747,5 @@ func InitData() {
 	log.Println("  第2层: 竞赛目录(comp)、赛事申报(declare)、获奖管理(award)等子分类")
 	log.Println("  第3层: 具体的操作权限(如 comp:list, reg:audit:update 等)")
 	log.Println("================================")
+	ensureTestUsers()
 }

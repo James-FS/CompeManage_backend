@@ -15,6 +15,22 @@ var DB *gorm.DB // 全局DB实例
 
 // Init 初始化数据库连接
 func Init() {
+	initDatabase(true)
+	// P0-4：启动时幂等创建 user_roles.user_id 唯一索引（数据库层单角色兜底）。
+	// 必须在 AutoMigrate 之后调用——user_roles 表由 User.Roles 的 many2many 在迁移时创建。
+	// 失败不阻断启动（如库中已有脏数据），但需记录并提示用迁移工具清理。
+	if err := EnsureUserRoleUniqueIndex(); err != nil {
+		log.Printf("创建 user_roles 唯一索引失败（如存在多角色脏数据请先运行 user_role_migrate 清理）: %v", err)
+	}
+}
+
+// InitWithoutMigrate 仅建立数据库连接，供 dry-run/verify 等迁移工具使用，
+// 避免只读检查在启动时被 AutoMigrate 意外改变数据库结构。
+func InitWithoutMigrate() {
+	initDatabase(false)
+}
+
+func initDatabase(runAutoMigrate bool) {
 	// 拼接DSN（MySQL连接字符串）
 	c := config.AppConfig.Database
 
@@ -38,12 +54,14 @@ func Init() {
 
 	// 连接池调优 - 支持更高并发
 	sqlDB, _ := DB.DB()
-	sqlDB.SetMaxIdleConns(50)   // 增大空闲连接
-	sqlDB.SetMaxOpenConns(200)   // 增大最大打开连接
+	sqlDB.SetMaxIdleConns(50)  // 增大空闲连接
+	sqlDB.SetMaxOpenConns(300) // 增大最大打开连接
 	log.Println("数据库连接成功")
 
-	// 自动迁移数据库表
-	autoMigrate()
+	if runAutoMigrate {
+		// 自动迁移数据库表
+		autoMigrate()
+	}
 }
 
 func autoMigrate() {
@@ -57,6 +75,7 @@ func autoMigrate() {
 		&models.Role{},
 		&models.Permission{},
 		&models.College{},
+		&models.Department{},
 		&models.CompDirectory{},
 		&models.CompDetail{},
 		&models.Register{},
@@ -66,6 +85,10 @@ func autoMigrate() {
 		&models.Award{},
 		&models.Summary{},
 		&models.FileRecord{},
+		&models.ReviewTask{},
+		&models.ReviewRecord{},
+		&models.UserRoleAudit{},
+		&models.PermissionCacheInvalidationTask{},
 	)
 
 	// 重新启用外键检查

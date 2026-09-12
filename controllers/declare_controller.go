@@ -64,6 +64,16 @@ func CreateDeclare(c *gin.Context) {
 		utils.Unauthorized(c, "未授权")
 		return
 	}
+	scope, ok := requestAccessScopeIfAvailable(c)
+	if !ok {
+		return
+	}
+	if scope != nil && scope.IsCollegeAdmin() {
+		if req.CollegeID != *scope.ManagedCollegeID {
+			utils.Forbidden(c, "院级管理员只能为所管理学院创建申报")
+			return
+		}
+	}
 
 	declaration := models.CompDeclaration{
 		CompName:       req.CompName,
@@ -80,17 +90,39 @@ func CreateDeclare(c *gin.Context) {
 		CreatedBy:      userID.(uint),
 	}
 
-	if err := database.DB.WithContext(c.Request.Context()).Create(&declaration).Error; err != nil {
+	var promotions []RolePromotion
+	if err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&declaration).Error; err != nil {
+			return err
+		}
+		// P4：申报负责人若为教师，自动提升为赛事负责人（操作者仅为校/院管理员）。
+		oldRoleID, newRoleID, promoteErr := promoteCompetitionManagerIfTeacher(tx, req.ManagerID)
+		if promoteErr != nil {
+			return promoteErr
+		}
+		if oldRoleID != 0 {
+			promotions = append(promotions, RolePromotion{
+				UserID:    req.ManagerID,
+				OldRoleID: oldRoleID,
+				NewRoleID: newRoleID,
+			})
+		}
+		return nil
+	}); err != nil {
 		utils.InternalServerError(c, "创建申报失败", err)
 		return
 	}
 
-	utils.SuccessWithMessage(c, "创建成功", declaration)
+	sourceID := declaration.ID
+	finalizeRolePromotions(c, promotions, auditReasonDeclare, &sourceID)
+	utils.SuccessWithMessage(c, "创建成功", gin.H{
+		"declaration":    declaration,
+		"promoted_users": promotedUsersResp(c, promotions),
+	})
 }
 
 func GetDeclareDetail(c *gin.Context) {
 	declareID := c.Param("id")
-
 	var declaration models.CompDeclaration
 	if err := database.DB.WithContext(c.Request.Context()).
 		Preload("CollegeInfo").
@@ -105,7 +137,12 @@ func GetDeclareDetail(c *gin.Context) {
 		utils.InternalServerError(c, "查询失败", err)
 		return
 	}
-
+	if scope, ok := requestAccessScopeIfAvailable(c); !ok {
+		return
+	} else if scope != nil && !canAccessDeclaration(scope, declaration) {
+		utils.Forbidden(c, "无权查看该申报")
+		return
+	}
 	utils.SuccessWithMessage(c, "查询成功", declaration)
 }
 
@@ -116,7 +153,6 @@ func UpdateDeclare(c *gin.Context) {
 		utils.BadRequest(c, "参数错误")
 		return
 	}
-
 	var declaration models.CompDeclaration
 	if err := database.DB.WithContext(c.Request.Context()).First(&declaration, declareID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -126,7 +162,18 @@ func UpdateDeclare(c *gin.Context) {
 		utils.InternalServerError(c, "查询失败", err)
 		return
 	}
-
+	scope, ok := requestAccessScopeIfAvailable(c)
+	if !ok {
+		return
+	}
+	if scope != nil && !canAccessDeclaration(scope, declaration) {
+		utils.Forbidden(c, "无权编辑该申报")
+		return
+	}
+	if scope != nil && scope.IsCollegeAdmin() && req.CollegeID != 0 && req.CollegeID != *scope.ManagedCollegeID {
+		utils.Forbidden(c, "院级管理员不能将申报转移到其他学院")
+		return
+	}
 	if declaration.DeclareStatus != 0 && declaration.DeclareStatus != 3 {
 		utils.Forbidden(c, "仅草稿和已驳回状态可编辑")
 		return
@@ -164,17 +211,45 @@ func UpdateDeclare(c *gin.Context) {
 		updates["attachment_path"] = *req.AttachmentPath
 	}
 
-	if err := database.DB.WithContext(c.Request.Context()).Model(&declaration).Updates(updates).Error; err != nil {
+	// P4：改派申报负责人时（显式传值且变化），仅提升新负责人；原负责人角色保留（不做降级）。
+	var promotions []RolePromotion
+	managerChanged := req.ManagerID != 0 && req.ManagerID != declaration.ManagerID
+	err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&declaration).Updates(updates).Error; err != nil {
+			return err
+		}
+		if managerChanged {
+			oldRoleID, newRoleID, promoteErr := promoteCompetitionManagerIfTeacher(tx, req.ManagerID)
+			if promoteErr != nil {
+				return promoteErr
+			}
+			if oldRoleID != 0 {
+				promotions = append(promotions, RolePromotion{
+					UserID:    req.ManagerID,
+					OldRoleID: oldRoleID,
+					NewRoleID: newRoleID,
+				})
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		utils.InternalServerError(c, "更新失败", err)
 		return
 	}
 
-	utils.SuccessWithMessage(c, "更新成功", declaration)
+	if managerChanged {
+		sourceID := declaration.ID
+		finalizeRolePromotions(c, promotions, auditReasonDeclare, &sourceID)
+	}
+	utils.SuccessWithMessage(c, "更新成功", gin.H{
+		"declaration":    declaration,
+		"promoted_users": promotedUsersResp(c, promotions),
+	})
 }
 
 func SubmitDeclare(c *gin.Context) {
 	declareID := c.Param("id")
-
 	var declaration models.CompDeclaration
 	if err := database.DB.WithContext(c.Request.Context()).First(&declaration, declareID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -184,7 +259,12 @@ func SubmitDeclare(c *gin.Context) {
 		utils.InternalServerError(c, "查询失败", err)
 		return
 	}
-
+	if scope, ok := requestAccessScopeIfAvailable(c); !ok {
+		return
+	} else if scope != nil && !canAccessDeclaration(scope, declaration) {
+		utils.Forbidden(c, "无权提交该申报")
+		return
+	}
 	if declaration.DeclareStatus != 0 && declaration.DeclareStatus != 3 {
 		utils.Forbidden(c, "只有草稿和已驳回状态可提交")
 		return
@@ -200,7 +280,6 @@ func SubmitDeclare(c *gin.Context) {
 
 func RevokeDeclare(c *gin.Context) {
 	declareID := c.Param("id")
-
 	var declaration models.CompDeclaration
 	if err := database.DB.WithContext(c.Request.Context()).First(&declaration, declareID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -210,7 +289,12 @@ func RevokeDeclare(c *gin.Context) {
 		utils.InternalServerError(c, "查询失败", err)
 		return
 	}
-
+	if scope, ok := requestAccessScopeIfAvailable(c); !ok {
+		return
+	} else if scope != nil && !canAccessDeclaration(scope, declaration) {
+		utils.Forbidden(c, "无权撤回该申报")
+		return
+	}
 	if declaration.DeclareStatus != 1 {
 		utils.Forbidden(c, "只有已提交状态可撤回")
 		return
@@ -369,7 +453,6 @@ func GetMyPublishedDeclares(c *gin.Context) {
 
 func DeleteDeclare(c *gin.Context) {
 	declareID := c.Param("id")
-
 	var declaration models.CompDeclaration
 	if err := database.DB.WithContext(c.Request.Context()).First(&declaration, declareID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -379,7 +462,12 @@ func DeleteDeclare(c *gin.Context) {
 		utils.InternalServerError(c, "查询失败", err)
 		return
 	}
-
+	if scope, ok := requestAccessScopeIfAvailable(c); !ok {
+		return
+	} else if scope != nil && !canAccessDeclaration(scope, declaration) {
+		utils.Forbidden(c, "无权删除该申报")
+		return
+	}
 	if declaration.DeclareStatus != 0 {
 		utils.Forbidden(c, "仅草稿状态可删除")
 		return
@@ -400,7 +488,14 @@ func GetPendingDeclares(c *gin.Context) {
 		return
 	}
 
+	scope, ok := requestAccessScopeIfAvailable(c)
+	if !ok {
+		return
+	}
 	query := database.DB.WithContext(c.Request.Context()).Where("declare_status = ?", 1)
+	if scope != nil {
+		query = applyDeclarationScope(query, scope, "comp_declarations")
+	}
 
 	if req.CompName != "" {
 		query = query.Where("comp_name LIKE ?", "%"+req.CompName+"%")
@@ -441,9 +536,18 @@ func AuditDeclare(c *gin.Context) {
 		return
 	}
 
-	auditorID, exists := c.Get("user_id")
+	auditorIDVal, exists := c.Get("user_id")
 	if !exists {
 		utils.Unauthorized(c, "未授权")
+		return
+	}
+	auditorID := auditorIDVal.(uint)
+	scope, ok := requestAccessScopeIfAvailable(c)
+	if !ok {
+		return
+	}
+	if scope != nil && !scope.IsSchoolAdmin() {
+		utils.Forbidden(c, "仅校级管理员可以审核赛事申报")
 		return
 	}
 
@@ -485,7 +589,7 @@ func AuditDeclare(c *gin.Context) {
 			ManagerID:  declaration.ManagerID,
 			Year:       declaration.Year,
 			Desc:       declaration.Desc,
-			CreatedBy:  auditorID.(uint),
+			CreatedBy:  auditorID,
 			Status:     0,
 			Source:     2,
 			DeclareID:  &declaration.ID,
@@ -497,8 +601,7 @@ func AuditDeclare(c *gin.Context) {
 		}
 
 		declaration.DeclareStatus = 2
-		auditorID_uint := auditorID.(uint)
-		declaration.AuditBy = &auditorID_uint
+		declaration.AuditBy = &auditorID
 		declaration.AuditAt = &now
 		compDirID := newComp.ID
 		declaration.CompDirectoryID = &compDirID
@@ -507,8 +610,7 @@ func AuditDeclare(c *gin.Context) {
 
 	case 3:
 		declaration.DeclareStatus = 3
-		auditorID_uint := auditorID.(uint)
-		declaration.AuditBy = &auditorID_uint
+		declaration.AuditBy = &auditorID
 		declaration.AuditAt = &now
 		declaration.AuditRemark = req.AuditRemark
 		status = "拒绝"
@@ -529,7 +631,14 @@ func GetAllDeclares(c *gin.Context) {
 		return
 	}
 
+	scope, ok := requestAccessScopeIfAvailable(c)
+	if !ok {
+		return
+	}
 	query := database.DB.WithContext(c.Request.Context()).Model(&models.CompDeclaration{})
+	if scope != nil {
+		query = applyDeclarationScope(query, scope, "comp_declarations")
+	}
 
 	if req.CompName != "" {
 		query = query.Where("comp_name LIKE ?", "%"+req.CompName+"%")
@@ -571,7 +680,14 @@ func GetAuditedDeclares(c *gin.Context) {
 		return
 	}
 
+	scope, ok := requestAccessScopeIfAvailable(c)
+	if !ok {
+		return
+	}
 	query := database.DB.WithContext(c.Request.Context()).Where("declare_status IN ?", []int{2, 3})
+	if scope != nil {
+		query = applyDeclarationScope(query, scope, "comp_declarations")
+	}
 
 	if req.DeclareStatus != 0 {
 		query = query.Where("declare_status = ?", req.DeclareStatus)

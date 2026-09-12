@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -14,6 +15,8 @@ import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/middleware"
 	"CompeManage_backend/models"
+
+	"gorm.io/gorm"
 )
 
 const postgradTokenCacheKey = "datahall:postgrad_access_token"
@@ -174,16 +177,8 @@ func SyncPostgrad() {
 
 	var studentRole models.Role
 	if err := database.DB.Where("role_code = ?", "student").First(&studentRole).Error; err != nil {
-		log.Printf("[DataHall-Postgrad] 未找到 student 角色: %v，新用户将不分配角色", err)
-	}
-
-	var studentUserIDs []uint
-	database.DB.Table("user_roles").
-		Where("role_id = ?", studentRole.ID).
-		Pluck("user_id", &studentUserIDs)
-	studentSet := make(map[uint]bool, len(studentUserIDs))
-	for _, uid := range studentUserIDs {
-		studentSet[uid] = true
+		log.Printf("[DataHall-Postgrad] 未找到 student 角色: %v，终止本次同步", err)
+		return
 	}
 
 	var created, updated, skipped, failed int
@@ -198,7 +193,7 @@ func SyncPostgrad() {
 		var user models.User
 		result := database.DB.Where("username = ?", sid).First(&user)
 
-		if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			hashedPwd, pwdErr := hashPassword(lastNChars(sid, 6))
 			if pwdErr != nil {
 				log.Printf("[DataHall-Postgrad] 密码加密失败(学号=%s): %v，跳过该用户", sid, pwdErr)
@@ -207,29 +202,36 @@ func SyncPostgrad() {
 			}
 
 			user = models.User{
-				Username:  sid,
-				Realname:  derefStr(item.Name),
-				Password:  hashedPwd,
-				College:   derefStr(item.CollegeName),
-				Major:     derefStr(item.MajorName),
-				Grade:     derefStr(item.EnrollYear),
-				Sex:       item.Sex,
-				MajorCode: item.MajorType,
+				Username:     sid,
+				Realname:     derefStr(item.Name),
+				Password:     hashedPwd,
+				College:      derefStr(item.CollegeName),
+				Major:        derefStr(item.MajorName),
+				Grade:        derefStr(item.EnrollYear),
+				Sex:          item.Sex,
+				MajorCode:    item.MajorType,
+				IdentityType: "postgraduate",
 			}
 
-			if err := database.DB.Create(&user).Error; err != nil {
+			// P0-4 配套：唯一索引下并发同步易死锁，整体事务重试（Error 1213 回滚整个事务）
+			if err := database.TransactionWithDeadlockRetry(database.DB, func(tx *gorm.DB) error {
+				if err := tx.Create(&user).Error; err != nil {
+					return err
+				}
+				return database.SetUserRole(tx, user.ID, studentRole.ID)
+			}); err != nil {
 				log.Printf("[DataHall-Postgrad] 创建用户 %s 失败: %v", sid, err)
 				failed++
 				continue
 			}
 
-			if studentRole.ID != 0 {
-				database.DB.Model(&user).Association("Roles").Append(&studentRole)
-			}
-
 			created++
+		} else if result.Error != nil {
+			log.Printf("[DataHall-Postgrad] 查询用户 %s 失败: %v", sid, result.Error)
+			failed++
+			continue
 		} else {
-			if !studentSet[user.ID] {
+			if user.IdentityType != "" && user.IdentityType != "postgraduate" {
 				skipped++
 				continue
 			}
@@ -241,7 +243,8 @@ func SyncPostgrad() {
 			newSex := derefStr(item.Sex)
 			newMajorType := derefStr(item.MajorType)
 
-			if user.Realname == newRealname &&
+			if user.IdentityType == "postgraduate" &&
+				user.Realname == newRealname &&
 				user.College == newCollege &&
 				user.Major == newMajor &&
 				user.Grade == newGrade &&
@@ -252,12 +255,13 @@ func SyncPostgrad() {
 			}
 
 			updates := map[string]interface{}{
-				"realname":   newRealname,
-				"college":    newCollege,
-				"major":      newMajor,
-				"grade":      newGrade,
-				"sex":        item.Sex,
-				"major_code": item.MajorType,
+				"identity_type": "postgraduate",
+				"realname":      newRealname,
+				"college":       newCollege,
+				"major":         newMajor,
+				"grade":         newGrade,
+				"sex":           item.Sex,
+				"major_code":    item.MajorType,
 			}
 			if err := database.DB.Model(&user).Updates(updates).Error; err != nil {
 				log.Printf("[DataHall-Postgrad] 更新用户 %s 失败: %v", sid, err)
