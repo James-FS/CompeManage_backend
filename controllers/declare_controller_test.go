@@ -72,6 +72,11 @@ func TestCreateDeclare_Success(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO `comp_declarations`").
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	// P4：创建后对负责人做自动提升判断。mock 返回 competition_manager 角色 → 非 teacher → 不提升。
+	mock.ExpectQuery("SELECT .* FROM `user_roles`").
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "role_id"}).AddRow(1, 3))
+	mock.ExpectQuery("SELECT .* FROM `roles`").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "role_code"}).AddRow(3, "competition_manager"))
 	mock.ExpectCommit()
 
 	body := DeclareCreateReq{

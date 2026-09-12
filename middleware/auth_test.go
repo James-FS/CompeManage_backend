@@ -69,7 +69,7 @@ func TestRequireRole_AllowsMatchingSingleRole(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodGet, "/api/perm/user/list", nil)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/perm/member/list", nil)
 	c.Set("user_id", uint(7))
 
 	RequireRole("school_admin")(c)
@@ -87,7 +87,7 @@ func TestRequireRole_DeniesNonMatchingOrDuplicateRole(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodGet, "/api/perm/user/list", nil)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/perm/member/list", nil)
 	c.Set("user_id", uint(8))
 
 	RequireRole("school_admin")(c)
@@ -105,7 +105,7 @@ func TestRequireRole_DatabaseError(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodGet, "/api/perm/user/list", nil)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/perm/member/list", nil)
 	c.Set("user_id", uint(9))
 
 	RequireRole("school_admin")(c)

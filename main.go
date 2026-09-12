@@ -47,7 +47,8 @@ func main() {
 	middleware.StartPermissionCacheInvalidationScheduler(time.Minute)
 	datasource.StartScheduler(6 * time.Hour)           // 每6小时全量同步本科生数据
 	datasource.StartStaffScheduler(6 * time.Hour)      // 每6小时全量同步教职工数据
-	datasource.StartPostgradScheduler(6 * time.Hour)   // 每6小时全量同步研究生数据
+	// 研究生数据暂停同步(2026-09-12):如需恢复,取消下一行注释即可
+	// datasource.StartPostgradScheduler(6 * time.Hour) // 每6小时全量同步研究生数据
 	datasource.StartCollegeScheduler(6 * time.Hour)    // 每6小时全量同步组织机构数据
 	datasource.StartDepartmentScheduler(6 * time.Hour) // 每6小时全量同步部门数据
 	// 启动服务

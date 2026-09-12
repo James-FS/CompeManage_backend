@@ -479,6 +479,10 @@ func TestUpdateCompetition_CollegeNotFound(t *testing.T) {
 	}
 	_, w, c := buildCompPOSTJSON(req)
 	c.Params = []gin.Param{{Key: "id", Value: "1"}}
+	// P0-1 后 UpdateCompetition 读取 role_code/user_id 做范围与改派校验；
+	// 设置 school_admin 使 scope 短路（真实请求由 AuthRequired 写入）。
+	c.Set("role_code", "school_admin")
+	c.Set("user_id", uint(1))
 	UpdateCompetition(c)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -558,34 +562,27 @@ func TestGetManagerList_BadRequest(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestGetManagerList_RoleNotFound(t *testing.T) {
-	mock := setupCompDBMock(t)
-	defer mock.ExpectationsWereMet()
-
-	mock.ExpectQuery("SELECT .* FROM `roles`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "role_code"}))
-
-	_, w, c := buildCompGET("/api/comp/managers?page=1&page_size=10")
-	GetManagerList(c)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
+// TestGetManagerList_RoleNotFound 已随 P2 改造删除：
+// 新实现直接按「教职工池」查 users，不存在「角色不存在」这一失败路径。
 
 func TestGetManagerList_Success(t *testing.T) {
 	mock := setupCompDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mock.ExpectQuery("SELECT .* FROM `roles`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "role_code"}).AddRow(1, "competition_manager"))
+	// P2 改造后不再查 roles 取角色，直接按「教职工池」查 users；再批量取本页用户角色。
 	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `users`").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery("SELECT .* FROM `users`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "realname", "username", "college"}).AddRow(1, "张三", "T001", "计算机学院"))
+	mock.ExpectQuery("SELECT user_roles.user_id AS user_id, roles.role_code AS role_code FROM `user_roles`").
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "role_code"}).AddRow(1, "teacher"))
 
 	_, w, c := buildCompGET("/api/comp/managers?page=1&page_size=10")
 	GetManagerList(c)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+	// 断言角色映射生效（防止 Scan 失败被忽略后 RoleCode 恒为空）
+	assert.Contains(t, w.Body.String(), `"role_code":"teacher"`)
 }
 
 func TestGetManagerList_WithFilters(t *testing.T) {
@@ -603,8 +600,7 @@ func TestGetManagerList_WithFilters(t *testing.T) {
 			mock := setupCompDBMock(t)
 			defer mock.ExpectationsWereMet()
 
-			mock.ExpectQuery("SELECT .* FROM `roles`").
-				WillReturnRows(sqlmock.NewRows([]string{"id", "role_code"}).AddRow(1, "competition_manager"))
+			// P2 改造后：count + users；本页 0 行时不触发角色批量查询。
 			mock.ExpectQuery("SELECT count\\(\\*\\) FROM `users`").
 				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 			mock.ExpectQuery("SELECT .* FROM `users`").
