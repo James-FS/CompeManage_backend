@@ -486,7 +486,8 @@ func TestDefaultRoleCodeForIdentity(t *testing.T) {
 		identityType string
 		wantRole     string
 	}{
-		{identityType: "staff", wantRole: "competition_manager"},
+		// P1-2：教职工默认角色改为 teacher（赛事负责人按需提升）
+		{identityType: "staff", wantRole: "teacher"},
 		{identityType: "student", wantRole: "student"},
 		{identityType: "postgraduate", wantRole: "student"},
 		{identityType: "external", wantRole: "guest"},

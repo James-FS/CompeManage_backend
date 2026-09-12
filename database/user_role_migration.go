@@ -480,7 +480,9 @@ func assignMissingRoles() error {
 	}
 
 	var roles []models.Role
-	if err := DB.Where("role_code IN ?", []string{"competition_manager", "student", "guest"}).Find(&roles).Error; err != nil {
+	// P1-3：列表必须包含 teacher，否则 roleIDs["teacher"] 为 0 会报「默认角色不存在」。
+	if err := DB.Where("role_code IN ?",
+		[]string{"teacher", "competition_manager", "student", "guest"}).Find(&roles).Error; err != nil {
 		return err
 	}
 	roleIDs := make(map[string]uint, len(roles))
@@ -491,7 +493,8 @@ func assignMissingRoles() error {
 		roleCode := "guest"
 		switch user.IdentityType {
 		case "staff":
-			roleCode = "competition_manager"
+			// P1-3：教职工默认角色为 teacher，与同步/CAS 保持一致。
+			roleCode = "teacher"
 		case "student", "postgraduate":
 			roleCode = "student"
 		}
