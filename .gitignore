@@ -41,15 +41,17 @@ go. work
 Thumbs.db
 
 # Project specific
+dist/
 public/upload/*
 !public/upload/.gitkeep
 
 logs/
 *.log
 *.logger
-
+coverage.txt
 # Docker MySQL data
 mysql_data/
 app.logger
 server
+logger/app.logger
 logger/app.logger

@@ -59,14 +59,15 @@ func calcPercent(numerator int64, denominator int64) float64 {
 
 // GetStatisticsDashboard 统计看板数据聚合接口
 func GetStatisticsDashboard(c *gin.Context) {
-	userIDVal, exists := c.Get("user_id")
-	if !exists {
-		utils.Unauthorized(c, "未登录")
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
 		return
 	}
-	userID := userIDVal.(uint)
-	isAdmin := checkUserIsAdmin(userID)
-	cacheKey := fmt.Sprintf("cache:stats:dashboard:%v:%t", userID, isAdmin)
+	managedCollegeID := uint(0)
+	if scope.ManagedCollegeID != nil {
+		managedCollegeID = *scope.ManagedCollegeID
+	}
+	cacheKey := fmt.Sprintf("cache:stats:dashboard:%d:%s:%d", scope.UserID, scope.RoleCode, managedCollegeID)
 	rdb := middleware.GetRedisClient()
 	ctx := c.Request.Context()
 
@@ -85,47 +86,39 @@ func GetStatisticsDashboard(c *gin.Context) {
 	}
 
 	newCompBase := func() *gorm.DB {
-		q := database.DB.Model(&models.CompDirectory{})
-		if !isAdmin {
-			q = q.Where("manager_id = ?", userID)
-		}
-		return q
+		q := database.DB.WithContext(ctx).Model(&models.CompDirectory{})
+		return applyCompetitionScope(q, scope, "comp_directories")
 	}
 
 	newRegBase := func() *gorm.DB {
-		q := database.DB.Model(&models.Register{}).
+		q := database.DB.WithContext(ctx).Model(&models.Register{}).
 			Joins("JOIN comp_directories ON comp_directories.id = registers.comp_id")
-		if !isAdmin {
-			q = q.Where("comp_directories.manager_id = ?", userID)
-		}
-		return q
+		return applyCompetitionScope(q, scope, "comp_directories")
 	}
 
 	newAwardBase := func() *gorm.DB {
-		q := database.DB.Model(&models.Award{}).
+		q := database.DB.WithContext(ctx).Model(&models.Award{}).
 			Joins("JOIN registers ON registers.id = awards.reg_id").
 			Joins("JOIN comp_directories ON comp_directories.id = registers.comp_id")
-		if !isAdmin {
-			q = q.Where("comp_directories.manager_id = ?", userID)
-		}
-		return q
+		return applyCompetitionScope(q, scope, "comp_directories")
 	}
 
 	newSummaryBase := func() *gorm.DB {
-		q := database.DB.Model(&models.Summary{}).
+		q := database.DB.WithContext(ctx).Model(&models.Summary{}).
 			Joins("JOIN comp_directories ON comp_directories.id = summaries.comp_id")
-		if !isAdmin {
-			q = q.Where("comp_directories.manager_id = ?", userID)
-		}
-		return q
+		return applyCompetitionScope(q, scope, "comp_directories")
 	}
 
 	newDeclareBase := func() *gorm.DB {
-		q := database.DB.Model(&models.CompDeclaration{})
-		if !isAdmin {
-			q = q.Where("created_by = ?", userID)
+		q := database.DB.WithContext(ctx).Model(&models.CompDeclaration{})
+		switch scope.RoleCode {
+		case "school_admin":
+			return q
+		case "college_admin":
+			return q.Where("college_id = ?", *scope.ManagedCollegeID)
+		default:
+			return q.Where("created_by = ?", scope.UserID)
 		}
-		return q
 	}
 
 	var totalCompetitions int64
@@ -286,10 +279,16 @@ func GetStatisticsDashboard(c *gin.Context) {
 
 	// 4. 异步写入 Redis，设置 10 分钟过期
 	go func() {
-		data, _ := json.Marshal(responseData)
-		// 使用 context.Background() 确保请求结束后写入依然能完成
-		rdb.Set(context.Background(), cacheKey, data, 10*time.Minute)
-		// 现在只有定时清理缓存，没有其他函数主动删除的逻辑，更新后可能会导致和实际数据不一致
+		asyncCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		data, err := json.Marshal(responseData)
+		if err != nil {
+			logger.Error("异步缓存JSON序列化失败", "cache_key", cacheKey, "error", err)
+			return
+		}
+		if err := rdb.Set(asyncCtx, cacheKey, data, 10*time.Minute).Err(); err != nil {
+			logger.Error("异步缓存写入失败", "cache_key", cacheKey, "error", err)
+		}
 	}()
 
 	utils.Success(c, responseData)

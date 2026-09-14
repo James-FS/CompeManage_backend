@@ -3,6 +3,7 @@ package middleware
 import (
 	"CompeManage_backend/config"
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -30,7 +31,7 @@ func InitRedis() {
 		maxRetries = 3
 	}
 	if poolSize == 0 {
-		poolSize = 50  // 增大连接池以支持高并发
+		poolSize = 50 // 增大连接池以支持高并发
 	}
 
 	RedisClient = redis.NewClient(&redis.Options{
@@ -50,12 +51,11 @@ func InitRedis() {
 		logger.Fatal("Redis连接失败",
 			"host", host,
 			"port", port,
-			"password", password,
 			"db", db,
 			"poolSize", poolSize,
 			"error", err)
 	}
-	logger.Info("Redis启动成功", "host", host, "port", port, "password", password, "db", db)
+	logger.Info("Redis启动成功", "host", host, "port", port, "db", db)
 }
 
 func GetRedisClient() *redis.Client { return RedisClient }
@@ -69,4 +69,56 @@ func CloseRedis() error {
 		logger.Info("Redis连接已关闭")
 	}
 	return nil
+}
+
+// ClearUserPermissionCache 删除指定用户的全部权限判断缓存。
+// 使用 SCAN 避免 KEYS 阻塞 Redis，并对短暂错误进行有限重试。
+func ClearUserPermissionCache(userID uint) error {
+	if RedisClient == nil {
+		return errors.New("Redis客户端未初始化")
+	}
+	if userID == 0 {
+		return errors.New("用户ID无效")
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		if err := clearUserPermissionCacheOnce(userID); err == nil {
+			return nil
+		} else {
+			lastErr = err
+			logger.Error("清理用户权限缓存失败",
+				"userID", userID,
+				"attempt", attempt,
+				"error", err,
+			)
+		}
+		if attempt < 3 {
+			time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
+		}
+	}
+	return lastErr
+}
+
+func clearUserPermissionCacheOnce(userID uint) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	pattern := fmt.Sprintf("perm:%d:*", userID)
+	var cursor uint64
+	for {
+		keys, nextCursor, err := RedisClient.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return fmt.Errorf("扫描权限缓存失败: %w", err)
+		}
+		if len(keys) > 0 {
+			if err := RedisClient.Del(ctx, keys...).Err(); err != nil {
+				return fmt.Errorf("删除权限缓存失败: %w", err)
+			}
+		}
+		cursor = nextCursor
+		if cursor == 0 {
+			return nil
+		}
+	}
 }

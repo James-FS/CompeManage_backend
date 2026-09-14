@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -20,9 +21,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-func clearCompListCache() {
+func clearCompListCache(ctx context.Context) {
 	rdb := middleware.GetRedisClient()
-	ctx := context.Background()
 	iter := rdb.Scan(ctx, 0, "cache:comp_list:*", 0).Iterator()
 	for iter.Next(ctx) {
 		rdb.Del(ctx, iter.Val())
@@ -87,9 +87,9 @@ func nextCompetitionCode(tx *gorm.DB, level string, year int) (string, error) {
 	return fmt.Sprintf("%s%03d", base, seq), nil
 }
 
-func hasCompetitionStarted(compID uint, now time.Time) (bool, error) {
+func hasCompetitionStarted(ctx context.Context, compID uint, now time.Time) (bool, error) {
 	var detail models.CompDetail
-	err := database.DB.Select("comp_id", "comp_start_time").Where("comp_id = ?", compID).First(&detail).Error
+	err := database.DB.WithContext(ctx).Select("comp_id", "comp_start_time").Where("comp_id = ?", compID).First(&detail).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return false, nil
@@ -138,7 +138,7 @@ func GetCompetitionList(c *gin.Context) {
 		}
 	}
 	logger.Debug("赛事列表缓存未命中", "cache_key", cacheKey)
-	query := database.DB.Model(&models.CompDirectory{})
+	query := database.DB.WithContext(c.Request.Context()).Model(&models.CompDirectory{})
 
 	if req.CompName != "" {
 		query = query.Where("comp_name LIKE ?", "%"+req.CompName+"%")
@@ -172,14 +172,12 @@ func GetCompetitionList(c *gin.Context) {
 	}
 
 	if req.IsMy {
-		userID, exists := c.Get("user_id")
-		if !exists {
-			utils.Unauthorized(c, "未登录")
+		scope, ok := requireUserAccessScope(c)
+		if !ok {
 			return
 		}
-		uid := userID.(uint)
-		if !checkUserIsAdmin(uid) {
-			query = query.Where("manager_id = ?", userID)
+		query = applyCompetitionScope(query, scope, "comp_directories")
+		if !scope.IsSchoolAdmin() {
 			query = query.Preload("Detail", func(db *gorm.DB) *gorm.DB {
 				return db.Select("comp_id", "reg_start_time", "reg_end_time", "participant_type")
 			})
@@ -219,8 +217,16 @@ func GetCompetitionList(c *gin.Context) {
 		"size":  req.PageSize,
 	}
 	go func() {
-		data, _ := json.Marshal(responseData)
-		rdb.Set(context.Background(), cacheKey, data, 5*time.Minute).Result()
+		asyncCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		data, err := json.Marshal(responseData)
+		if err != nil {
+			logger.Error("异步缓存JSON序列化失败", "cache_key", cacheKey, "error", err)
+			return
+		}
+		if err := rdb.Set(asyncCtx, cacheKey, data, 5*time.Minute).Err(); err != nil {
+			logger.Error("异步缓存写入失败", "cache_key", cacheKey, "error", err)
+		}
 	}()
 	utils.Success(c, responseData)
 
@@ -263,7 +269,8 @@ func CreateCompetition(c *gin.Context) {
 	year := resolveCompetitionYear(req.Year)
 
 	var created models.CompDirectory
-	err := database.DB.Transaction(func(tx *gorm.DB) error {
+	var promotions []RolePromotion
+	err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
 		collegeID, collegeErr := resolveCollegeIDByName(tx, req.College)
 		if collegeErr != nil {
 			return collegeErr
@@ -292,6 +299,20 @@ func CreateCompetition(c *gin.Context) {
 			return createErr
 		}
 
+		// 选中的负责人若为教师，自动提升为赛事负责人（与赛事创建同事务）。
+		// 该接口仅 school_admin 持有 comp:create，无越权提升风险。
+		oldRoleID, newRoleID, promoteErr := promoteCompetitionManagerIfTeacher(tx, req.ManagerID)
+		if promoteErr != nil {
+			return promoteErr
+		}
+		if oldRoleID != 0 {
+			promotions = append(promotions, RolePromotion{
+				UserID:    req.ManagerID,
+				OldRoleID: oldRoleID,
+				NewRoleID: newRoleID,
+			})
+		}
+
 		created = compDir
 		return nil
 	})
@@ -300,8 +321,13 @@ func CreateCompetition(c *gin.Context) {
 		utils.InternalServerError(c, "创建失败", err)
 		return
 	}
-	clearCompListCache()
-	utils.SuccessWithMessage(c, "创建成功", created)
+	clearCompListCache(c.Request.Context())
+	sourceID := created.ID
+	finalizeRolePromotions(c, promotions, auditReasonCompetition, &sourceID)
+	utils.SuccessWithMessage(c, "创建成功", gin.H{
+		"competition":    created,
+		"promoted_users": promotedUsersResp(c, promotions),
+	})
 }
 
 func BatchImportCompetition(c *gin.Context) {
@@ -314,8 +340,19 @@ func BatchImportCompetition(c *gin.Context) {
 		return
 	}
 
+	// 校验负责人非 0（validator 对 slice 元素不递归校验，required 在批量路径不生效）。
+	// 未匹配到负责人的行应在前端补充完整，而不是以 0 落库。
+	for i, item := range req.Items {
+		if item.ManagerID == 0 {
+			utils.BadRequest(c, fmt.Sprintf("第%d项(%s)缺少赛事负责人", i+1, item.CompName))
+			return
+		}
+	}
+
 	var compDirs []models.CompDirectory
-	err := database.DB.Transaction(func(tx *gorm.DB) error {
+	var promotions []RolePromotion
+	err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		promotedSet := make(map[uint]bool)
 		for i, item := range req.Items {
 			collegeID, collegeErr := resolveCollegeIDByName(tx, item.College)
 			if collegeErr != nil {
@@ -347,6 +384,22 @@ func BatchImportCompetition(c *gin.Context) {
 			}
 
 			compDirs = append(compDirs, compDir)
+
+			// 同一批导入中同一负责人只提升一次；教师自动提升为赛事负责人。
+			if !promotedSet[item.ManagerID] {
+				oldRoleID, newRoleID, promoteErr := promoteCompetitionManagerIfTeacher(tx, item.ManagerID)
+				if promoteErr != nil {
+					return promoteErr
+				}
+				if oldRoleID != 0 {
+					promotedSet[item.ManagerID] = true
+					promotions = append(promotions, RolePromotion{
+						UserID:    item.ManagerID,
+						OldRoleID: oldRoleID,
+						NewRoleID: newRoleID,
+					})
+				}
+			}
 		}
 		return nil
 	})
@@ -356,22 +409,28 @@ func BatchImportCompetition(c *gin.Context) {
 		return
 	}
 
-	utils.SuccessWithMessage(c, "批量导入成功", gin.H{"count": len(compDirs)})
+	finalizeRolePromotions(c, promotions, auditReasonImport, nil)
+	utils.SuccessWithMessage(c, "批量导入成功", gin.H{
+		"count":          len(compDirs),
+		"promoted_users": promotedUsersResp(c, promotions),
+	})
 }
 
 type ManagerListReq struct {
-	Name     string `form:"name"`
-	WorkID   string `form:"work_id"`
-	College  string `form:"college"`
-	Page     int    `form:"page" binding:"required,min=1"`
-	PageSize int    `form:"page_size" binding:"required,min=1"`
+	Name        string `form:"name"`
+	WorkID      string `form:"work_id"`
+	College     string `form:"college"`
+	ManagerOnly bool   `form:"manager_only"` // 仅看已是赛事负责人（可选筛选）
+	Page        int    `form:"page" binding:"required,min=1"`
+	PageSize    int    `form:"page_size" binding:"required,min=1"`
 }
 
 type ManagerResp struct {
-	ID      uint   `json:"id"`
-	Name    string `json:"name"`
-	WorkID  string `json:"work_id"`
-	College string `json:"college"`
+	ID       uint   `json:"id"`
+	Name     string `json:"name"`
+	WorkID   string `json:"work_id"`
+	College  string `json:"college"`
+	RoleCode string `json:"role_code"` // 当前角色：teacher / competition_manager，供前端展示提权预判
 }
 
 func GetManagerList(c *gin.Context) {
@@ -381,25 +440,50 @@ func GetManagerList(c *gin.Context) {
 		return
 	}
 
-	var role models.Role
-	if err := database.DB.Where("role_code = ?", "competition_manager").First(&role).Error; err != nil {
-		utils.InternalServerError(c, "获取角色信息失败", err)
-		return
-	}
+	// 负责人池 = 教职工身份，或已持有 competition_manager 角色；
+	// 排除管理员（school_admin / college_admin）与专家（expert）、访客（guest）。
+	query := database.DB.WithContext(c.Request.Context()).Model(&models.User{}).
+		Where("users.delete_time IS NULL").
+		Where(`(
+			users.identity_type = 'staff'
+			OR EXISTS (
+				SELECT 1 FROM user_roles ur
+				JOIN roles r ON r.id = ur.role_id AND r.delete_time IS NULL
+				WHERE ur.user_id = users.id AND r.role_code = 'competition_manager'
+			)
+		)`).
+		Where(`NOT EXISTS (
+			SELECT 1 FROM user_roles ur2
+			JOIN roles r2 ON r2.id = ur2.role_id AND r2.delete_time IS NULL
+			WHERE ur2.user_id = users.id
+				AND r2.role_code IN ('school_admin', 'college_admin')
+		)`).
+		Where(`NOT EXISTS (
+			SELECT 1 FROM user_roles ur3
+			JOIN roles r3 ON r3.id = ur3.role_id AND r3.delete_time IS NULL
+			WHERE ur3.user_id = users.id
+				AND r3.role_code IN ('expert', 'guest')
+		)`)
 
-	query := database.DB.Model(&models.User{}).
-		Joins("JOIN user_roles ON users.id = user_roles.user_id").
-		Where("user_roles.role_id = ?", role.ID)
+	if req.ManagerOnly {
+		query = query.Where(`EXISTS (
+			SELECT 1 FROM user_roles ur4
+			JOIN roles r4 ON r4.id = ur4.role_id AND r4.delete_time IS NULL
+			WHERE ur4.user_id = users.id AND r4.role_code = 'competition_manager'
+		)`)
+	}
 
 	if req.Name != "" {
 		query = query.Where("users.realname LIKE ?", "%"+req.Name+"%")
 	}
 
 	if req.WorkID != "" {
-		query = query.Where("users.username LIKE ?", "%"+req.WorkID+"%")
+		// 精确匹配：供 Excel 批量导入按工号自动匹配使用，避免 LIKE 误命中子串。
+		query = query.Where("users.username = ?", req.WorkID)
 	}
 
 	if req.College != "" {
+		// 注意：users.college 实际存的是部门名称（与 departments 表对应），不是学院。
 		query = query.Where("users.college = ?", req.College)
 	}
 
@@ -421,13 +505,39 @@ func GetManagerList(c *gin.Context) {
 		return
 	}
 
-	var managers []ManagerResp
+	// 批量取本页用户的当前角色（每人至多一个角色，由唯一索引保证）。
+	roleByUser := make(map[uint]string, len(users))
+	if len(users) > 0 {
+		ids := make([]uint, 0, len(users))
+		for _, u := range users {
+			ids = append(ids, u.ID)
+		}
+		var roleRows []struct {
+			UserID   uint
+			RoleCode string
+		}
+		if err := database.DB.WithContext(c.Request.Context()).
+			Table("user_roles").
+			Select("user_roles.user_id AS user_id, roles.role_code AS role_code").
+			Joins("JOIN roles ON roles.id = user_roles.role_id AND roles.delete_time IS NULL").
+			Where("user_roles.user_id IN ?", ids).
+			Scan(&roleRows).Error; err != nil {
+			// 角色列仅为前端预判展示，查询失败不阻断列表，但记录日志便于发现
+			slog.Warn("查询负责人当前角色失败", "error", err)
+		}
+		for _, rr := range roleRows {
+			roleByUser[rr.UserID] = rr.RoleCode
+		}
+	}
+
+	managers := make([]ManagerResp, 0, len(users))
 	for _, user := range users {
 		managers = append(managers, ManagerResp{
-			ID:      user.ID,
-			Name:    user.Realname,
-			WorkID:  user.Username,
-			College: user.College,
+			ID:       user.ID,
+			Name:     user.Realname,
+			WorkID:   user.Username,
+			College:  user.College,
+			RoleCode: roleByUser[user.ID],
 		})
 	}
 
@@ -441,7 +551,7 @@ func GetManagerList(c *gin.Context) {
 
 func GetCompetitionYears(c *gin.Context) {
 	var years []int
-	if err := database.DB.
+	if err := database.DB.WithContext(c.Request.Context()).
 		Model(&models.CompDirectory{}).
 		Where("year > ?", 0).
 		Distinct("year").
@@ -458,7 +568,7 @@ func DeleteCompetition(c *gin.Context) {
 	id := c.Param("id")
 
 	var comp models.CompDirectory
-	if err := database.DB.First(&comp, id).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).First(&comp, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.NotFound(c, "赛事不存在")
 		} else {
@@ -467,7 +577,7 @@ func DeleteCompetition(c *gin.Context) {
 		return
 	}
 
-	started, err := hasCompetitionStarted(comp.ID, time.Now())
+	started, err := hasCompetitionStarted(c.Request.Context(), comp.ID, time.Now())
 	if err != nil {
 		utils.InternalServerError(c, "校验赛事时间失败", err)
 		return
@@ -477,11 +587,11 @@ func DeleteCompetition(c *gin.Context) {
 		return
 	}
 
-	if err := database.DB.Delete(&comp).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Delete(&comp).Error; err != nil {
 		utils.InternalServerError(c, "删除失败", err)
 		return
 	}
-	clearCompListCache()
+	clearCompListCache(c.Request.Context())
 	utils.SuccessWithMessage(c, "删除成功", nil)
 }
 
@@ -489,7 +599,7 @@ func RestoreCompetition(c *gin.Context) {
 	id := c.Param("id")
 
 	var comp models.CompDirectory
-	if err := database.DB.Unscoped().First(&comp, id).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Unscoped().First(&comp, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.NotFound(c, "赛事不存在")
 		} else {
@@ -503,12 +613,38 @@ func RestoreCompetition(c *gin.Context) {
 		return
 	}
 
-	if err := database.DB.Model(&comp).Update("delete_time", nil).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Model(&comp).Update("delete_time", nil).Error; err != nil {
 		utils.InternalServerError(c, "恢复失败", err)
 		return
 	}
-	clearCompListCache()
-	utils.SuccessWithMessage(c, "恢复成功", nil)
+	clearCompListCache(c.Request.Context())
+
+	// 幂等兜底：恢复的赛事负责人若为教师则自动提升（覆盖「删除前被回收」的场景；
+	// 因本次不做自动降级，通常为 no-op）。
+	var promotions []RolePromotion
+	err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		oldRoleID, newRoleID, promoteErr := promoteCompetitionManagerIfTeacher(tx, comp.ManagerID)
+		if promoteErr != nil {
+			return promoteErr
+		}
+		if oldRoleID != 0 {
+			promotions = append(promotions, RolePromotion{
+				UserID:    comp.ManagerID,
+				OldRoleID: oldRoleID,
+				NewRoleID: newRoleID,
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		utils.InternalServerError(c, "恢复负责人角色失败", err)
+		return
+	}
+	sourceID := comp.ID
+	finalizeRolePromotions(c, promotions, auditReasonCompetition, &sourceID)
+	utils.SuccessWithMessage(c, "恢复成功", gin.H{
+		"promoted_users": promotedUsersResp(c, promotions),
+	})
 }
 
 type BatchDeleteReq struct {
@@ -524,14 +660,14 @@ func BatchDeleteCompetition(c *gin.Context) {
 
 	now := time.Now()
 	var comps []models.CompDirectory
-	if err := database.DB.Select("id", "comp_name").Where("id IN ?", req.IDs).Find(&comps).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Select("id", "comp_name").Where("id IN ?", req.IDs).Find(&comps).Error; err != nil {
 		utils.InternalServerError(c, "查询赛事失败", err)
 		return
 	}
 
 	if len(comps) > 0 {
 		var details []models.CompDetail
-		if err := database.DB.Select("comp_id", "comp_start_time").Where("comp_id IN ?", req.IDs).Find(&details).Error; err != nil {
+		if err := database.DB.WithContext(c.Request.Context()).Select("comp_id", "comp_start_time").Where("comp_id IN ?", req.IDs).Find(&details).Error; err != nil {
 			utils.InternalServerError(c, "校验赛事时间失败", err)
 			return
 		}
@@ -556,12 +692,12 @@ func BatchDeleteCompetition(c *gin.Context) {
 		}
 	}
 
-	result := database.DB.Delete(&models.CompDirectory{}, req.IDs)
+	result := database.DB.WithContext(c.Request.Context()).Delete(&models.CompDirectory{}, req.IDs)
 	if result.Error != nil {
 		utils.InternalServerError(c, "删除失败", result.Error)
 		return
 	}
-	clearCompListCache()
+	clearCompListCache(c.Request.Context())
 	utils.Success(c, gin.H{"deleted_count": result.RowsAffected})
 }
 
@@ -569,7 +705,7 @@ func GetCompetitionDetail(c *gin.Context) {
 	id := c.Param("id")
 	var comp models.CompDirectory
 
-	if err := database.DB.Preload("Manager").Preload("CollegeInfo").First(&comp, id).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Preload("Manager").Preload("CollegeInfo").First(&comp, id).Error; err != nil {
 		utils.NotFound(c, "赛事不存在")
 		return
 	}
@@ -598,12 +734,31 @@ func UpdateCompetition(c *gin.Context) {
 	}
 
 	var comp models.CompDirectory
-	if err := database.DB.First(&comp, id).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).First(&comp, id).Error; err != nil {
 		utils.NotFound(c, "赛事不存在")
 		return
 	}
 
-	collegeID, collegeErr := resolveCollegeIDByName(database.DB, req.College)
+	// P0-1 范围校验：school_admin 全部；college_admin 限本学院；其他角色限自己负责的赛事。
+	if !requireCompetitionAccessIfScoped(c, comp.ID) {
+		return
+	}
+
+	// 改派约束（已决策）：仅 school_admin / college_admin 可变更负责人；
+	// competition_manager 等其他角色提交不同负责人时拒绝（防 API 直调提权）。
+	// 本次不做自动降级：改派只提升新负责人，原负责人角色保留。
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
+		return
+	}
+	canReassign := scope.IsSchoolAdmin() || scope.IsCollegeAdmin()
+	managerChanged := req.ManagerID != comp.ManagerID
+	if managerChanged && !canReassign {
+		utils.Forbidden(c, "仅管理员可以变更赛事负责人")
+		return
+	}
+
+	collegeID, collegeErr := resolveCollegeIDByName(database.DB.WithContext(c.Request.Context()), req.College)
 	if collegeErr != nil {
 		utils.BadRequest(c, collegeErr.Error())
 		return
@@ -614,25 +769,52 @@ func UpdateCompetition(c *gin.Context) {
 		fmt.Sscanf(req.Year, "%d", &year)
 	}
 
-	updates := map[string]interface{}{
-		"comp_name":  req.CompName,
-		"comp_level": req.CompLevel,
-		"comp_type":  req.CompType,
-		"organizer":  req.Organizer,
-		"undertaker": req.Undertaker,
-		"manager_id": req.ManagerID,
-		"college_id": nil,
-		"year":       year,
-		"desc":       req.Desc,
-	}
-	if collegeID != nil {
-		updates["college_id"] = *collegeID
-	}
+	var promotions []RolePromotion
+	err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		updates := map[string]interface{}{
+			"comp_name":  req.CompName,
+			"comp_level": req.CompLevel,
+			"comp_type":  req.CompType,
+			"organizer":  req.Organizer,
+			"undertaker": req.Undertaker,
+			"manager_id": req.ManagerID,
+			"college_id": nil,
+			"year":       year,
+			"desc":       req.Desc,
+		}
+		if collegeID != nil {
+			updates["college_id"] = *collegeID
+		}
 
-	if err := database.DB.Model(&comp).Updates(updates).Error; err != nil {
+		if err := tx.Model(&comp).Updates(updates).Error; err != nil {
+			return err
+		}
+
+		// 仅提升新负责人（若为教师）；原负责人角色保留（不做自动降级）。
+		if managerChanged && req.ManagerID != 0 {
+			oldRoleID, newRoleID, promoteErr := promoteCompetitionManagerIfTeacher(tx, req.ManagerID)
+			if promoteErr != nil {
+				return promoteErr
+			}
+			if oldRoleID != 0 {
+				promotions = append(promotions, RolePromotion{
+					UserID:    req.ManagerID,
+					OldRoleID: oldRoleID,
+					NewRoleID: newRoleID,
+				})
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
 		utils.InternalServerError(c, "更新失败", err)
 		return
 	}
-	clearCompListCache()
-	utils.SuccessWithMessage(c, "更新成功", nil)
+	clearCompListCache(c.Request.Context())
+	sourceID := comp.ID
+	finalizeRolePromotions(c, promotions, auditReasonCompetition, &sourceID)
+	utils.SuccessWithMessage(c, "更新成功", gin.H{
+		"promoted_users": promotedUsersResp(c, promotions),
+	})
 }
