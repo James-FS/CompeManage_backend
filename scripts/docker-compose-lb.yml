@@ -1,0 +1,17 @@
+# Nginx 负载均衡
+# 用法：
+# 1. 本地启动 3 个 Go 实例（8081/8082/8083 端口）
+# 2. 修改 nginx-lb.conf 中的 upstream 地址
+# 3. docker run --name nginx-lb -p 8088:80 -v /path/to/nginx-lb.conf:/etc/nginx/nginx.conf:ro --add-host=host.docker.internal:host-gateway nginx:alpine
+
+services:
+  nginx-lb:
+    image: nginx:alpine
+    container_name: nginx-lb
+    ports:
+      - "8088:80"
+    volumes:
+      - ./nginx-lb.conf:/etc/nginx/nginx.conf:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

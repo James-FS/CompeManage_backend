@@ -47,9 +47,10 @@ public/upload/*
 logs/
 *.log
 *.logger
-
+coverage.txt
 # Docker MySQL data
 mysql_data/
 app.logger
 server
+logger/app.logger
 logger/app.logger

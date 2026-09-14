@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -17,14 +18,15 @@ import (
 	"CompeManage_backend/models"
 
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 const (
 	tokenCacheKey   = "datahall:access_token"
-	tokenTTL        = 7000             // 比实际 7200s 少 200s 安全缓冲
-	perPage         = 500              // 每页拉取条数
-	httpTimeout     = 30 * time.Second // HTTP 请求超时
-	maxResponseSize = 10 << 20         // 响应体最大 10MB
+	tokenTTL        = 7000
+	perPage         = 500
+	httpTimeout     = 30 * time.Second
+	maxResponseSize = 10 << 20
 )
 
 var httpClient = &http.Client{Timeout: httpTimeout}
@@ -69,7 +71,6 @@ type studentDataResponse struct {
 // --- Token 管理 ---
 
 func getAccessToken() (string, error) {
-	// 先从 Redis 查缓存
 	if middleware.RedisClient != nil {
 		token, err := middleware.RedisClient.Get(context.Background(), tokenCacheKey).Result()
 		if err == nil && token != "" {
@@ -77,7 +78,6 @@ func getAccessToken() (string, error) {
 		}
 	}
 
-	// 缓存未命中或 Redis 不可用，调 API 获取
 	authURL := fmt.Sprintf("%s/open_api/authentication/get_access_token?key=%s&secret=%s",
 		config.AppConfig.DataHall.BaseURL,
 		url.QueryEscape(config.AppConfig.DataHall.Key),
@@ -106,7 +106,6 @@ func getAccessToken() (string, error) {
 
 	token := tr.Result.AccessToken
 
-	// 写入 Redis 缓存
 	if middleware.RedisClient != nil {
 		middleware.RedisClient.Set(context.Background(), tokenCacheKey, token, tokenTTL*time.Second)
 	}
@@ -120,8 +119,6 @@ func getAccessToken() (string, error) {
 func fetchAllStudents(token string) ([]studentItem, error) {
 	var allStudents []studentItem
 	page := 1
-
-	// 构建年级筛选条件（配置了 min_grade 则用 gte 过滤，如 >= "2022"）
 	minGrade := config.AppConfig.DataHall.MinGrade
 
 	for {
@@ -133,6 +130,7 @@ func fetchAllStudents(token string) ([]studentItem, error) {
 		if minGrade != "" {
 			bodyMap["O_STUDENT_BASIC_GRADE"] = map[string]string{"gte": minGrade}
 		}
+
 		bodyBytes, err := json.Marshal(bodyMap)
 		if err != nil {
 			return nil, fmt.Errorf("构建请求体失败(page=%d): %w", page, err)
@@ -166,10 +164,8 @@ func fetchAllStudents(token string) ([]studentItem, error) {
 
 		allStudents = append(allStudents, sr.Result.Data...)
 
-		// 判断是否还有下一页
 		maxPage := sr.Result.MaxPage
 		if maxPage == 0 {
-			// 如果 maxPage 无效，通过 total 估算
 			if sr.Result.Total > 0 {
 				maxPage = (sr.Result.Total + perPage - 1) / perPage
 			}
@@ -193,14 +189,12 @@ func SyncStudents() {
 	log.Println("[DataHall] ========== 开始同步学生数据 ==========")
 	startTime := time.Now()
 
-	// 1. 获取 token
 	token, err := getAccessToken()
 	if err != nil {
 		log.Printf("[DataHall] 获取 token 失败: %v", err)
 		return
 	}
 
-	// 2. 拉取全量学生数据
 	students, err := fetchAllStudents(token)
 	if err != nil {
 		log.Printf("[DataHall] 拉取学生数据失败: %v", err)
@@ -209,23 +203,12 @@ func SyncStudents() {
 
 	log.Printf("[DataHall] 拉取完成，共 %d 条学生记录，开始写入数据库...", len(students))
 
-	// 3. 预查 student 角色
 	var studentRole models.Role
 	if err := database.DB.Where("role_code = ?", "student").First(&studentRole).Error; err != nil {
-		log.Printf("[DataHall] 未找到 student 角色: %v，新用户将不分配角色", err)
+		log.Printf("[DataHall] 未找到 student 角色: %v，终止本次同步", err)
+		return
 	}
 
-	// 4. 查出所有已有 student 角色的用户 ID，用于后续判断是否可更新
-	var studentUserIDs []uint
-	database.DB.Table("user_roles").
-		Where("role_id = ?", studentRole.ID).
-		Pluck("user_id", &studentUserIDs)
-	studentSet := make(map[uint]bool, len(studentUserIDs))
-	for _, uid := range studentUserIDs {
-		studentSet[uid] = true
-	}
-
-	// 5. 逐条 Upsert
 	var created, updated, skipped, failed int
 
 	for _, item := range students {
@@ -238,8 +221,8 @@ func SyncStudents() {
 		var user models.User
 		result := database.DB.Where("username = ?", sid).First(&user)
 
-		if result.Error != nil {
-			// 不存在 → 创建新用户
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			// 不存在 → 创建
 			hashedPwd, pwdErr := hashPassword(lastNChars(sid, 6))
 			if pwdErr != nil {
 				log.Printf("[DataHall] 密码加密失败(学号=%s): %v，跳过该用户", sid, pwdErr)
@@ -248,45 +231,75 @@ func SyncStudents() {
 			}
 
 			user = models.User{
-				Username:  sid,
-				Realname:  derefStr(item.Name),
-				Password:  hashedPwd,
-				College:   derefStr(item.CollegeName),
-				Major:     derefStr(item.MajorName),
-				Grade:     derefStr(item.Grade),
-				Sex:       item.Sex,
-				MajorCode: item.MajorCode,
-				ClassCode: item.ClassCode,
-				ClassName: item.ClassName,
+				Username:     sid,
+				Realname:     derefStr(item.Name),
+				Password:     hashedPwd,
+				College:      derefStr(item.CollegeName),
+				Major:        derefStr(item.MajorName),
+				Grade:        derefStr(item.Grade),
+				Sex:          item.Sex,
+				MajorCode:    item.MajorCode,
+				ClassCode:    item.ClassCode,
+				ClassName:    item.ClassName,
+				IdentityType: "student",
 			}
 
-			if err := database.DB.Create(&user).Error; err != nil {
+			if err := database.DB.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Create(&user).Error; err != nil {
+					return err
+				}
+				return database.SetUserRole(tx, user.ID, studentRole.ID)
+			}); err != nil {
 				log.Printf("[DataHall] 创建用户 %s 失败: %v", sid, err)
 				failed++
 				continue
 			}
 
-			// 分配 student 角色
-			if studentRole.ID != 0 {
-				database.DB.Model(&user).Association("Roles").Append(&studentRole)
-			}
-
 			created++
+		} else if result.Error != nil {
+			log.Printf("[DataHall] 查询用户 %s 失败: %v", sid, result.Error)
+			failed++
+			continue
 		} else {
-			// 已存在 → 仅当用户是纯学生账号时才更新，防止覆盖教师/管理员信息
-			if !studentSet[user.ID] {
+			// 授权角色可能变化，人员同步只依据自然身份。
+			if user.IdentityType != "" && user.IdentityType != "student" {
 				skipped++
 				continue
 			}
+
+			// 比较字段是否有变化，无变化则跳过
+			newRealname := derefStr(item.Name)
+			newCollege := derefStr(item.CollegeName)
+			newMajor := derefStr(item.MajorName)
+			newGrade := derefStr(item.Grade)
+			newSex := derefStr(item.Sex)
+			newMajorCode := derefStr(item.MajorCode)
+			newClassCode := derefStr(item.ClassCode)
+			newClassName := derefStr(item.ClassName)
+
+			if user.IdentityType == "student" &&
+				user.Realname == newRealname &&
+				user.College == newCollege &&
+				user.Major == newMajor &&
+				user.Grade == newGrade &&
+				derefStr(user.Sex) == newSex &&
+				derefStr(user.MajorCode) == newMajorCode &&
+				derefStr(user.ClassCode) == newClassCode &&
+				derefStr(user.ClassName) == newClassName {
+				skipped++
+				continue
+			}
+
 			updates := map[string]interface{}{
-				"realname":   derefStr(item.Name),
-				"college":    derefStr(item.CollegeName),
-				"major":      derefStr(item.MajorName),
-				"grade":      derefStr(item.Grade),
-				"sex":        item.Sex,
-				"major_code": item.MajorCode,
-				"class_code": item.ClassCode,
-				"class_name": item.ClassName,
+				"identity_type": "student",
+				"realname":      newRealname,
+				"college":       newCollege,
+				"major":         newMajor,
+				"grade":         newGrade,
+				"sex":           item.Sex,
+				"major_code":    item.MajorCode,
+				"class_code":    item.ClassCode,
+				"class_name":    item.ClassName,
 			}
 			if err := database.DB.Model(&user).Updates(updates).Error; err != nil {
 				log.Printf("[DataHall] 更新用户 %s 失败: %v", sid, err)
@@ -307,7 +320,7 @@ func SyncStudents() {
 
 func StartScheduler(interval time.Duration) {
 	go func() {
-		time.Sleep(30 * time.Second) // 延迟启动，避免阻塞服务初始化
+		time.Sleep(30 * time.Second)
 		SyncStudents()
 
 		ticker := time.NewTicker(interval)

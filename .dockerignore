@@ -1,0 +1,8 @@
+mysql_data/
+mysql/
+.idea/
+.vscode/
+*.log
+*.logger
+tmp/
+static/

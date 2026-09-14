@@ -2,8 +2,11 @@ package controllers
 
 import (
 	"CompeManage_backend/database"
+	"CompeManage_backend/middleware"
 	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
+	"context"
+	"crypto/md5"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +37,12 @@ type ConfigReq struct {
 	NeedAttachment   int        `json:"need_attachment"`
 	NeedRegAudit     *int       `json:"need_reg_audit"`
 	Track            []TrackReq `json:"track"`
+	// 专家评审配置
+	NeedReview       *int       `json:"need_review"`
+	ReviewStartTime  *time.Time `json:"review_start_time"`
+	ReviewEndTime    *time.Time `json:"review_end_time"`
+	ExpertIDs        []uint     `json:"expert_ids"`
+	ForceCloseReview bool       `json:"force_close_review"`
 }
 
 type TrackReq struct {
@@ -148,19 +157,14 @@ func SaveRegConfig(c *gin.Context) {
 		return
 	}
 
-	userIDVal, exists := c.Get("user_id")
-	if !exists {
-		utils.Unauthorized(c, "未登录")
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
 		return
 	}
-	userID := userIDVal.(uint)
 
 	var comp models.CompDirectory
-	db := database.DB.Model(&models.CompDirectory{}).Where("id = ?", req.CompID)
-
-	if !checkUserIsAdmin(userID) {
-		db = db.Where("manager_id = ?", userID)
-	}
+	db := database.DB.WithContext(c.Request.Context()).Model(&models.CompDirectory{}).Where("id = ?", req.CompID)
+	db = applyCompetitionScope(db, scope, "comp_directories")
 
 	if err := db.First(&comp).Error; err != nil {
 		utils.Forbidden(c, "您无权操作此赛事或赛事不存在")
@@ -186,7 +190,7 @@ func SaveRegConfig(c *gin.Context) {
 	}
 
 	var detail models.CompDetail
-	err = database.DB.Where("comp_id = ?", req.CompID).First(&detail).Error
+	err = database.DB.WithContext(c.Request.Context()).Where("comp_id = ?", req.CompID).First(&detail).Error
 
 	detail.CompID = req.CompID
 	detail.ParticipantType = req.ParticipantType
@@ -210,6 +214,21 @@ func SaveRegConfig(c *gin.Context) {
 	detail.AwardHierarchy = string(hierarchyJson)
 
 	detail.Track = string(trackJson)
+
+	// 专家评审配置
+	if req.NeedReview != nil {
+		detail.NeedReview = int8(*req.NeedReview)
+	}
+	if req.ReviewStartTime != nil {
+		detail.ReviewStartTime = *req.ReviewStartTime
+	} else if req.NeedReview != nil && *req.NeedReview == 0 {
+		detail.ReviewStartTime = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+	if req.ReviewEndTime != nil {
+		detail.ReviewEndTime = *req.ReviewEndTime
+	} else if req.NeedReview != nil && *req.NeedReview == 0 {
+		detail.ReviewEndTime = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
 
 	// 时间字段判空处理 (防止空指针崩溃)
 
@@ -241,19 +260,19 @@ func SaveRegConfig(c *gin.Context) {
 	}
 
 	if err == gorm.ErrRecordNotFound {
-		if err := database.DB.Create(&detail).Error; err != nil {
+		if err := database.DB.WithContext(c.Request.Context()).Create(&detail).Error; err != nil {
 			utils.InternalServerError(c, "创建配置失败", err)
 			return
 		}
 	} else {
-		if err := database.DB.Save(&detail).Error; err != nil {
+		if err := database.DB.WithContext(c.Request.Context()).Save(&detail).Error; err != nil {
 			utils.InternalServerError(c, "更新配置失败", err)
 			return
 		}
 	}
 
 	// 首次创建时 NeedRegAudit=0 可能被数据库默认值(default:1)覆盖，强制回写以保证配置立即生效。
-	if err := database.DB.Model(&models.CompDetail{}).
+	if err := database.DB.WithContext(c.Request.Context()).Model(&models.CompDetail{}).
 		Where("comp_id = ?", req.CompID).
 		Update("need_reg_audit", needRegAudit).Error; err != nil {
 		utils.InternalServerError(c, "更新审核开关失败", err)
@@ -262,10 +281,20 @@ func SaveRegConfig(c *gin.Context) {
 	detail.NeedRegAudit = needRegAudit
 
 	if detail.NeedRegAudit == 0 {
-		if err := database.DB.Model(&models.Register{}).
+		if err := database.DB.WithContext(c.Request.Context()).Model(&models.Register{}).
 			Where("comp_id = ? AND status IN ?", req.CompID, []int{0, 3}).
 			Update("status", gorm.Expr("CASE WHEN status = 3 THEN 4 ELSE 1 END")).Error; err != nil {
 			utils.InternalServerError(c, "更新报名审核状态失败", err)
+			return
+		}
+	}
+
+	// 同步评审专家
+	if detail.NeedReview == 1 || req.ForceCloseReview {
+		now := time.Now()
+		warnings := syncReviewTasks(c, req.CompID, req.ExpertIDs, scope.UserID, now, req.ForceCloseReview, "")
+		if len(warnings) > 0 {
+			utils.SuccessWithMessage(c, "报名设置保存成功，但有警告："+strings.Join(warnings, "；"), detail)
 			return
 		}
 	}
@@ -279,14 +308,15 @@ func SaveRegConfig(c *gin.Context) {
 		newStatus = 2
 	}
 
-	if err := database.DB.Model(&models.CompDirectory{}).
+	if err := database.DB.WithContext(c.Request.Context()).Model(&models.CompDirectory{}).
 		Where("id = ?", req.CompID).
 		Update("status", newStatus).Error; err != nil {
 		utils.InternalServerError(c, "更新赛事状态失败", err)
 		return
 	}
 
-	clearCompListCache()
+	clearCompListCache(c.Request.Context())
+	clearReviewCompListCache(c.Request.Context())
 
 	utils.SuccessWithMessage(c, "报名设置保存成功", detail)
 }
@@ -306,7 +336,7 @@ func GetRegConfig(c *gin.Context) {
 
 	var comp models.CompDirectory
 
-	if err := database.DB.Preload("Detail").First(&comp, id).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Preload("Detail").First(&comp, id).Error; err != nil {
 		utils.NotFound(c, "赛事不存在")
 		return
 	}
@@ -356,6 +386,32 @@ func GetRegConfig(c *gin.Context) {
 		submitEndTime = &detail.SubmitEndTime
 	}
 
+	var revStartPtr, revEndPtr *time.Time
+	if isValidTime(detail.ReviewStartTime) {
+		revStartPtr = &detail.ReviewStartTime
+	}
+	if isValidTime(detail.ReviewEndTime) {
+		revEndPtr = &detail.ReviewEndTime
+	}
+
+	// 查询已分配评审专家
+	type ExpertItem struct {
+		ID       uint   `json:"id"`
+		Name     string `json:"name"`
+		Username string `json:"username"`
+	}
+	var experts []ExpertItem
+	if detail.NeedReview == 1 {
+		var tasks []models.ReviewTask
+		database.DB.WithContext(c.Request.Context()).Where("comp_id = ?", detail.CompID).Find(&tasks)
+		for _, t := range tasks {
+			var user models.User
+			if err := database.DB.WithContext(c.Request.Context()).Select("id, realname, username").First(&user, t.ExpertID).Error; err == nil {
+				experts = append(experts, ExpertItem{ID: user.ID, Name: user.Realname, Username: user.Username})
+			}
+		}
+	}
+
 	utils.Success(c, gin.H{
 		"comp_name":         comp.CompName,
 		"participant_type":  detail.ParticipantType,
@@ -371,6 +427,11 @@ func GetRegConfig(c *gin.Context) {
 		"submit_end_time":   submitEndTime,
 		"award_hierarchy":   awardHierarchy,
 		"track":             track,
+		// 专家评审配置
+		"need_review":       detail.NeedReview,
+		"review_start_time": revStartPtr,
+		"review_end_time":   revEndPtr,
+		"experts":           experts,
 	})
 }
 
@@ -389,7 +450,7 @@ func SubmitRegistration(c *gin.Context) {
 
 	var comp models.CompDirectory
 
-	if err := database.DB.Preload("Detail").First(&comp, req.CompID).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Preload("Detail").First(&comp, req.CompID).Error; err != nil {
 		utils.NotFound(c, "赛事不存在")
 		return
 	}
@@ -464,7 +525,7 @@ func SubmitRegistration(c *gin.Context) {
 	}
 
 	var leader models.User
-	if err := database.DB.Where("username = ?", req.Leader.StuID).First(&leader).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Where("username = ?", req.Leader.StuID).First(&leader).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			removeUploadedFile(req.AttachmentUrl)
 			utils.BadRequest(c, "负责人学号不存在")
@@ -518,7 +579,7 @@ func SubmitRegistration(c *gin.Context) {
 		})
 	}
 
-	if err := database.DB.Create(&register).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Create(&register).Error; err != nil {
 		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "duplicate") || strings.Contains(errStr, "unique") {
 			utils.Error(c, 409, 409, "您已报名过该赛事，请勿重复提交")
@@ -531,10 +592,10 @@ func SubmitRegistration(c *gin.Context) {
 	utils.SuccessWithMessage(c, "报名提交成功", nil)
 }
 
-func checkUserIsAdmin(userID uint) bool {
+func checkUserIsAdmin(ctx context.Context, userID uint) bool {
 	var count int64
 
-	err := database.DB.Table("user_roles").
+	err := database.DB.WithContext(ctx).Table("user_roles").
 		Joins("JOIN roles ON roles.id = user_roles.role_id").
 		Where("user_roles.user_id = ? AND roles.role_code LIKE ?", userID, "%admin%").
 		Count(&count).Error
@@ -568,14 +629,12 @@ func GetRegList(c *gin.Context) {
 	compName := c.Query("comp_name")
 	pType := c.Query("participant_type")
 
-	userIDVal, exists := c.Get("user_id")
-	if !exists {
-		utils.Unauthorized(c, "未登录")
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
 		return
 	}
-	userID := userIDVal.(uint)
 
-	query := database.DB.Model(&models.Register{}).
+	query := database.DB.WithContext(c.Request.Context()).Model(&models.Register{}).
 		Joins("LEFT JOIN comp_directories ON comp_directories.id = registers.comp_id").
 		Joins("LEFT JOIN comp_details ON comp_details.comp_id = registers.comp_id").
 		Preload("Competition").
@@ -583,9 +642,7 @@ func GetRegList(c *gin.Context) {
 		Preload("Leader").
 		Preload("Members")
 
-	if !checkUserIsAdmin(userID) {
-		query = query.Where("comp_directories.manager_id = ?", userID)
-	}
+	query = applyCompetitionScope(query, scope, "comp_directories")
 
 	if compName != "" {
 		query = query.Where("comp_directories.comp_name LIKE ?", "%"+compName+"%")
@@ -722,11 +779,8 @@ func GetRegDetail(c *gin.Context) {
 		return
 	}
 
-	userIDVal, _ := c.Get("user_id")
-	userID := userIDVal.(uint)
-
 	var reg models.Register
-	err = database.DB.
+	err = database.DB.WithContext(c.Request.Context()).
 		Preload("Competition").
 		Preload("Leader").
 		Preload("Members").
@@ -736,12 +790,14 @@ func GetRegDetail(c *gin.Context) {
 		utils.NotFound(c, "报名记录不存在")
 		return
 	}
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
+		return
+	}
 
-	if !checkUserIsAdmin(userID) {
-		if reg.Competition.ManagerID != userID {
-			utils.Forbidden(c, "无权查看此记录")
-			return
-		}
+	if !canAccessCompetition(scope, reg.Competition) {
+		utils.Forbidden(c, "无权查看此记录")
+		return
 	}
 
 	leaderName := "未知"
@@ -805,16 +861,14 @@ func GetWorkAuditCompList(c *gin.Context) {
 		req.PageSize = MaxPageSize
 	}
 
-	userIDVal, exists := c.Get("user_id")
-	if !exists {
-		utils.Unauthorized(c, "未登录")
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
 		return
 	}
-	userID := userIDVal.(uint)
 	now := time.Now()
 
 	buildBaseQuery := func(withRegisterJoin bool) *gorm.DB {
-		query := database.DB.Table("comp_directories").
+		query := database.DB.WithContext(c.Request.Context()).Table("comp_directories").
 			Joins("LEFT JOIN comp_details ON comp_details.comp_id = comp_directories.id").
 			Joins("LEFT JOIN users ON users.id = comp_directories.manager_id").
 			Joins("LEFT JOIN colleges ON colleges.id = comp_directories.college_id").
@@ -825,9 +879,7 @@ func GetWorkAuditCompList(c *gin.Context) {
 			query = query.Joins("LEFT JOIN registers ON registers.comp_id = comp_directories.id")
 		}
 
-		if !checkUserIsAdmin(userID) {
-			query = query.Where("comp_directories.manager_id = ?", userID)
-		}
+		query = applyCompetitionScope(query, scope, "comp_directories")
 
 		if strings.TrimSpace(req.CompName) != "" {
 			query = query.Where("comp_directories.comp_name LIKE ?", "%"+strings.TrimSpace(req.CompName)+"%")
@@ -905,25 +957,22 @@ func GetWorkAuditStudentList(c *gin.Context) {
 		req.PageSize = MaxPageSize
 	}
 
-	userIDVal, exists := c.Get("user_id")
-	if !exists {
-		utils.Unauthorized(c, "未登录")
-		return
-	}
-	userID := userIDVal.(uint)
-
 	var comp models.CompDirectory
-	if err := database.DB.Select("id", "manager_id").Where("id = ?", req.CompID).First(&comp).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Select("id", "manager_id", "college_id").Where("id = ?", req.CompID).First(&comp).Error; err != nil {
 		utils.NotFound(c, "赛事不存在")
 		return
 	}
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
+		return
+	}
 
-	if !checkUserIsAdmin(userID) && comp.ManagerID != userID {
+	if !canAccessCompetition(scope, comp) {
 		utils.Forbidden(c, "无权查看该赛事提交信息")
 		return
 	}
 
-	query := database.DB.Table("registers").
+	query := database.DB.WithContext(c.Request.Context()).Table("registers").
 		Joins("LEFT JOIN reg_members ON reg_members.reg_id = registers.id AND reg_members.is_leader = ?", true).
 		Where("registers.comp_id = ?", req.CompID).
 		Where("registers.work_attachment_url IS NOT NULL AND registers.work_attachment_url <> ''")
@@ -1001,11 +1050,8 @@ func AuditRegister(c *gin.Context) {
 		return
 	}
 
-	userIDVal, _ := c.Get("user_id")
-	userID := userIDVal.(uint)
-
 	var reg models.Register
-	err := database.DB.Preload("Competition").Preload("Competition.Detail").First(&reg, req.ID).Error
+	err := database.DB.WithContext(c.Request.Context()).Preload("Competition").Preload("Competition.Detail").First(&reg, req.ID).Error
 
 	if err != nil {
 		utils.NotFound(c, "记录不存在")
@@ -1014,7 +1060,7 @@ func AuditRegister(c *gin.Context) {
 
 	if reg.Competition.Detail.NeedRegAudit == 0 {
 		if reg.Status == 0 {
-			_ = database.DB.Model(&reg).Updates(map[string]interface{}{"status": 1, "reject_reason": ""}).Error
+			_ = database.DB.WithContext(c.Request.Context()).Model(&reg).Updates(map[string]interface{}{"status": 1, "reject_reason": ""}).Error
 		}
 		utils.BadRequest(c, "该赛事已设置为免审核，报名会自动通过")
 		return
@@ -1025,11 +1071,13 @@ func AuditRegister(c *gin.Context) {
 		return
 	}
 
-	if !checkUserIsAdmin(userID) {
-		if reg.Competition.ManagerID != userID {
-			utils.Forbidden(c, "您无权审核此条记录")
-			return
-		}
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
+		return
+	}
+	if !canAccessCompetition(scope, reg.Competition) {
+		utils.Forbidden(c, "您无权审核此条记录")
+		return
 	}
 
 	updateMap := map[string]interface{}{
@@ -1042,7 +1090,7 @@ func AuditRegister(c *gin.Context) {
 		updateMap["reject_reason"] = ""
 	}
 
-	if err := database.DB.Model(&reg).Updates(updateMap).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Model(&reg).Updates(updateMap).Error; err != nil {
 		utils.InternalServerError(c, "数据库更新失败", err)
 		return
 	}
@@ -1076,7 +1124,7 @@ func GetMyRegStatus(c *gin.Context) {
 	}
 
 	var user models.User
-	if err := database.DB.Select("username").First(&user, userID).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Select("username").First(&user, userID).Error; err != nil {
 		utils.InternalServerError(c, "获取用户信息失败", err)
 		return
 	}
@@ -1084,7 +1132,7 @@ func GetMyRegStatus(c *gin.Context) {
 	studentID := user.Username
 
 	var reg models.Register
-	err = database.DB.
+	err = database.DB.WithContext(c.Request.Context()).
 		Preload("Members").
 		Preload("Competition").
 		Preload("Competition.Detail").
@@ -1104,7 +1152,7 @@ func GetMyRegStatus(c *gin.Context) {
 
 	if reg.Status == 0 && reg.Competition.Detail.NeedRegAudit == 0 {
 		reg.Status = 1
-		_ = database.DB.Model(&models.Register{}).Where("id = ?", reg.ID).Update("status", 1).Error
+		_ = database.DB.WithContext(c.Request.Context()).Model(&models.Register{}).Where("id = ?", reg.ID).Update("status", 1).Error
 	}
 
 	type MemberResp struct {
@@ -1163,7 +1211,7 @@ func ResubmitRegistration(c *gin.Context) {
 	}
 
 	var reg models.Register
-	if err := database.DB.Where("comp_id = ? AND leader_id = ?", req.CompID, userID).First(&reg).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Where("comp_id = ? AND leader_id = ?", req.CompID, userID).First(&reg).Error; err != nil {
 		utils.NotFound(c, "未找到原报名记录")
 		return
 	}
@@ -1174,7 +1222,7 @@ func ResubmitRegistration(c *gin.Context) {
 	}
 
 	var detail models.CompDetail
-	if err := database.DB.Where("comp_id = ?", req.CompID).First(&detail).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Where("comp_id = ?", req.CompID).First(&detail).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			utils.BadRequest(c, "赛事配置不存在")
 		} else {
@@ -1241,7 +1289,7 @@ func ResubmitRegistration(c *gin.Context) {
 		return
 	}
 
-	tx := database.DB.Begin()
+	tx := database.DB.WithContext(c.Request.Context()).Begin()
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -1328,7 +1376,7 @@ func GetMyRegList(c *gin.Context) {
 	userID := userIDVal.(uint)
 
 	var user models.User
-	if err := database.DB.Select("username").First(&user, userID).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Select("username").First(&user, userID).Error; err != nil {
 		utils.InternalServerError(c, "获取用户信息失败", err)
 		return
 	}
@@ -1352,11 +1400,11 @@ func GetMyRegList(c *gin.Context) {
 	var regs []models.Register
 	var total int64
 
-	subQuery := database.DB.Model(&models.RegMember{}).
+	subQuery := database.DB.WithContext(c.Request.Context()).Model(&models.RegMember{}).
 		Select("reg_id").
 		Where("username = ?", studentID)
 
-	query := database.DB.Model(&models.Register{}).
+	query := database.DB.WithContext(c.Request.Context()).Model(&models.Register{}).
 		Where("id IN (?)", subQuery).
 		Preload("Competition").
 		Preload("Competition.Detail")
@@ -1436,20 +1484,20 @@ func SubmitWork(c *gin.Context) {
 	userID := userIDVal.(uint)
 
 	var user models.User
-	if err := database.DB.Select("username").First(&user, userID).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Select("username").First(&user, userID).Error; err != nil {
 		utils.InternalServerError(c, "获取用户信息失败", err)
 		return
 	}
 	currentStuID := user.Username
 
 	var reg models.Register
-	if err := database.DB.Preload("Competition.Detail").First(&reg, req.RegID).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Preload("Competition.Detail").First(&reg, req.RegID).Error; err != nil {
 		utils.NotFound(c, "报名记录不存在")
 		return
 	}
 
 	var count int64
-	database.DB.Model(&models.RegMember{}).
+	database.DB.WithContext(c.Request.Context()).Model(&models.RegMember{}).
 		Where("reg_id = ? AND username = ?", req.RegID, currentStuID).
 		Count(&count)
 
@@ -1460,7 +1508,7 @@ func SubmitWork(c *gin.Context) {
 
 	if reg.Status == 0 && reg.Competition.Detail.NeedRegAudit == 0 {
 		reg.Status = 1
-		_ = database.DB.Model(&reg).Update("status", 1).Error
+		_ = database.DB.WithContext(c.Request.Context()).Model(&reg).Update("status", 1).Error
 	}
 
 	if reg.Status != 1 && reg.Status != 4 {
@@ -1486,10 +1534,13 @@ func SubmitWork(c *gin.Context) {
 		return
 	}
 
-	if err := database.DB.Model(&reg).Update("work_attachment_url", req.WorkUrl).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Model(&reg).Update("work_attachment_url", req.WorkUrl).Error; err != nil {
 		utils.InternalServerError(c, "保存失败", err)
 		return
 	}
+
+	// 自动创建评审记录，无需管理员手动初始化
+	go AutoCreateReviewRecordsForWork(reg.CompID, reg.ID)
 
 	utils.SuccessWithMessage(c, "作品已成功保存", nil)
 }
@@ -1506,7 +1557,24 @@ func GetUserList(c *gin.Context) {
 		req.PageSize = 50
 	}
 
-	query := database.DB.Model(&models.User{}).
+	// 构造缓存 key
+	cacheKeyRaw := fmt.Sprintf("%s|%s|%d|%d", req.Role, req.Search, req.Page, req.PageSize)
+	cacheKey := fmt.Sprintf("cache:reg_user_list:%x", md5.Sum([]byte(cacheKeyRaw)))
+
+	rdb := middleware.GetRedisClient()
+	ctx := c.Request.Context()
+
+	// 先查 Redis 缓存
+	cacheData, err := rdb.Get(ctx, cacheKey).Result()
+	if err == nil && cacheData != "" {
+		var resp gin.H
+		if json.Unmarshal([]byte(cacheData), &resp) == nil {
+			utils.Success(c, resp)
+			return
+		}
+	}
+
+	query := database.DB.WithContext(ctx).Model(&models.User{}).
 		Joins("LEFT JOIN user_roles ON user_roles.user_id = users.id").
 		Joins("LEFT JOIN roles ON roles.id = user_roles.role_id").
 		Where("roles.role_code = ?", req.Role).
@@ -1549,10 +1617,23 @@ func GetUserList(c *gin.Context) {
 		})
 	}
 
-	utils.Success(c, gin.H{
+	respData := gin.H{
 		"list":      respList,
 		"total":     total,
 		"page":      req.Page,
 		"page_size": req.PageSize,
-	})
+	}
+
+	// 异步写入 Redis 缓存
+	go func() {
+		asyncCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		data, err := json.Marshal(respData)
+		if err != nil {
+			return
+		}
+		rdb.Set(asyncCtx, cacheKey, data, 5*time.Minute)
+	}()
+
+	utils.Success(c, respData)
 }

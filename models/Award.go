@@ -17,6 +17,7 @@ type Award struct {
 	AuditorID    *uint      `gorm:"comment:审核人ID" json:"auditor_id"`
 	AuditTime    *time.Time `gorm:"comment:审核时间" json:"audit_time"`
 	RejectReason string     `gorm:"type:varchar(200);comment:驳回理由" json:"reject_reason"`
+	AwardTime    *time.Time `gorm:"comment:获奖时间" json:"award_time"`
 	// 关联关系
 	Auditor  User     `gorm:"foreignKey:AuditorID" json:"auditor,omitempty"` // 审核人信息
 	Register Register `gorm:"foreignKey:RegID" json:"register"`
