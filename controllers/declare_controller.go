@@ -90,12 +90,35 @@ func CreateDeclare(c *gin.Context) {
 		CreatedBy:      userID.(uint),
 	}
 
-	if err := database.DB.WithContext(c.Request.Context()).Create(&declaration).Error; err != nil {
+	var promotions []RolePromotion
+	if err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&declaration).Error; err != nil {
+			return err
+		}
+		// P4：申报负责人若为教师，自动提升为赛事负责人（操作者仅为校/院管理员）。
+		oldRoleID, newRoleID, promoteErr := promoteCompetitionManagerIfTeacher(tx, req.ManagerID)
+		if promoteErr != nil {
+			return promoteErr
+		}
+		if oldRoleID != 0 {
+			promotions = append(promotions, RolePromotion{
+				UserID:    req.ManagerID,
+				OldRoleID: oldRoleID,
+				NewRoleID: newRoleID,
+			})
+		}
+		return nil
+	}); err != nil {
 		utils.InternalServerError(c, "创建申报失败", err)
 		return
 	}
 
-	utils.SuccessWithMessage(c, "创建成功", declaration)
+	sourceID := declaration.ID
+	finalizeRolePromotions(c, promotions, auditReasonDeclare, &sourceID)
+	utils.SuccessWithMessage(c, "创建成功", gin.H{
+		"declaration":    declaration,
+		"promoted_users": promotedUsersResp(c, promotions),
+	})
 }
 
 func GetDeclareDetail(c *gin.Context) {
@@ -188,12 +211,41 @@ func UpdateDeclare(c *gin.Context) {
 		updates["attachment_path"] = *req.AttachmentPath
 	}
 
-	if err := database.DB.WithContext(c.Request.Context()).Model(&declaration).Updates(updates).Error; err != nil {
+	// P4：改派申报负责人时（显式传值且变化），仅提升新负责人；原负责人角色保留（不做降级）。
+	var promotions []RolePromotion
+	managerChanged := req.ManagerID != 0 && req.ManagerID != declaration.ManagerID
+	err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&declaration).Updates(updates).Error; err != nil {
+			return err
+		}
+		if managerChanged {
+			oldRoleID, newRoleID, promoteErr := promoteCompetitionManagerIfTeacher(tx, req.ManagerID)
+			if promoteErr != nil {
+				return promoteErr
+			}
+			if oldRoleID != 0 {
+				promotions = append(promotions, RolePromotion{
+					UserID:    req.ManagerID,
+					OldRoleID: oldRoleID,
+					NewRoleID: newRoleID,
+				})
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		utils.InternalServerError(c, "更新失败", err)
 		return
 	}
 
-	utils.SuccessWithMessage(c, "更新成功", declaration)
+	if managerChanged {
+		sourceID := declaration.ID
+		finalizeRolePromotions(c, promotions, auditReasonDeclare, &sourceID)
+	}
+	utils.SuccessWithMessage(c, "更新成功", gin.H{
+		"declaration":    declaration,
+		"promoted_users": promotedUsersResp(c, promotions),
+	})
 }
 
 func SubmitDeclare(c *gin.Context) {

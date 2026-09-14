@@ -284,7 +284,8 @@ func defaultRoleCodeForIdentity(identityType string) string {
 	case "student", "postgraduate":
 		return "student"
 	case "staff":
-		return "competition_manager"
+		// P1-2：教职工默认角色为教师；赛事负责人由管理员在赛事写入路径按需提升。
+		return "teacher"
 	default:
 		return "guest"
 	}

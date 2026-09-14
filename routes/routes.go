@@ -78,11 +78,11 @@ func SetupRoutes(r *gin.Engine) {
 		perm.POST("/role/assign_perm",
 			middleware.RequirePermission("perm:assign"),
 			controllers.AssignPermissions)
-		perm.GET("/user/list",
+		perm.GET("/member/list",
 			middleware.RequireRole("school_admin"),
 			middleware.RequirePermission("user:list"),
 			controllers.GetAllUsers)
-		perm.PUT("/user/:id/role",
+		perm.PUT("/member/:id/role",
 			middleware.RequireRole("school_admin"),
 			middleware.RequirePermission("user:assign_role"),
 			controllers.AssignUserRole)

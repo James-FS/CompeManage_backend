@@ -93,6 +93,29 @@ func requireCompetitionAccessIfScoped(c *gin.Context, compID uint) bool {
 	return ok
 }
 
+// canManageNotice 判定当前请求方能否发布/编辑/删除该通知（P0-3）。
+// school_admin / college_admin 不受限；其余角色仅限自己发布的通知。
+// 返回 false 时调用方应返回 403。
+func canManageNotice(c *gin.Context, notice models.Notice) bool {
+	scope, ok := requestAccessScopeIfAvailable(c)
+	if !ok {
+		return false
+	}
+	if scope == nil {
+		// 无 role_code：仅出现在绕过 AuthRequired 的单元测试中（真实请求必经 AuthRequired）。
+		// 与 requireCompetitionAccessIfScoped 的测试兼容口径保持一致；不产生额外 SQL。
+		return true
+	}
+	if scope.IsSchoolAdmin() || scope.IsCollegeAdmin() {
+		return true
+	}
+	if notice.PublisherID == nil {
+		// 存量通知无归属人，负责人不可操作
+		return false
+	}
+	return *notice.PublisherID == scope.UserID
+}
+
 func (scope *UserAccessScope) IsSchoolAdmin() bool {
 	return scope != nil && scope.RoleCode == "school_admin"
 }

@@ -1558,7 +1558,12 @@ func GetUserList(c *gin.Context) {
 	}
 
 	// 构造缓存 key
-	cacheKeyRaw := fmt.Sprintf("%s|%s|%d|%d", req.Role, req.Search, req.Page, req.PageSize)
+	// P6：teacher 一路的语义由「角色」改为「身份」，加版本后缀避免复用语义变更前的旧缓存。
+	cacheRole := req.Role
+	if req.Role == "teacher" {
+		cacheRole = "teacher:v2"
+	}
+	cacheKeyRaw := fmt.Sprintf("%s|%s|%d|%d", cacheRole, req.Search, req.Page, req.PageSize)
 	cacheKey := fmt.Sprintf("cache:reg_user_list:%x", md5.Sum([]byte(cacheKeyRaw)))
 
 	rdb := middleware.GetRedisClient()
@@ -1574,11 +1579,29 @@ func GetUserList(c *gin.Context) {
 		}
 	}
 
-	query := database.DB.WithContext(ctx).Model(&models.User{}).
-		Joins("LEFT JOIN user_roles ON user_roles.user_id = users.id").
-		Joins("LEFT JOIN roles ON roles.id = user_roles.role_id").
-		Where("roles.role_code = ?", req.Role).
-		Select("users.id, users.realname, users.username, users.college, users.grade")
+	// P6：指导老师候选改为按身份取人（identity_type='staff'，排除管理员/专家/访客），
+	// 与 P2 负责人池同口径——这样老师被提升为赛事负责人后仍可被选为指导老师。
+	// 其余（student 等）保持按角色取人，行为不变（按身份取学生会遗漏 1460 名
+	// identity_type='external' 的真实学生）。
+	var query *gorm.DB
+	if req.Role == "teacher" {
+		query = database.DB.WithContext(ctx).Model(&models.User{}).
+			Where("users.delete_time IS NULL").
+			Where("users.identity_type = 'staff'").
+			Where(`NOT EXISTS (
+				SELECT 1 FROM user_roles ur
+				JOIN roles r ON r.id = ur.role_id AND r.delete_time IS NULL
+				WHERE ur.user_id = users.id
+					AND r.role_code IN ('school_admin', 'college_admin', 'expert', 'guest')
+			)`)
+	} else {
+		query = database.DB.WithContext(ctx).Model(&models.User{}).
+			Joins("LEFT JOIN user_roles ON user_roles.user_id = users.id").
+			Joins("LEFT JOIN roles ON roles.id = user_roles.role_id").
+			Where("roles.role_code = ?", req.Role).
+			Where("users.delete_time IS NULL")
+	}
+	query = query.Select("users.id, users.realname, users.username, users.college, users.grade")
 
 	if req.Search != "" {
 		query = query.Where(

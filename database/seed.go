@@ -49,7 +49,21 @@ func grantRolePermissionsByCode(roleCode string, permCodes []string) {
 }
 
 func ensureNoticeManagePermissions() {
-	noticeManagePerms := []string{"notice:create", "notice:publish", "notice:delete"}
+	// P0-2/A-1：对存量库生效——先确保权限行存在（InitData 在已有数据时只走 ensure* 路径，
+	// 不会执行权限定义列表），再授予三个角色。
+	var noticeDir models.Permission
+	if err := DB.Where("code = ?", "notice").First(&noticeDir).Error; err == nil {
+		var existed models.Permission
+		if DB.Where("code = ?", "notice:update").First(&existed).Error != nil {
+			if err := DB.Create(&models.Permission{
+				Name: "编辑通知", Code: "notice:update", Type: 3,
+				ParentID: noticeDir.ID, Description: "编辑通知",
+			}).Error; err != nil {
+				log.Printf("补齐权限失败(notice:update): %v", err)
+			}
+		}
+	}
+	noticeManagePerms := []string{"notice:create", "notice:publish", "notice:delete", "notice:update"}
 	grantRolePermissionsByCode("competition_manager", noticeManagePerms)
 	grantRolePermissionsByCode("college_admin", noticeManagePerms)
 	grantRolePermissionsByCode("school_admin", noticeManagePerms)
@@ -115,8 +129,13 @@ func ensureAwardStudentPermissions() {
 
 	ensurePerm("award:student:my-list", "查看我的获奖", "学生查看个人获奖申报列表")
 	ensurePerm("award:student:supplement", "学生补录获奖", "学生提交获奖补录")
+	// P0-2/A-2：补齐获奖审核权限行（对存量库生效），并显式授予管理员——
+	// 存量库中 school_admin 的权限是初始化时一次性写入的，新增权限不会自动追加。
+	ensurePerm("award:audit", "获奖审核", "审核学生获奖申报")
 
 	grantRolePermissionsByCode("student", []string{"award:student:my-list", "award:student:supplement"})
+	grantRolePermissionsByCode("school_admin", []string{"award:audit"})
+	grantRolePermissionsByCode("college_admin", []string{"award:audit"})
 }
 
 func ensureDeclarePermissions() {
@@ -426,6 +445,8 @@ func InitData() {
 		{Name: "查看获奖赛事列表", Code: "award:list", Type: 3, ParentID: awardSub.ID, Description: "查看获奖赛事列表"},
 		{Name: "查看赛事获奖信息", Code: "award:comp:list", Type: 3, ParentID: awardSub.ID, Description: "查看具体赛事的获奖信息"},
 		{Name: "导入获奖信息", Code: "award:import", Type: 3, ParentID: awardSub.ID, Description: "导入获奖信息"},
+		// P0-2/A-2：补齐获奖审核权限（此前 4 个审核路由要求该权限但从未创建，导致所有角色 403）
+		{Name: "获奖审核", Code: "award:audit", Type: 3, ParentID: awardSub.ID, Description: "审核学生获奖申报"},
 		{Name: "查看我的获奖", Code: "award:student:my-list", Type: 3, ParentID: awardSub.ID, Description: "学生查看个人获奖申报列表"},
 		{Name: "学生补录获奖", Code: "award:student:supplement", Type: 3, ParentID: awardSub.ID, Description: "学生提交获奖补录"},
 
@@ -452,6 +473,8 @@ func InitData() {
 		{Name: "创建通知", Code: "notice:create", Type: 3, ParentID: noticeDir.ID, Description: "创建新通知"},
 		{Name: "发布通知", Code: "notice:publish", Type: 3, ParentID: noticeDir.ID, Description: "发布通知"},
 		{Name: "删除通知", Code: "notice:delete", Type: 3, ParentID: noticeDir.ID, Description: "删除通知"},
+		// P0-2/A-1：补齐编辑通知权限（此前路由要求该权限但从未创建，导致所有角色 403）
+		{Name: "编辑通知", Code: "notice:update", Type: 3, ParentID: noticeDir.ID, Description: "编辑通知"},
 
 		// 权限管理权限 (parent: permSub)
 		{Name: "查看权限列表", Code: "perm:list", Type: 3, ParentID: permSub.ID, Description: "查看系统权限列表"},
@@ -520,11 +543,11 @@ func InitData() {
 		// 具体权限
 		"comp:list", "comp:detail", "comp:years:list", "manager:list",
 		"declare:create", "declare:get", "declare:update", "declare:submit", "declare:list", "declare:delete", "declare:pending-list", "declare:audited-list", "declare:revoke", "declare:all-declares",
-		"award:list", "award:comp:list",
+		"award:list", "award:comp:list", "award:audit",
 		"summary:list", "summary:detail",
 		"reg:config:view",
 		"reg:audit:list", "reg:audit:detail", "reg:audit:update",
-		"notice:list", "notice:detail", "notice:create", "notice:publish", "notice:delete",
+		"notice:list", "notice:detail", "notice:create", "notice:publish", "notice:delete", "notice:update",
 		"college:list",
 		// 专家评审管理
 		"review:comp:list", "review:expert:list", "review:task:list", "review:task:assign", "review:task:init", "review:task:delete", "review:progress", "review:result:list", "review:result:confirm",
@@ -551,7 +574,7 @@ func InitData() {
 		// 报名审核（全权限）
 		"reg:audit:list", "reg:audit:detail", "reg:audit:update",
 		// 通知管理
-		"notice:list", "notice:detail", "notice:create", "notice:publish", "notice:delete",
+		"notice:list", "notice:detail", "notice:create", "notice:publish", "notice:delete", "notice:update",
 		// 基础数据
 		"college:list", "upload:file",
 		// 专家评审管理
@@ -602,8 +625,8 @@ func InitData() {
 		"competition", "notice", "review",
 		// 子分类
 		"comp", "declare", "award",
-		// 竞赛查看
-		"comp:list", "comp:years:list", "manager:list",
+		// 竞赛查看（P2-C：专家不授予 manager:list，避免枚举全体教职工名单）
+		"comp:list", "comp:years:list",
 		// 申报查看
 		"declare:get", "declare:list", "declare:all-declares",
 		// 获奖查看
@@ -631,8 +654,6 @@ func InitData() {
 		{Username: "T2023002", Realname: "王老师", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "管理"},
 		{Username: "T2023003", Realname: "张伟", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "计算机科学"},
 		{Username: "T2023004", Realname: "李华", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子信息"},
-		{Username: "T2023005", Realname: "王强", Password: hashPassword("123"), College: "经济管理学院", Grade: "教职员工", Major: "经济管理"},
-		{Username: "T2023006", Realname: "赵敏", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "软件工程"},
 		{Username: "T2023010", Realname: "陈老师", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "软件工程"},
 		{Username: "T2023011", Realname: "刘老师", Password: hashPassword("123"), College: "数学学院", Grade: "教职员工", Major: "数学与应用数学"},
 		{Username: "T2023012", Realname: "何老师", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子科学与技术"},
@@ -650,8 +671,6 @@ func InitData() {
 		"T2023002": &collegeAdminRole,       // 王院长 - 院级管理员
 		"T2023003": &competitionManagerRole, // 张伟 - 赛事负责人
 		"T2023004": &competitionManagerRole, // 李华 - 赛事负责人
-		"T2023005": &competitionManagerRole, // 王强 - 赛事负责人
-		"T2023006": &competitionManagerRole, // 赵敏 - 赛事负责人
 		"T2023010": &teacherRole,            // 陈老师 - 老师
 		"T2023011": &teacherRole,            // 刘老师 - 老师
 		"T2023012": &teacherRole,            // 何老师 - 老师
@@ -717,7 +736,7 @@ func InitData() {
 	log.Println("📋 用户账号信息：")
 	log.Println("  校级管理员: T2023001    密码: 123 (拥有所有权限)")
 	log.Println("  院级管理员: T2023002     密码: 123 (本学院竞赛/申报查看+报名审核+报名配置查看)")
-	log.Println("  赛事负责人: T2023003  密码: 123 (竞赛管理+申报管理+报名配置编辑+报名审核)")
+	log.Println("  赛事负责人: T2023003/T2023004  密码: 123 (竞赛管理+申报管理+报名配置编辑+报名审核)")
 	log.Println("  老师:       T2023010/T2023011/T2023012  密码: 123 (用于指导教师选择)")
 	log.Println("  学生:       S2024001  密码: 123 (报名提交+通知查看)")
 	log.Println("  专家:       E2023001/E2023002   密码: 123 (竞赛查看+申报查看+获奖查看+通知查看)")

@@ -222,12 +222,20 @@ func CreateCompNotice(c *gin.Context) {
 	compID := uint(compIDUint64)
 
 	// 4. 保存数据库（强制关联赛事ID）
+	// P0-3：写入归属人（nil 安全——测试上下文无 user_id 时保持 NULL，生产请求必经 AuthRequired）。
+	var publisherID *uint
+	if v, ok := c.Get("user_id"); ok {
+		if uid, ok2 := v.(uint); ok2 && uid != 0 {
+			publisherID = &uid
+		}
+	}
 	notice := models.Notice{
 		Title:               title,
 		Content:             content,
 		CompetitionDetailID: compID, // 必传，关联当前赛事
 		Attachment:          attachmentURL,
 		Status:              0, // 默认未发布
+		PublisherID:         publisherID,
 	}
 	if err := database.DB.WithContext(c.Request.Context()).Create(&notice).Error; err != nil {
 		fmt.Printf("数据库写入失败: %v\n", err)
@@ -260,19 +268,30 @@ func PublishNotice(c *gin.Context) {
 		return
 	}
 
-	// 3. 检查是否已发布
+	// 3. 归属校验（P0-3）：管理员不受限；其他角色仅限自己发布的通知。
+	if !canManageNotice(c, notice) {
+		utils.Forbidden(c, "仅可操作自己发布的通知")
+		return
+	}
+
+	// 4. 检查是否已发布
 	if notice.Status == 1 {
 		utils.BadRequest(c, "该通知已发布，无需重复操作")
 		return
 	}
 
-	// 4. 更新状态为已发布，更新时间为当前时间
+	// 5. 更新状态为已发布，更新时间为当前时间
 	currentPublishTime := time.Now().Format("2006-01-02 15:04:05")
-	if err := database.DB.WithContext(c.Request.Context()).Model(&notice).Updates(map[string]interface{}{
+	updates := map[string]interface{}{
 		"status":       1,
 		"publish_time": currentPublishTime, // 发布时固定publish_time
 		"updated_at":   time.Now(),         // 发布时间=更新时间
-	}).Error; err != nil {
+	}
+	// P0-3：发布时刷新归属人（nil 安全——上下文无 user_id 时保持原值，不覆盖）。
+	if uid := currentOperatorID(c); uid != 0 {
+		updates["publisher_id"] = uid
+	}
+	if err := database.DB.WithContext(c.Request.Context()).Model(&notice).Updates(updates).Error; err != nil {
 		utils.InternalServerError(c, "发布通知失败", err)
 		return
 	}
@@ -304,6 +323,14 @@ func UpdateNotice(c *gin.Context) {
 		} else {
 			utils.InternalServerError(c, "查询通知失败", err)
 		}
+		return
+	}
+
+	// 2.5 归属校验（P0-3）：管理员不受限；其他角色仅限自己发布的通知。
+	// A-1 已把 notice:update 授予 competition_manager，此校验不可省略，
+	// 否则负责人可编辑任意通知、绕过「只能管自己发布的」决策。
+	if !canManageNotice(c, notice) {
+		utils.Forbidden(c, "仅可操作自己发布的通知")
 		return
 	}
 
@@ -370,6 +397,12 @@ func DeleteNotice(c *gin.Context) {
 		} else {
 			utils.InternalServerError(c, "查询通知失败", err)
 		}
+		return
+	}
+
+	// 2.5 归属校验（P0-3）：管理员不受限；其他角色仅限自己发布的通知。
+	if !canManageNotice(c, notice) {
+		utils.Forbidden(c, "仅可操作自己发布的通知")
 		return
 	}
 

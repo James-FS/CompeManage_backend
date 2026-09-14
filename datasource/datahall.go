@@ -244,7 +244,8 @@ func SyncStudents() {
 				IdentityType: "student",
 			}
 
-			if err := database.DB.Transaction(func(tx *gorm.DB) error {
+			// P0-4 配套：唯一索引下并发同步易死锁，整体事务重试（Error 1213 回滚整个事务）
+			if err := database.TransactionWithDeadlockRetry(database.DB, func(tx *gorm.DB) error {
 				if err := tx.Create(&user).Error; err != nil {
 					return err
 				}

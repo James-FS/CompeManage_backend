@@ -317,7 +317,7 @@ func TestAssignUserRole_SuccessClearsPermissionCache(t *testing.T) {
 
 func TestGetAllUsers_RejectsInvalidIdentityType(t *testing.T) {
 	setupUserManageDBMock(t)
-	_, w, c := buildGET("/api/perm/user/list?identity_type=administrator")
+	_, w, c := buildGET("/api/perm/member/list?identity_type=administrator")
 
 	GetAllUsers(c)
 
@@ -333,7 +333,7 @@ func TestGetAllUsers_EmptyPage(t *testing.T) {
 	mock.ExpectQuery("SELECT .* FROM `users`.*ORDER BY users.create_time DESC, users.id DESC").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "username"}))
 
-	_, w, c := buildGET("/api/perm/user/list?page=1&page_size=20")
+	_, w, c := buildGET("/api/perm/member/list?page=1&page_size=20")
 	GetAllUsers(c)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -353,7 +353,7 @@ func TestGetAllUsers_LegacyUserWithoutRoleReturnsNull(t *testing.T) {
 		WithArgs(uint(9)).
 		WillReturnRows(sqlmock.NewRows([]string{"user_id", "role_id"}))
 
-	_, w, c := buildGET("/api/perm/user/list?page=1&page_size=20")
+	_, w, c := buildGET("/api/perm/member/list?page=1&page_size=20")
 	GetAllUsers(c)
 
 	assert.Equal(t, http.StatusOK, w.Code)

@@ -170,9 +170,9 @@ func SyncStaff() {
 
 	log.Printf("[DataHall-Staff] 拉取完成，共 %d 条教职工记录，开始写入数据库...", len(staff))
 
-	var competitionManagerRole models.Role
-	if err := database.DB.Where("role_code = ?", "competition_manager").First(&competitionManagerRole).Error; err != nil {
-		log.Printf("[DataHall-Staff] 未找到 competition_manager 角色: %v，终止本次同步", err)
+	var teacherRole models.Role
+	if err := database.DB.Where("role_code = ?", "teacher").First(&teacherRole).Error; err != nil {
+		log.Printf("[DataHall-Staff] 未找到 teacher 角色: %v，终止本次同步", err)
 		return
 	}
 
@@ -206,11 +206,12 @@ func SyncStaff() {
 				IdentityType: "staff",
 			}
 
-			if err := database.DB.Transaction(func(tx *gorm.DB) error {
+			// P0-4 配套：唯一索引下并发同步易死锁，整体事务重试（Error 1213 回滚整个事务）
+			if err := database.TransactionWithDeadlockRetry(database.DB, func(tx *gorm.DB) error {
 				if err := tx.Create(&user).Error; err != nil {
 					return err
 				}
-				return database.SetUserRole(tx, user.ID, competitionManagerRole.ID)
+				return database.SetUserRole(tx, user.ID, teacherRole.ID)
 			}); err != nil {
 				log.Printf("[DataHall-Staff] 创建用户 %s 失败: %v", sid, err)
 				failed++
