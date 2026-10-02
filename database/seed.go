@@ -45,7 +45,7 @@ func grantRolePermissionsByCode(roleCode string, permCodes []string) {
 		return
 	}
 
-	log.Printf("已补齐角色 %s 的通知权限", roleCode)
+	log.Printf("已补齐角色 %s 的权限", roleCode)
 }
 
 func ensureNoticeManagePermissions() {
@@ -136,6 +136,20 @@ func ensureAwardStudentPermissions() {
 	grantRolePermissionsByCode("student", []string{"award:student:my-list", "award:student:supplement"})
 	grantRolePermissionsByCode("school_admin", []string{"award:audit"})
 	grantRolePermissionsByCode("college_admin", []string{"award:audit"})
+}
+
+// ensureStudentBrowsePermissions P0-3：对学生角色补齐浏览类只读权限——
+// 首页统计/赛事目录/赛事报名调用 GET /api/comp/list 需要 comp:list，
+// 报名详情页读取报名配置需要 reg:config:view。学生种子列表此前遗漏，
+// 存量库也不会自动追加新权限，导致学生登录首页即触发 403“没有权限访问该资源”。
+func ensureStudentBrowsePermissions() {
+	var compParent models.Permission
+	if err := DB.Where("code = ?", "comp").First(&compParent).Error; err != nil {
+		log.Printf("未找到权限目录 comp，跳过学生浏览权限补齐: %v", err)
+		return
+	}
+
+	grantRolePermissionsByCode("student", []string{"comp:list", "reg:config:view"})
 }
 
 func ensureDeclarePermissions() {
@@ -353,6 +367,7 @@ func InitData() {
 		ensureNoticeManagePermissions()
 		ensureCompetitionCorePermissions()
 		ensureAwardStudentPermissions()
+		ensureStudentBrowsePermissions()
 		ensureDeclarePermissions()
 		ensureReviewPermissions()
 		ensureUserManagePermissions()
@@ -600,15 +615,17 @@ func InitData() {
 	}).Find(&teacherPerms)
 	DB.Model(&teacherRole).Association("Permissions").Append(&teacherPerms)
 
-	// --- E. 学生：报名提交相关、通知查看 ---
+	// --- E. 学生：报名提交相关、赛事浏览、通知查看 ---
 	var studentPerms []models.Permission
 	DB.Where("code IN ?", []string{
 		// 大分类
 		"competition", "registration", "notice",
 		// 子分类
-		"award", "reg:submit",
+		"comp", "award", "reg:submit", "reg:config",
+		// 赛事浏览（首页统计/赛事目录/赛事报名均调用 comp/list）
+		"comp:list",
 		// 报名提交权限
-		"reg:config:submit", "reg:status", "reg:resubmit", "reg:my-reg", "reg:my-reg:submit", "reg:user:list",
+		"reg:config:submit", "reg:config:view", "reg:status", "reg:resubmit", "reg:my-reg", "reg:my-reg:submit", "reg:user:list",
 		// 学生获奖权限
 		"award:student:my-list", "award:student:supplement",
 		// 通知查看
@@ -638,9 +655,10 @@ func InitData() {
 	}).Find(&expertPerms)
 	DB.Model(&expertRole).Association("Permissions").Append(&expertPerms)
 
-	ensureNoticeManagePermissions()
-	ensureCompetitionCorePermissions()
-	ensureAwardStudentPermissions()
+		ensureNoticeManagePermissions()
+		ensureCompetitionCorePermissions()
+		ensureAwardStudentPermissions()
+		ensureStudentBrowsePermissions()
 	ensureUserManagePermissions()
 
 	// --- G. 访客：无特殊权限 ---
