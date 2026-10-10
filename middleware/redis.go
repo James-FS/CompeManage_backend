@@ -14,6 +14,31 @@ import (
 
 var RedisClient *redis.Client
 
+// ClearAwardImportPermissionCache 清理院管理员新增填报权限的旧允许/拒绝缓存。
+func ClearAwardImportPermissionCache() error {
+	if RedisClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	var cursor uint64
+	for {
+		keys, next, err := RedisClient.Scan(ctx, cursor, "perm:*:award:import", 100).Result()
+		if err != nil {
+			return err
+		}
+		if len(keys) > 0 {
+			if err := RedisClient.Del(ctx, keys...).Err(); err != nil {
+				return err
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			return nil
+		}
+	}
+}
+
 func InitRedis() {
 	host := config.GetString("redis.host")
 	port := config.GetInt("redis.port")

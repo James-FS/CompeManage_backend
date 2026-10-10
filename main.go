@@ -30,6 +30,9 @@ func main() {
 	database.InitData()
 	// 连接redis
 	middleware.InitRedis()
+	if err := middleware.ClearAwardImportPermissionCache(); err != nil {
+		log.Printf("刷新获奖导入权限缓存失败，将在TTL到期后更新: %v", err)
+	}
 	defer middleware.CloseRedis()
 	// 创建Gin引擎（开发环境用gin.Default，生产可改为gin.ReleaseMode）
 	r := gin.Default()
@@ -45,8 +48,8 @@ func main() {
 	routes.SetupRoutes(r)
 	utils.StartCompStatusScheduler(5 * time.Minute)
 	middleware.StartPermissionCacheInvalidationScheduler(time.Minute)
-	datasource.StartScheduler(6 * time.Hour)           // 每6小时全量同步本科生数据
-	datasource.StartStaffScheduler(6 * time.Hour)      // 每6小时全量同步教职工数据
+	datasource.StartScheduler(6 * time.Hour)      // 每6小时全量同步本科生数据
+	datasource.StartStaffScheduler(6 * time.Hour) // 每6小时全量同步教职工数据
 	// 研究生数据暂停同步(2026-09-12):如需恢复,取消下一行注释即可
 	// datasource.StartPostgradScheduler(6 * time.Hour) // 每6小时全量同步研究生数据
 	datasource.StartCollegeScheduler(6 * time.Hour)    // 每6小时全量同步组织机构数据

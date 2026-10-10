@@ -132,10 +132,12 @@ func ensureAwardStudentPermissions() {
 	// P0-2/A-2：补齐获奖审核权限行（对存量库生效），并显式授予管理员——
 	// 存量库中 school_admin 的权限是初始化时一次性写入的，新增权限不会自动追加。
 	ensurePerm("award:audit", "获奖审核", "审核学生获奖申报")
+	ensurePerm("award:import", "导入获奖信息", "导入获奖名单和编辑获奖信息")
 
 	grantRolePermissionsByCode("student", []string{"award:student:my-list", "award:student:supplement"})
 	grantRolePermissionsByCode("school_admin", []string{"award:audit"})
 	grantRolePermissionsByCode("college_admin", []string{"award:audit"})
+	grantRolePermissionsByCode("college_admin", []string{"award:import"})
 }
 
 // ensureStudentBrowsePermissions P0-3：对学生角色补齐浏览类只读权限——
@@ -558,7 +560,7 @@ func InitData() {
 		// 具体权限
 		"comp:list", "comp:detail", "comp:years:list", "manager:list",
 		"declare:create", "declare:get", "declare:update", "declare:submit", "declare:list", "declare:delete", "declare:pending-list", "declare:audited-list", "declare:revoke", "declare:all-declares",
-		"award:list", "award:comp:list", "award:audit",
+		"award:list", "award:comp:list", "award:audit", "award:import",
 		"summary:list", "summary:detail",
 		"reg:config:view",
 		"reg:audit:list", "reg:audit:detail", "reg:audit:update",
@@ -655,10 +657,10 @@ func InitData() {
 	}).Find(&expertPerms)
 	DB.Model(&expertRole).Association("Permissions").Append(&expertPerms)
 
-		ensureNoticeManagePermissions()
-		ensureCompetitionCorePermissions()
-		ensureAwardStudentPermissions()
-		ensureStudentBrowsePermissions()
+	ensureNoticeManagePermissions()
+	ensureCompetitionCorePermissions()
+	ensureAwardStudentPermissions()
+	ensureStudentBrowsePermissions()
 	ensureUserManagePermissions()
 
 	// --- G. 访客：无特殊权限 ---
