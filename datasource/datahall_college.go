@@ -15,9 +15,10 @@ import (
 )
 
 type collegeItem struct {
-	OrgCode  *string `json:"D_STATIC_ORG_CODE"`
-	OrgName  *string `json:"D_STATIC_ORG_NAME"`
-	OrgEname *string `json:"D_STATIC_ORG_ENAME"`
+	OrgCode    *string `json:"D_STATIC_ORG_CODE"`
+	OrgName    *string `json:"D_STATIC_ORG_NAME"`
+	OrgEname   *string `json:"D_STATIC_ORG_ENAME"`
+	OrgIsValid *string `json:"D_STATIC_ORG_IS_VALID"`
 }
 
 type collegeDataResult struct {
@@ -135,6 +136,22 @@ func SyncColleges() {
 			continue
 		}
 		ename := derefStr(item.OrgEname)
+		if derefStr(item.OrgIsValid) != "1" {
+			// 禁用已同步的无效学院，保留历史关联；按名称回退仅匹配尚无机构代码的旧记录。
+			// 同名机构可能同时存在有效和无效代码，不能禁用另一代码的有效学院。
+			result := database.DB.Model(&models.College{}).
+				Where("code = ? OR (name = ? AND (code = '' OR code IS NULL))", code, name).
+				Where("is_valid = ?", true).
+				Update("is_valid", false)
+			if result.Error != nil {
+				log.Printf("[DataHall-College] 禁用机构 %s 失败: %v", name, result.Error)
+				failed++
+			} else {
+				updated += int(result.RowsAffected)
+				skipped++
+			}
+			continue
+		}
 
 		var college models.College
 		found := false
@@ -156,14 +173,15 @@ func SyncColleges() {
 		}
 
 		if found {
-			if college.Name == name && college.Code == code && college.Ename == ename {
+			if college.Name == name && college.Code == code && college.Ename == ename && college.IsValid {
 				skipped++
 				continue
 			}
 			if err := database.DB.Model(&college).Updates(map[string]interface{}{
-				"name":  name,
-				"code":  code,
-				"ename": ename,
+				"name":     name,
+				"code":     code,
+				"ename":    ename,
+				"is_valid": true,
 			}).Error; err != nil {
 				log.Printf("[DataHall-College] 更新机构 %s 失败: %v", name, err)
 				failed++
@@ -172,9 +190,10 @@ func SyncColleges() {
 			updated++
 		} else {
 			if err := database.DB.Create(&models.College{
-				Name:  name,
-				Code:  code,
-				Ename: ename,
+				Name:    name,
+				Code:    code,
+				Ename:   ename,
+				IsValid: true,
 			}).Error; err != nil {
 				log.Printf("[DataHall-College] 创建机构 %s 失败: %v", name, err)
 				failed++
