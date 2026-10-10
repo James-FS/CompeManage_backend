@@ -30,7 +30,9 @@ func EnsureAwardMembers(tx *gorm.DB, awardID uint) error {
 		if name == "" {
 			name = fmt.Sprintf("历史项目-%d", a.ID)
 		}
-		if err := tx.Model(&a).Update("project_name", name).Error; err != nil {
+		// 用不带关联对象的 Model 更新：a 上已 Preload 了 Register/Leader，
+		// 直接 Model(&a) 会让 GORM 连带重存关联（INSERT 旧报名），JSON 列 advisor_info 为空串时报 3140。
+		if err := tx.Model(&models.Award{}).Where("id = ?", a.ID).Update("project_name", name).Error; err != nil {
 			return err
 		}
 	}
@@ -66,7 +68,7 @@ func EnsureAwardMembers(tx *gorm.DB, awardID uint) error {
 	if unmatched > 0 {
 		log.Printf("[AwardMigration] 奖项 %d 有 %d 个成员未匹配系统账号，原报名数据保留，需校级管理员核对", a.ID, unmatched)
 	}
-	return tx.Model(&a).Update("members_migrated", true).Error
+	return tx.Model(&models.Award{}).Where("id = ?", a.ID).Update("members_migrated", true).Error
 }
 
 func BackfillAwardMembers(db *gorm.DB) error {

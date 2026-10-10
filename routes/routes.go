@@ -230,6 +230,12 @@ func SetupRoutes(r *gin.Engine) {
 		award.PUT("/teams/:id", middleware.RequirePermission("award:import"), controllers.UpdateAwardTeam)
 		award.GET("/export-template",
 			controllers.ExportAwardTemplate)
+		award.GET("/export/projects",
+			middleware.RequirePermission("award:list"),
+			controllers.ExportAwardProjects)
+		award.GET("/export/students",
+			middleware.RequirePermission("award:list"),
+			controllers.ExportAwardStudents)
 		award.GET("/comp/list",
 			controllers.SearchCompetition)
 		award.GET("/student/my-awards",
