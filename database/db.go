@@ -83,6 +83,8 @@ func autoMigrate() {
 		&models.Notice{},
 		&models.CompDeclaration{},
 		&models.Award{},
+		&models.AwardMember{},
+		&models.AwardImportSetting{},
 		&models.Summary{},
 		&models.FileRecord{},
 		&models.ReviewTask{},
@@ -98,6 +100,9 @@ func autoMigrate() {
 		log.Fatalf("数据库自动迁移失败：%v", err)
 	}
 	log.Println("数据库自动迁移成功")
+	if err := BackfillAwardMembers(DB); err != nil {
+		log.Fatalf("获奖数据兼容迁移失败: %v", err)
+	}
 }
 
 // GetDB 获取DB实例（方便其他模块调用）

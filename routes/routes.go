@@ -223,6 +223,11 @@ func SetupRoutes(r *gin.Engine) {
 		award.POST("/import",
 			middleware.RequirePermission("award:import"),
 			controllers.ImportAward)
+		award.POST("/import/preview", middleware.RequirePermission("award:import"), controllers.PreviewAwardImport)
+		award.GET("/import/settings", controllers.GetAwardImportSetting)
+		award.PUT("/import/settings", controllers.UpdateAwardImportSetting)
+		award.PUT("/members/:id", middleware.RequirePermission("award:import"), controllers.UpdateAwardMember)
+		award.PUT("/teams/:id", middleware.RequirePermission("award:import"), controllers.UpdateAwardTeam)
 		award.GET("/export-template",
 			controllers.ExportAwardTemplate)
 		award.GET("/comp/list",

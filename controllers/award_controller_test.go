@@ -462,12 +462,14 @@ func TestGetStudentMyAwardList_InvalidCompID(t *testing.T) {
 
 func TestGetStudentMyAwardList_Success(t *testing.T) {
 	mock := setupAwardDBMock(t)
-	defer mock.ExpectationsWereMet()
+	t.Cleanup(func() { assert.NoError(t, mock.ExpectationsWereMet()) })
 
 	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `awards`").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery("SELECT .* FROM `awards`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_id", "reg_id", "award_level"}).AddRow(1, 1, 1, "一等奖"))
+	mock.ExpectQuery("SELECT .* FROM `comp_directories`").WillReturnRows(sqlmock.NewRows([]string{"id", "comp_name"}).AddRow(1, "测试赛事"))
+	mock.ExpectQuery("SELECT .* FROM `award_members`").WillReturnRows(sqlmock.NewRows([]string{"id", "award_id", "student_id"}).AddRow(1, 1, 1))
 	// GORM Preload queries: registers -> users (Leader) -> reg_members (Members) -> comp_directories (Competition)
 	mock.ExpectQuery("SELECT .* FROM `registers`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "leader_id"}).AddRow(1, 1))
@@ -475,8 +477,6 @@ func TestGetStudentMyAwardList_Success(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "realname"}).AddRow(1, "张三"))
 	mock.ExpectQuery("SELECT .* FROM `reg_members`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "reg_id"}).AddRow(1, 1))
-	mock.ExpectQuery("SELECT .* FROM `comp_directories`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_name"}).AddRow(1, "测试赛事"))
 
 	_, w, c := buildGET("/api/award/my?page=1&size=10")
 	c.Set("user_id", uint(1))
