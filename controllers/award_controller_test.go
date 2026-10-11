@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -503,10 +504,51 @@ func TestGetAwardCompList_Success(t *testing.T) {
 	// Preload Detail queries comp_details
 	mock.ExpectQuery("SELECT .* FROM `comp_details`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_id"}).AddRow(1, 1))
+	// 年份下拉选项：DISTINCT year
+	mock.ExpectQuery("SELECT DISTINCT `year` FROM `comp_directories`").
+		WillReturnRows(sqlmock.NewRows([]string{"year"}).AddRow(2026))
 
 	_, w, c := buildGET("/api/award/comps?page=1&size=10")
 	c.Set("user_id", uint(1))
 	GetAwardCompList(c)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestGetAwardCompList_KeywordFilter(t *testing.T) {
+	mock := setupAwardDBMock(t)
+	defer mock.ExpectationsWereMet()
+
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `user_roles`").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `comp_directories`").
+		WithArgs("%蓝桥%", "%蓝桥%", "校级", 2026, 2).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	// Find 查询的 WHERE 与 Count 相同（GORM 会追加 LIMIT 参数，这里不校验具体参数）
+	mock.ExpectQuery("SELECT .* FROM `comp_directories`").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_name"}).AddRow(1, "蓝桥杯校赛"))
+	mock.ExpectQuery("SELECT .* FROM `comp_details`").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_id"}).AddRow(1, 1))
+	mock.ExpectQuery("SELECT DISTINCT `year` FROM `comp_directories`").
+		WillReturnRows(sqlmock.NewRows([]string{"year"}).AddRow(2026))
+
+	_, w, c := buildGET("/api/award/comps?page=1&size=10&keyword=" + url.QueryEscape("蓝桥") + "&level=校级&year=2026&status=ended")
+	c.Set("user_id", uint(1))
+	GetAwardCompList(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestGetAwardCompList_InvalidYear(t *testing.T) {
+	mock := setupAwardDBMock(t)
+	defer mock.ExpectationsWereMet()
+
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `user_roles`").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+
+	_, w, c := buildGET("/api/award/comps?page=1&size=10&year=abcd")
+	c.Set("user_id", uint(1))
+	GetAwardCompList(c)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
