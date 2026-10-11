@@ -138,6 +138,29 @@ func GetAwardCompList(c *gin.Context) {
 
 	db = awardCompetitionScope(db, scope)
 
+	// 可选筛选：关键词（赛事名称/编号）、级别、举办年份、进行状态；缺省不过滤
+	if keyword := strings.TrimSpace(c.Query("keyword")); keyword != "" {
+		like := "%" + keyword + "%"
+		db = db.Where("comp_name LIKE ? OR comp_code LIKE ?", like, like)
+	}
+	if level := c.Query("level"); level != "" && level != "全部" {
+		db = db.Where("comp_level = ?", level)
+	}
+	if year := c.Query("year"); year != "" {
+		yearInt, err := strconv.Atoi(year)
+		if err != nil || len(year) != 4 {
+			utils.BadRequest(c, "year 参数须为4位赛事年份")
+			return
+		}
+		db = db.Where("year = ?", yearInt)
+	}
+	switch status := c.Query("status"); status {
+	case "ongoing", "进行中":
+		db = db.Where("status <> ?", 2)
+	case "ended", "已结束":
+		db = db.Where("status = ?", 2)
+	}
+
 	db.Count(&total)
 
 	if err := db.Preload("Detail").
@@ -148,7 +171,12 @@ func GetAwardCompList(c *gin.Context) {
 		return
 	}
 
-	utils.Success(c, gin.H{"list": comps, "total": total})
+	// 年份下拉选项：全部赛事的去重举办年份，倒序
+	var years []int
+	database.DB.WithContext(c.Request.Context()).Model(&models.CompDirectory{}).
+		Distinct().Order("year desc").Pluck("year", &years)
+
+	utils.Success(c, gin.H{"list": comps, "total": total, "years": years})
 }
 
 func SearchCompetition(c *gin.Context) {

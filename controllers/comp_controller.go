@@ -124,7 +124,7 @@ func GetCompetitionList(c *gin.Context) {
 		return
 	}
 	reqBytes, _ := json.Marshal(req)
-	cacheKey := fmt.Sprintf("cache:comp_list:%x", md5.Sum(reqBytes))
+	cacheKey := fmt.Sprintf("cache:comp_list:year_v2:%x", md5.Sum(reqBytes))
 	rdb := middleware.GetRedisClient()
 	ctx := c.Request.Context()
 
@@ -168,7 +168,7 @@ func GetCompetitionList(c *gin.Context) {
 	}
 
 	if req.Year != "" {
-		query = query.Where("YEAR(create_time) = ?", req.Year)
+		query = query.Where("comp_directories.year = ?", req.Year)
 	}
 
 	if req.IsMy {
@@ -550,13 +550,13 @@ func GetManagerList(c *gin.Context) {
 }
 
 func GetCompetitionYears(c *gin.Context) {
-	var years []int
-	if err := database.DB.WithContext(c.Request.Context()).
-		Model(&models.CompDirectory{}).
-		Where("year > ?", 0).
-		Distinct("year").
-		Order("year DESC").
-		Pluck("year", &years).Error; err != nil {
+	years := make([]int, 0)
+	// 合并赛事年份，使新增、导入、申报审核及编辑产生的年份立即可见。
+	// 不过滤软删除赛事，保留其恢复时需要的年度目录。
+	if err := database.DB.WithContext(c.Request.Context()).Raw(`
+		SELECT year FROM competition_years
+		UNION SELECT year FROM comp_directories WHERE year > 0
+		ORDER BY year DESC`).Scan(&years).Error; err != nil {
 		utils.InternalServerError(c, "查询年份失败", err)
 		return
 	}

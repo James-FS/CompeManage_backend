@@ -10,7 +10,7 @@ type CompDirectory struct {
 	Organizer  string `gorm:"column:organizer;type:varchar(255);comment:主办方" json:"organizer"`
 	Undertaker string `gorm:"column:undertaker;type:varchar(255);comment:承办方" json:"undertaker"`
 	CollegeID  *uint  `gorm:"column:college_id;index;comment:所属学院ID" json:"college_id"`
-	Year       int    `gorm:"column:year;comment:举办年份" json:"year"`
+	Year       int    `gorm:"column:year;index;comment:举办年份" json:"year"`
 	ManagerID  uint   `gorm:"column:manager_id;index;comment:负责人ID(关联用户表)" json:"manager_id"`
 	Status     int8   `gorm:"column:status;type:tinyint;default:0;comment:状态(0:草稿 1:发布 2:结束)" json:"status"`
 	CreatedBy  uint   `gorm:"column:created_by;comment:创建人ID" json:"created_by"`

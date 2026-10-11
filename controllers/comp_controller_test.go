@@ -139,9 +139,9 @@ func TestNextCompetitionCode_InvalidLevel(t *testing.T) {
 
 func TestNextCompetitionCode_AllLevels(t *testing.T) {
 	tests := []struct {
-		name     string
-		level    string
-		prefix   string
+		name   string
+		level  string
+		prefix string
 	}{
 		{name: "国家级", level: "国家级", prefix: "G"},
 		{name: "省级", level: "省级", prefix: "S"},
@@ -527,7 +527,7 @@ func TestGetCompetitionYears_Success(t *testing.T) {
 	mock := setupCompDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mock.ExpectQuery("SELECT DISTINCT `year` FROM `comp_directories`").
+	mock.ExpectQuery("SELECT year FROM competition_years").
 		WillReturnRows(sqlmock.NewRows([]string{"year"}).AddRow(2026).AddRow(2025).AddRow(2024))
 
 	_, w, c := buildCompGET("/api/comp/years")
@@ -540,7 +540,7 @@ func TestGetCompetitionYears_DBError(t *testing.T) {
 	mock := setupCompDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mock.ExpectQuery("SELECT DISTINCT `year` FROM `comp_directories`").
+	mock.ExpectQuery("SELECT year FROM competition_years").
 		WillReturnError(assert.AnError)
 
 	_, w, c := buildCompGET("/api/comp/years")
