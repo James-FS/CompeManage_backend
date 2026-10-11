@@ -30,9 +30,6 @@ func main() {
 	database.InitData()
 	// 连接redis
 	middleware.InitRedis()
-	if err := middleware.ClearAwardImportPermissionCache(); err != nil {
-		log.Printf("刷新获奖导入权限缓存失败，将在TTL到期后更新: %v", err)
-	}
 	defer middleware.CloseRedis()
 	// 创建Gin引擎（开发环境用gin.Default，生产可改为gin.ReleaseMode）
 	r := gin.Default()

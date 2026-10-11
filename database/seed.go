@@ -40,7 +40,12 @@ func grantRolePermissionsByCode(roleCode string, permCodes []string) {
 		return
 	}
 
-	if err := DB.Model(&role).Association("Permissions").Append(perms); err != nil {
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&role).UpdateColumn("permission_version", gorm.Expr("permission_version + 1")).Error; err != nil {
+			return err
+		}
+		return tx.Model(&role).Association("Permissions").Append(perms)
+	}); err != nil {
 		log.Printf("补齐权限失败(%s): %v", roleCode, err)
 		return
 	}
