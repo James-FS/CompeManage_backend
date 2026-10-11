@@ -8,6 +8,9 @@
 *.png
 *.pdf
 *.xlsx
+# 内置导出模板需要随代码发布
+!controllers/templates/award_projects.xlsx
+!controllers/templates/award_students.xlsx
 *.doc
 *.docx
 *.jpg
