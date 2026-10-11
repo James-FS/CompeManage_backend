@@ -60,14 +60,15 @@ func InitRedis() {
 	}
 
 	RedisClient = redis.NewClient(&redis.Options{
-		Addr:         fmt.Sprintf("%s:%d", host, port),
-		Password:     password,
-		DB:           db,
-		MaxRetries:   maxRetries,
-		PoolSize:     poolSize,
-		DialTimeout:  5 * time.Second,
-		ReadTimeout:  3 * time.Second,
-		WriteTimeout: 3 * time.Second,
+		Addr:                  fmt.Sprintf("%s:%d", host, port),
+		Password:              password,
+		DB:                    db,
+		MaxRetries:            maxRetries,
+		PoolSize:              poolSize,
+		DialTimeout:           5 * time.Second,
+		ReadTimeout:           3 * time.Second,
+		WriteTimeout:          3 * time.Second,
+		ContextTimeoutEnabled: true,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

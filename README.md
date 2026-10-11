@@ -534,7 +534,7 @@ ReviewRecord ──N:1── ReviewTask / Register
 | 缓存项 | Key 格式 | TTL | 说明 |
 |--------|----------|-----|------|
 | 赛事列表 | `cache:comp_list:{request_md5}` | 5 分钟 | 增删改后自动清除 |
-| 权限校验 | `perm:{userID}:{permCode}` | 5 分钟 | 正负结果均缓存，防止穿透 |
+| 权限校验 | `perm:v2:role:{roleID}:version:{version}` | 5 分钟 | 按角色缓存完整权限列表（含空列表），版本递增后旧缓存不再使用 |
 | 数据大厅 Token | `datahall:access_token` | 7000 秒 | 外部 API Token |
 
 ## 外部数据同步
@@ -633,3 +633,12 @@ go tool cover -html=coverage.out                          # 浏览器查看
 - GORM 软删除执行 `UPDATE SET delete_time` 而非 `DELETE FROM`
 - `InternalServerError` 在响应中隐藏原始错误，断言使用通用错误文本
 - 每个子测试独立创建 Mock，避免状态污染
+
+
+### 角色权限缓存版本迁移
+
+角色权限保存与 `roles.permission_version` 原子递增在同一事务中完成，不再遍历角色下的用户或扫描 Redis。认证每次从数据库读取当前角色及版本，新请求使用对应版本的角色权限缓存；旧版本和旧用户权限缓存自然过期。用户切换角色后使用新角色缓存。Redis 校验操作采用 150ms 上下文预算，读取失败回查数据库，数据库失败拒绝访问。
+
+更新后重启后端，现有 AutoMigrate 会添加 `roles.permission_version`（NOT NULL，默认 1）。发布时应统一更新后端实例，避免旧实例继续读取旧用户缓存。无需清空 Redis，无需修改前端请求超时或重新登录。权限提交前已开始处理的请求仍可能使用此前权限。
+
+初始化权限补齐也在事务中递增版本；以后新增角色权限写入入口时必须遵守同一约定。已有用户缓存失效任务仍可完成旧键清理，但不参与新缓存的正确性保证。

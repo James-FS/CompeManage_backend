@@ -3,6 +3,8 @@ package middleware
 import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/utils"
+	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -46,11 +48,13 @@ func AuthRequired() gin.HandlerFunc {
 
 		// 从数据库加载实时角色和管理学院，后续业务范围判断不依赖 JWT 中的旧角色。
 		var accessRows []struct {
-			RoleCode         string
-			ManagedCollegeID *uint
+			RoleID            uint
+			PermissionVersion uint64
+			RoleCode          string
+			ManagedCollegeID  *uint
 		}
 		if err := database.DB.WithContext(c.Request.Context()).Table("users").
-			Select("roles.role_code, users.managed_college_id").
+			Select("roles.id AS role_id, roles.permission_version, roles.role_code, users.managed_college_id").
 			Joins("JOIN user_roles ON user_roles.user_id = users.id").
 			Joins("JOIN roles ON roles.id = user_roles.role_id AND roles.delete_time IS NULL").
 			Where("users.id = ? AND users.delete_time IS NULL", claims.UserID).
@@ -65,64 +69,70 @@ func AuthRequired() gin.HandlerFunc {
 			return
 		}
 		c.Set("role_code", accessRows[0].RoleCode)
+		c.Set("role_id", accessRows[0].RoleID)
+		c.Set("permission_version", accessRows[0].PermissionVersion)
 		c.Set("managed_college_id", accessRows[0].ManagedCollegeID)
 		c.Next()
 	}
 }
 
-// RequirePermission
-// 作用：拦截请求，检查当前用户是否拥有指定权限 code
-// 使用 Redis 缓存优化，避免每次请求都查 MySQL
+// RequirePermission 按当前数据库角色和权限版本校验，不读取旧的用户权限缓存。
 func RequirePermission(permCode string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userID, exists := c.Get("user_id")
-		if !exists {
+		if _, exists := c.Get("user_id"); !exists {
 			c.AbortWithStatusJSON(401, gin.H{"msg": "未登录"})
 			return
 		}
+		roleID, ok := c.Get("role_id")
+		id, validID := roleID.(uint)
+		versionValue, versionOK := c.Get("permission_version")
+		version, validVersion := versionValue.(uint64)
+		if !ok || !validID || id == 0 || !versionOK || !validVersion {
+			c.AbortWithStatusJSON(403, gin.H{"msg": "角色信息无效，禁止访问"})
+			return
+		}
 
-		// 1. 先查 Redis 缓存
-		cacheKey := fmt.Sprintf("perm:%d:%s", userID, permCode)
+		cacheKey := fmt.Sprintf("perm:v2:role:%d:version:%d", id, version)
 		ctx := c.Request.Context()
 		rdb := GetRedisClient()
-
-		// 缓存值同时表达允许和拒绝，不能只根据键是否存在放行。
-		cached, err := rdb.Get(ctx, cacheKey).Result()
-		if err == nil {
-			if cached == "1" {
+		var codes []string
+		cacheHit := false
+		if rdb != nil {
+			cacheCtx, cancel := context.WithTimeout(ctx, permissionCacheTimeout)
+			cached, err := rdb.WithTimeout(permissionCacheTimeout).Get(cacheCtx, cacheKey).Result()
+			cancel()
+			cacheHit = err == nil && json.Unmarshal([]byte(cached), &codes) == nil
+		}
+		if !cacheHit {
+			// 将版本约束放进同一个查询，避免把更新后的权限写入旧版本缓存。
+			codes = make([]string, 0)
+			if err := database.DB.WithContext(ctx).Table("permissions").
+				Joins("JOIN role_permissions ON role_permissions.permission_id = permissions.id").
+				Joins("JOIN roles ON roles.id = role_permissions.role_id").
+				Where("roles.id = ? AND roles.permission_version = ? AND roles.delete_time IS NULL", id, version).
+				Pluck("permissions.code", &codes).Error; err != nil {
+				c.AbortWithStatusJSON(500, gin.H{"code": 500, "msg": "权限验证服务异常"})
+				return
+			}
+			if rdb != nil {
+				payload, _ := json.Marshal(codes)
+				cacheCtx, cancel := context.WithTimeout(ctx, permissionCacheTimeout)
+				_ = rdb.WithTimeout(permissionCacheTimeout).Set(cacheCtx, cacheKey, payload, PermissionCacheTTL).Err()
+				cancel()
+			}
+		}
+		for _, code := range codes {
+			if code == permCode {
 				c.Next()
 				return
 			}
-			c.AbortWithStatusJSON(403, gin.H{"msg": "权限不足，禁止访问"})
-			return
 		}
-
-		// 2. 缓存未命中，查 MySQL
-		var count int64
-		result := database.DB.Table("user_roles").
-			Joins("JOIN role_permissions ON role_permissions.role_id = user_roles.role_id").
-			Joins("JOIN permissions ON permissions.id = role_permissions.permission_id").
-			Where("user_roles.user_id = ? AND permissions.code = ?", userID, permCode).
-			Count(&count)
-
-		if result.Error != nil {
-			// 数据库查询出错
-			c.AbortWithStatusJSON(500, gin.H{"code": 500, "msg": "权限验证服务异常"})
-			return
-		}
-
-		// 3. 结果写入 Redis (过期时间 5 分钟)
-		if count > 0 {
-			// 有权限，缓存结果
-			rdb.Set(ctx, cacheKey, "1", PermissionCacheTTL)
-			c.Next()
-		} else {
-			// 无权限也缓存，避免缓存穿透攻击
-			rdb.Set(ctx, cacheKey, "0", PermissionCacheTTL)
-			c.AbortWithStatusJSON(403, gin.H{"msg": "权限不足，禁止访问"})
-		}
+		c.AbortWithStatusJSON(403, gin.H{"msg": "权限不足，禁止访问"})
 	}
 }
+
+// Redis 是可选加速层，避免故障时拖慢每次权限校验。
+const permissionCacheTimeout = 150 * time.Millisecond
 
 // RequireRole 根据数据库中的当前角色进行校验，不信任 JWT 中可能过期的 RoleCode。
 // 该中间件用于用户管理等必须硬性限制到特定角色的高风险接口。

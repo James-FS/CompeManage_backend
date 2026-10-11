@@ -2,11 +2,9 @@ package controllers
 
 import (
 	"CompeManage_backend/database"
-	"CompeManage_backend/middleware"
 	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
 	"errors"
-	"log/slog"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -74,7 +72,11 @@ func AssignPermissions(c *gin.Context) {
 	}
 
 	if err := db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&role).Update("update_time", time.Now()).Error; err != nil {
+		// UPDATE 同时锁定角色行，串行化同一角色的并发权限替换。
+		if err := tx.Model(&role).Updates(map[string]interface{}{
+			"update_time":        time.Now(),
+			"permission_version": gorm.Expr("permission_version + 1"),
+		}).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("role_id = ?", role.ID).Delete(&models.RolePermission{}).Error; err != nil {
@@ -93,48 +95,6 @@ func AssignPermissions(c *gin.Context) {
 		return
 	}
 
-	if middleware.GetRedisClient() == nil {
-		utils.SuccessWithMessage(c, "权限分配成功", nil)
-		return
-	}
-
-	var userIDs []uint
-	if err := db.Table("user_roles").Where("role_id = ?", role.ID).Pluck("user_id", &userIDs).Error; err != nil {
-		utils.InternalServerError(c, "权限已更新，但查询受影响用户失败", err)
-		return
-	}
-	failedUsers := make([]uint, 0)
-	retryQueuedUsers := make([]uint, 0)
-	retryQueueFailedUsers := make([]uint, 0)
-	for _, userID := range userIDs {
-		if err := middleware.ClearUserPermissionCache(userID); err != nil {
-			failedUsers = append(failedUsers, userID)
-			if queueErr := middleware.QueuePermissionCacheInvalidation(userID, err); queueErr != nil {
-				retryQueueFailedUsers = append(retryQueueFailedUsers, userID)
-				slog.Error("创建权限缓存失效重试任务失败", "user_id", userID, "error", queueErr)
-			} else {
-				retryQueuedUsers = append(retryQueuedUsers, userID)
-			}
-		}
-	}
-	if len(failedUsers) > 0 {
-		responseData := gin.H{
-			"permission_updated":       true,
-			"cache_refreshed":          false,
-			"affected_users":           len(userIDs),
-			"failed_users":             failedUsers,
-			"retry_queued_users":       retryQueuedUsers,
-			"retry_queue_failed_users": retryQueueFailedUsers,
-		}
-		if len(retryQueueFailedUsers) > 0 {
-			responseData["manual_follow_up_required"] = true
-			responseData["cache_ttl_seconds"] = int(middleware.PermissionCacheTTL.Seconds())
-			utils.SuccessAccepted(c, "权限已更新，但部分用户缓存清理失败且未能创建重试任务；旧权限将在缓存过期后失效", responseData)
-			return
-		}
-		utils.SuccessAccepted(c, "权限已更新，部分用户缓存正在重试刷新", responseData)
-		return
-	}
 	utils.SuccessWithMessage(c, "权限分配成功", nil)
 }
 
