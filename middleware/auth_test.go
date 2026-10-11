@@ -46,13 +46,15 @@ func TestRequirePermission_DeniedPermissionCacheReturnsForbidden(t *testing.T) {
 	}()
 
 	ctx := context.Background()
-	cacheKey := "perm:1:summary:edit"
-	assert.NoError(t, RedisClient.Set(ctx, cacheKey, "0", 5*time.Minute).Err())
+	cacheKey := "perm:v2:role:1:version:1"
+	assert.NoError(t, RedisClient.Set(ctx, cacheKey, "[]", 5*time.Minute).Err())
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/api/summary/1", nil)
 	c.Set("user_id", uint(1))
+	c.Set("role_id", uint(1))
+	c.Set("permission_version", uint64(1))
 
 	RequirePermission("summary:edit")(c)
 
