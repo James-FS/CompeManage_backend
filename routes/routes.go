@@ -114,6 +114,9 @@ func SetupRoutes(r *gin.Engine) {
 		comp.GET("/years",
 			middleware.RequirePermission("comp:years:list"),
 			controllers.GetCompetitionYears)
+		comp.POST("/years", middleware.RequireRole("school_admin"), controllers.CreateCompetitionYear)
+		comp.PUT("/years/:year", middleware.RequireRole("school_admin"), controllers.UpdateCompetitionYear)
+		comp.DELETE("/years/:year", middleware.RequireRole("school_admin"), controllers.DeleteCompetitionYear)
 		comp.GET("/:id",
 			middleware.RequirePermission("comp:detail"),
 			controllers.GetCompetitionDetail)
