@@ -182,9 +182,31 @@ func ensureDeclarePermissions() {
 	ensurePerm("declare:audited-list", "查看已审核申报", "查看已审核的申报记录")
 	ensurePerm("declare:revoke", "撤回申报", "撤回已提交的申报")
 
-	grantRolePermissionsByCode("school_admin", []string{"declare:audited-list", "declare:revoke"})
-	grantRolePermissionsByCode("college_admin", []string{"declare:audited-list", "declare:revoke"})
-	grantRolePermissionsByCode("competition_manager", []string{"declare:audited-list"})
+	// 存量库补齐申报全流程权限：全新建库分支包含以下权限，老种子库的
+	// 院级管理员缺失会导致申报功能整体不可用（创建/提交接口403）。
+	ensurePerm("declare:create", "创建申报", "创建新的赛事申报")
+	ensurePerm("declare:get", "查看申报详情", "查看申报信息详情")
+	ensurePerm("declare:update", "编辑申报", "编辑申报信息")
+	ensurePerm("declare:submit", "提交申报", "提交赛事申报")
+	ensurePerm("declare:list", "查看我的申报", "查看自己的申报列表")
+	ensurePerm("declare:delete", "删除申报", "删除申报信息")
+	ensurePerm("declare:pending-list", "查看待审核申报", "查看待审核申报列表")
+	ensurePerm("declare:all-declares", "查看所有申报", "查看所有申报信息")
+
+	grantRolePermissionsByCode("school_admin", []string{
+		"declare:create", "declare:get", "declare:update", "declare:submit",
+		"declare:list", "declare:delete", "declare:pending-list", "declare:all-declares",
+		"declare:audited-list", "declare:revoke",
+	})
+	grantRolePermissionsByCode("college_admin", []string{
+		"declare:create", "declare:get", "declare:update", "declare:submit",
+		"declare:list", "declare:delete", "declare:pending-list", "declare:all-declares",
+		"declare:audited-list", "declare:revoke",
+	})
+	grantRolePermissionsByCode("competition_manager", []string{
+		"declare:get", "declare:list", "declare:pending-list",
+		"declare:audited-list", "declare:all-declares",
+	})
 }
 
 func ensureReviewPermissions() {
