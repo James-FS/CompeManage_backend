@@ -4,6 +4,7 @@ import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -17,31 +18,63 @@ import (
 	"unicode/utf8"
 )
 
-var awardImportHeaders = []string{"序号", "学号", "学生姓名", "所属学院", "所在专业", "参赛项目名称", "获奖时间（年/月）", "获奖类别", "获奖等级", "备注"}
+var awardImportHeaders = []string{"序号", "学号", "学生姓名", "所属学院", "所在专业", "参赛项目名称", "获奖时间（年/月）", "获奖类别", "获奖等级", "指导教师姓名", "指导教师所在学院", "备注"}
 var awardTemplateNotes = []string{
 	"说明：1. 获奖类别：校赛、国家级、省级、国际级；国际级统一保存为国家级。",
 	"2. 获奖等级：指一等奖、二等奖、三等奖，冠军（金奖）、特等奖等同于一等奖，亚军（银奖）等同于二等奖，季军（铜奖）等同于三等奖。如冠亚季军、金银铜奖从一等奖获奖者中决出，则按一等奖计算。",
 	"3. 一行只能填写1个学生。学生须为我校全日制本科生（不含继续教育、二级学院），学号务必准确（否则影响奖励发放）。",
 	"4. 获奖时间填写 YYYY-MM；同一赛事内项目名称相同视为同一团队，类别、等级、时间必须一致。",
 	"5. 所属学院和专业需填写完整名称。",
+	"6. 指导教师多人用空格分隔，姓名与所在学院两列按顺序对应；不填表示无指导教师。",
+	"7. 同个团队的参赛项目名称一定要一样：同一赛事内项目名称相同才会归为同一团队，名称不同会被拆成不同团队。",
 }
 
 type AwardImportRow struct {
-	StudentNumber string `json:"student_id"`
-	Name          string `json:"name"`
-	College       string `json:"college"`
-	Major         string `json:"major"`
-	ProjectName   string `json:"project_name"`
-	AwardMonth    string `json:"award_month"`
-	Category      string `json:"award_category"`
-	AwardName     string `json:"award_name"`
-	Remark        string `json:"remark"`
-	RowNumber     int    `json:"row_number"`
-	Error         string `json:"error,omitempty"`
-	Existing      bool   `json:"existing"`
-	UserID        uint   `json:"-"`
-	RegID         *uint  `json:"-"`
-	AwardID       uint   `json:"-"`
+	StudentNumber   string `json:"student_id"`
+	Name            string `json:"name"`
+	College         string `json:"college"`
+	Major           string `json:"major"`
+	ProjectName     string `json:"project_name"`
+	AwardMonth      string `json:"award_month"`
+	Category        string `json:"award_category"`
+	AwardName       string `json:"award_name"`
+	Advisors        string `json:"advisor_names"`    // 空格分隔的指导教师姓名
+	AdvisorColleges string `json:"advisor_colleges"` // 空格分隔的指导教师所在学院
+	Remark          string `json:"remark"`
+	RowNumber       int    `json:"row_number"`
+	Error           string `json:"error,omitempty"`
+	Existing        bool   `json:"existing"`
+	UserID          uint   `json:"-"`
+	RegID           *uint  `json:"-"`
+	AwardID         uint   `json:"-"`
+}
+
+// normalizeAdvisorList 把空格分隔的教师列表规范化为单空格连接（兼容全半角/制表符分隔）。
+func normalizeAdvisorList(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// advisorPairsJSON 把姓名/学院两列（空格分隔、按序对应）序列化为指导教师 JSON 数组。
+// 学院列可能缺失或数量不足，缺少的学院记为空串。
+func advisorPairsJSON(names, colleges string) string {
+	nameList := strings.Fields(names)
+	if len(nameList) == 0 {
+		return ""
+	}
+	collegeList := strings.Fields(colleges)
+	pairs := make([]models.AdvisorInfo, 0, len(nameList))
+	for i, name := range nameList {
+		college := ""
+		if i < len(collegeList) {
+			college = collegeList[i]
+		}
+		pairs = append(pairs, models.AdvisorInfo{Name: name, College: college})
+	}
+	data, err := json.Marshal(pairs)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 func normalizeAwardCategory(category string) (string, error) {
@@ -125,14 +158,14 @@ func newAwardTemplate() *excelize.File {
 	project.Alignment = &excelize.Alignment{Horizontal: "left", Vertical: "center", WrapText: true}
 	projectID, _ := f.NewStyle(&project)
 	noteID, _ := f.NewStyle(&excelize.Style{Alignment: &excelize.Alignment{Horizontal: "left", WrapText: true, Vertical: "center"}, Font: &excelize.Font{Family: "宋体", Size: 12, Color: "000000"}})
-	widths := []float64{7, 15, 12, 23, 21, 38, 15, 13, 13, 10}
+	widths := []float64{7, 15, 12, 23, 21, 38, 15, 13, 13, 18, 22, 10}
 	for i, h := range awardImportHeaders {
 		col, _ := excelize.ColumnNumberToName(i + 1)
 		f.SetCellValue(sheet, col+"1", h)
 		f.SetColWidth(sheet, col, col, widths[i])
 	}
-	f.SetCellStyle(sheet, "A1", "J13", bodyID)
-	f.SetCellStyle(sheet, "A1", "J1", headerID)
+	f.SetCellStyle(sheet, "A1", "L13", bodyID)
+	f.SetCellStyle(sheet, "A1", "L1", headerID)
 	f.SetCellStyle(sheet, "B2", "B13", textID)
 	f.SetCellStyle(sheet, "G2", "G13", textID)
 	f.SetCellStyle(sheet, "F2", "F13", projectID)
@@ -143,12 +176,12 @@ func newAwardTemplate() *excelize.File {
 	}
 	f.SetRowHeight(sheet, 14, 12)
 	f.SetRowHeight(sheet, 15, 12)
-	noteHeights := []float64{32, 52, 44, 36, 32}
+	noteHeights := []float64{32, 52, 44, 36, 32, 36, 48}
 	for i, note := range awardTemplateNotes {
 		row := 16 + i
-		f.MergeCell(sheet, fmt.Sprintf("A%d", row), fmt.Sprintf("J%d", row))
+		f.MergeCell(sheet, fmt.Sprintf("A%d", row), fmt.Sprintf("L%d", row))
 		f.SetCellValue(sheet, fmt.Sprintf("A%d", row), note)
-		f.SetCellStyle(sheet, fmt.Sprintf("A%d", row), fmt.Sprintf("J%d", row), noteID)
+		f.SetCellStyle(sheet, fmt.Sprintf("A%d", row), fmt.Sprintf("L%d", row), noteID)
 		// 仅强调说明标题，正文保持正常字重。
 		parts := strings.SplitN(note, "：", 2)
 		if len(parts) == 2 {
@@ -192,8 +225,8 @@ func parseAwardSheet(rows [][]string) ([]AwardImportRow, error) {
 			}
 			return strings.TrimSpace(row[i])
 		}
-		r := AwardImportRow{RowNumber: index + 2, StudentNumber: value("学号"), Name: value("学生姓名"), College: value("所属学院"), Major: value("所在专业"), ProjectName: value("参赛项目名称"), AwardMonth: value("获奖时间（年/月）"), Category: value("获奖类别"), AwardName: value("获奖等级"), Remark: value("备注")}
-		if r.StudentNumber == "" && r.Name == "" && r.ProjectName == "" && r.Category == "" && r.AwardName == "" && r.College == "" && r.Major == "" && r.AwardMonth == "" && r.Remark == "" {
+		r := AwardImportRow{RowNumber: index + 2, StudentNumber: value("学号"), Name: value("学生姓名"), College: value("所属学院"), Major: value("所在专业"), ProjectName: value("参赛项目名称"), AwardMonth: value("获奖时间（年/月）"), Category: value("获奖类别"), AwardName: value("获奖等级"), Advisors: normalizeAdvisorList(value("指导教师姓名")), AdvisorColleges: normalizeAdvisorList(value("指导教师所在学院")), Remark: value("备注")}
+		if r.StudentNumber == "" && r.Name == "" && r.ProjectName == "" && r.Category == "" && r.AwardName == "" && r.College == "" && r.Major == "" && r.AwardMonth == "" && r.Advisors == "" && r.AdvisorColleges == "" && r.Remark == "" {
 			continue
 		}
 		result = append(result, r)
@@ -284,8 +317,8 @@ func validateAwardRows(tx *gorm.DB, compID uint, input []AwardImportRow, require
 			continue
 		}
 		key := database.AwardProjectKey(r.ProjectName)
-		if first, ok := groups[key]; ok && (first.Category != r.Category || first.AwardName != r.AwardName || first.AwardMonth != r.AwardMonth) {
-			fail("同一团队的获奖类别、等级、时间不一致")
+		if first, ok := groups[key]; ok && (first.Category != r.Category || first.AwardName != r.AwardName || first.AwardMonth != r.AwardMonth || first.Advisors != r.Advisors || first.AdvisorColleges != r.AdvisorColleges) {
+			fail("同一团队的获奖类别、等级、时间或指导教师不一致")
 			continue
 		}
 		groups[key] = *r
@@ -342,6 +375,20 @@ func validateAwardRows(tx *gorm.DB, compID uint, input []AwardImportRow, require
 			if a.AwardCategory != r.Category || a.AwardName != r.AwardName || month != r.AwardMonth {
 				fail("与已有团队的类别、等级或时间冲突，请先更正团队奖项")
 				continue
+			}
+			if r.Advisors != "" {
+				var stored []models.AdvisorInfo
+				_ = json.Unmarshal([]byte(a.AdvisorInfo), &stored)
+				storedNames := make([]string, 0, len(stored))
+				for _, adv := range stored {
+					if adv.Name != "" {
+						storedNames = append(storedNames, adv.Name)
+					}
+				}
+				if len(storedNames) > 0 && strings.Join(storedNames, " ") != r.Advisors {
+					fail("与已有团队的指导教师不一致，请先更正团队奖项")
+					continue
+				}
 			}
 			if a.Status != "approved" {
 				fail("该团队已有待审核或驳回奖项，不能通过导入覆盖")
@@ -434,7 +481,7 @@ func ImportAward(c *gin.Context) {
 				if awardID == 0 {
 					month, _ := time.Parse("2006-01", r.AwardMonth)
 					now := time.Now()
-					a := models.Award{MembersMigrated: true, CompID: compID, ProjectName: r.ProjectName, ProjectKey: &key, AwardCategory: r.Category, AwardName: r.AwardName, AwardLevel: r.Category + r.AwardName, AwardTime: &month, Status: "approved", Source: "import", AuditTime: &now, LevelRank: 99}
+					a := models.Award{MembersMigrated: true, CompID: compID, ProjectName: r.ProjectName, ProjectKey: &key, AwardCategory: r.Category, AwardName: r.AwardName, AwardLevel: r.Category + r.AwardName, AwardTime: &month, Status: "approved", Source: "import", AuditTime: &now, LevelRank: 99, AdvisorInfo: advisorPairsJSON(r.Advisors, r.AdvisorColleges)}
 					if err := tx.Create(&a).Error; err != nil {
 						return err
 					}
@@ -442,6 +489,14 @@ func ImportAward(c *gin.Context) {
 				} else {
 					if err := tx.Model(&models.Award{}).Where("id = ?", awardID).Update("project_key", key).Error; err != nil {
 						return err
+					}
+					// 历史奖项无指导教师时用本行补录；已有则保持（校验阶段已保证不冲突）
+					if advJSON := advisorPairsJSON(r.Advisors, r.AdvisorColleges); advJSON != "" {
+						if err := tx.Model(&models.Award{}).
+							Where("id = ? AND (advisor_info IS NULL OR advisor_info IN ('', '[]'))", awardID).
+							Update("advisor_info", advJSON).Error; err != nil {
+							return err
+						}
 					}
 				}
 				groupIDs[key] = awardID

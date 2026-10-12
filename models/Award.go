@@ -22,6 +22,8 @@ type Award struct {
 	AuditTime    *time.Time `gorm:"comment:审核时间" json:"audit_time"`
 	RejectReason string     `gorm:"type:varchar(200);comment:驳回理由" json:"reject_reason"`
 	AwardTime    *time.Time `gorm:"comment:获奖时间" json:"award_time"`
+	// AdvisorInfo 指导教师，JSON 数组 [{"name":"","college":""}]；附件1导出使用，报名来源的奖项也可回退读 Register.AdvisorInfo
+	AdvisorInfo string `gorm:"type:json;comment:指导教师信息" json:"advisor_info"`
 	// 关联关系
 	Auditor     User          `gorm:"foreignKey:AuditorID" json:"auditor,omitempty"` // 审核人信息
 	Register    Register      `gorm:"foreignKey:RegID" json:"register"`

@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"CompeManage_backend/database"
+	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
 	"github.com/gin-gonic/gin"
 )
@@ -51,6 +53,45 @@ func awardJoinMembers(members []awardExportMember) (names, collegesJoined string
 		}
 	}
 	return strings.Join(namesList, " "), strings.Join(collegesList, " ")
+}
+
+// decodeAwardAdvisors 解析指导教师 JSON：兼容数组（奖项表）与单对象（报名表），空值返回 nil。
+func decodeAwardAdvisors(raw string) []models.AdvisorInfo {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "{}" || raw == "[]" {
+		return nil
+	}
+	var list []models.AdvisorInfo
+	if err := json.Unmarshal([]byte(raw), &list); err == nil && len(list) > 0 {
+		return list
+	}
+	var single models.AdvisorInfo
+	if err := json.Unmarshal([]byte(raw), &single); err == nil && strings.TrimSpace(single.Name) != "" {
+		return []models.AdvisorInfo{single}
+	}
+	return nil
+}
+
+// awardExportAdvisors 附件1的指导教师两列：优先奖项自身（导入/编辑写入），
+// 为空时回退关联报名的指导教师；姓名按序拼接，学院按出现顺序去重拼接。
+func awardExportAdvisors(awardJSON, regJSON string) (names, collegesJoined string) {
+	advisors := decodeAwardAdvisors(awardJSON)
+	if len(advisors) == 0 {
+		advisors = decodeAwardAdvisors(regJSON)
+	}
+	nameList := []string{}
+	seen := map[string]bool{}
+	for _, adv := range advisors {
+		if name := strings.TrimSpace(adv.Name); name != "" {
+			nameList = append(nameList, name)
+		}
+		college := strings.TrimSpace(adv.College)
+		if college != "" && !seen[college] {
+			seen[college] = true
+			collegesJoined = strings.TrimSpace(strings.Join([]string{collegesJoined, college}, " "))
+		}
+	}
+	return strings.Join(nameList, " "), collegesJoined
 }
 
 // 历史学生补录仅保存合并等级；只补全其明确类别，不修改原数据或换算奖项等级。
@@ -158,9 +199,10 @@ func ExportAwardProjects(c *gin.Context) {
 		return
 	}
 	q := database.DB.WithContext(c.Request.Context()).Table("awards").
-		Select("awards.id, awards.project_name, awards.award_level, awards.award_category, awards.award_name, awards.award_time, cd.comp_name, cd.organizer, cd.year AS competition_year, cdp.participant_type").
+		Select("awards.id, awards.project_name, awards.award_level, awards.award_category, awards.award_name, awards.award_time, awards.advisor_info, r.advisor_info AS reg_advisor_info, cd.comp_name, cd.organizer, cd.year AS competition_year, cdp.participant_type").
 		Joins("JOIN comp_directories cd ON cd.id = awards.comp_id AND cd.delete_time IS NULL").
 		Joins("LEFT JOIN comp_details cdp ON cdp.comp_id = awards.comp_id AND cdp.delete_time IS NULL").
+		Joins("LEFT JOIN registers r ON r.id = awards.reg_id AND r.delete_time IS NULL").
 		Where("awards.delete_time IS NULL").Where("awards.status IN ?", awardExportFilterStatus()).
 		Order("cd.year ASC, awards.award_time ASC, cd.comp_name ASC, awards.project_name ASC, awards.id ASC")
 	if year != "" {
@@ -174,6 +216,7 @@ func ExportAwardProjects(c *gin.Context) {
 		ProjectName, AwardLevel, AwardCategory, AwardName string
 		AwardTime                                         *time.Time
 		CompName, Organizer                               string
+		AdvisorInfo, RegAdvisorInfo                       string
 		CompetitionYear                                   int
 		ParticipantType                                   *int8
 	}
@@ -210,7 +253,8 @@ func ExportAwardProjects(c *gin.Context) {
 		if p.AwardTime != nil {
 			month = p.AwardTime.Format("2006-01")
 		}
-		rows[p.CompetitionYear] = append(rows[p.CompetitionYear], []interface{}{len(rows[p.CompetitionYear]) + 1, p.CompName, p.ProjectName, p.Organizer, category + awardExportGrade(p.AwardName, p.AwardLevel), names, colleges, "", "", month, awardParticipantLabel(p.ParticipantType)})
+		advNames, advColleges := awardExportAdvisors(p.AdvisorInfo, p.RegAdvisorInfo)
+		rows[p.CompetitionYear] = append(rows[p.CompetitionYear], []interface{}{len(rows[p.CompetitionYear]) + 1, p.CompName, p.ProjectName, p.Organizer, category + awardExportGrade(p.AwardName, p.AwardLevel), names, colleges, advNames, advColleges, month, awardParticipantLabel(p.ParticipantType)})
 	}
 	awardExportWorkbook(c, "projects", year, rows)
 }
