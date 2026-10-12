@@ -189,12 +189,33 @@ func awardExportYear(c *gin.Context) (string, bool) {
 	return year, true
 }
 
+// awardExportUnit 导出人所属单位（附件"单位名称（公章）"自动填写）：
+// 赛事负责人复用 scope.College；其余角色查本人 users.college，
+// 院级管理员为空时回落其管理学院名称。
+func awardExportUnit(c *gin.Context, scope *UserAccessScope) string {
+	unit := strings.TrimSpace(scope.College)
+	if unit == "" {
+		_ = database.DB.WithContext(c.Request.Context()).Table("users").
+			Where("id = ? AND delete_time IS NULL", scope.UserID).
+			Pluck("college", &unit).Error
+		unit = strings.TrimSpace(unit)
+	}
+	if unit == "" && scope.ManagedCollegeID != nil {
+		var college models.College
+		if err := database.DB.WithContext(c.Request.Context()).
+			First(&college, *scope.ManagedCollegeID).Error; err == nil {
+			unit = college.Name
+		}
+	}
+	return unit
+}
+
 func awardExportFilterStatus() []string {
 	return []string{awardExportApprovedStatus, awardExportLegacyStatus}
 }
 
-func awardExportWorkbook(c *gin.Context, kind, year string, rowsByYear map[int][][]interface{}) {
-	f, err := buildAwardExportWorkbook(kind, year, rowsByYear)
+func awardExportWorkbook(c *gin.Context, kind, year, unit string, rowsByYear map[int][][]interface{}) {
+	f, err := buildAwardExportWorkbook(kind, year, unit, rowsByYear)
 	if err != nil {
 		utils.InternalServerError(c, "生成附件失败", err)
 		return
@@ -228,6 +249,7 @@ func ExportAwardProjects(c *gin.Context) {
 	if !ok {
 		return
 	}
+	unit := awardExportUnit(c, scope)
 	q := database.DB.WithContext(c.Request.Context()).Table("awards").
 		Select("awards.id, awards.project_name, awards.award_level, awards.award_category, awards.award_name, awards.award_time, awards.advisor_info, r.advisor_info AS reg_advisor_info, cd.comp_name, cd.organizer, cd.year AS competition_year, cdp.participant_type").
 		Joins("JOIN comp_directories cd ON cd.id = awards.comp_id AND cd.delete_time IS NULL").
@@ -306,7 +328,7 @@ func ExportAwardProjects(c *gin.Context) {
 		}
 		rows[p.CompetitionYear] = append(rows[p.CompetitionYear], []interface{}{len(rows[p.CompetitionYear]) + 1, p.CompName, p.ProjectName, p.Organizer, category + awardExportGrade(p.AwardName, p.AwardLevel), names, colleges, advNames, advColleges, month, awardParticipantLabel(p.ParticipantType)})
 	}
-	awardExportWorkbook(c, "projects", year, rows)
+	awardExportWorkbook(c, "projects", year, unit, rows)
 }
 
 // ExportAwardStudents 导出附件2：按学生一行，列顺序与学校模板保持一致。
@@ -319,6 +341,7 @@ func ExportAwardStudents(c *gin.Context) {
 	if !ok {
 		return
 	}
+	unit := awardExportUnit(c, scope)
 	q := database.DB.WithContext(c.Request.Context()).Table("award_members am").
 		Select("am.student_number, am.name, am.college, am.major, am.remark, a.project_name, a.award_level, a.award_category, a.award_name, a.award_time, cd.comp_name, cd.undertaker, cd.year AS competition_year").
 		Joins("JOIN awards a ON a.id = am.award_id AND a.delete_time IS NULL").
@@ -355,5 +378,5 @@ func ExportAwardStudents(c *gin.Context) {
 		}
 		rows[s.CompetitionYear] = append(rows[s.CompetitionYear], []interface{}{len(rows[s.CompetitionYear]) + 1, s.Undertaker, s.StudentNumber, s.Name, s.College, s.Major, s.CompName, s.ProjectName, month, category, awardExportGrade(s.AwardName, s.AwardLevel), s.Remark})
 	}
-	awardExportWorkbook(c, "students", year, rows)
+	awardExportWorkbook(c, "students", year, unit, rows)
 }
