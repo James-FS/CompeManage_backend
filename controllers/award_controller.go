@@ -55,22 +55,26 @@ type AwardAuditListItem struct {
 }
 
 type AwardAuditDetailResp struct {
-	ID            uint    `json:"id"`
-	StudentName   string  `json:"student_name"`
-	StudentID     string  `json:"student_id"`
-	College       string  `json:"college"`
-	Phone         string  `json:"phone"`
-	Email         string  `json:"email"`
-	CompName      string  `json:"comp_name"`
-	AwardLevel    string  `json:"award_level"`
-	AwardSpecific string  `json:"award_specific"`
-	AwardDate     string  `json:"award_date"`
-	TeamName      string  `json:"team_name"`
-	Teammates     []gin.H `json:"teammates"`
-	CertImage     string  `json:"cert_image"`
-	SubmitTime    string  `json:"submit_time"`
-	Status        int     `json:"status"`
-	RejectReason  string  `json:"reject_reason"`
+	ID                uint    `json:"id"`
+	StudentName       string  `json:"student_name"`
+	StudentID         string  `json:"student_id"`
+	College           string  `json:"college"`
+	Phone             string  `json:"phone"`
+	Email             string  `json:"email"`
+	CompName          string  `json:"comp_name"`
+	AwardLevel        string  `json:"award_level"`
+	AwardSpecific     string  `json:"award_specific"`
+	AwardDate         string  `json:"award_date"`
+	AwardCategory     string  `json:"award_category"`
+	ParticipationType string  `json:"participation_type"`
+	AdvisorInfo       string  `json:"advisor_info"`
+	Remark            string  `json:"remark"`
+	TeamName          string  `json:"team_name"`
+	Teammates         []gin.H `json:"teammates"`
+	CertImage         string  `json:"cert_image"`
+	SubmitTime        string  `json:"submit_time"`
+	Status            int     `json:"status"`
+	RejectReason      string  `json:"reject_reason"`
 }
 
 type CompSearchResp struct {
@@ -181,7 +185,7 @@ func GetAwardCompList(c *gin.Context) {
 
 func SearchCompetition(c *gin.Context) {
 	keyword := c.Query("keyword")
-	if keyword == "" {
+	if keyword == "" && c.Query("paginated") != "true" {
 		utils.BadRequest(c, "关键词不能为空")
 		return
 	}
@@ -201,12 +205,35 @@ func SearchCompetition(c *gin.Context) {
 		}
 		query = awardCompetitionScope(query, scope)
 	}
-	if err := query.
-		Where("comp_name LIKE ?", "%"+keyword+"%").
-		Select("id", "comp_name", "year").
-		Order("create_time DESC").
-		Limit(size).
-		Find(&list).Error; err != nil {
+	if keyword != "" {
+		query = query.Where("comp_name LIKE ? OR comp_code LIKE ?", "%"+keyword+"%", "%"+keyword+"%")
+	}
+	if year := c.Query("year"); year != "" {
+		yearInt, err := strconv.Atoi(year)
+		if err != nil || len(year) != 4 {
+			utils.BadRequest(c, "年份格式错误")
+			return
+		}
+		query = query.Where("year = ?", yearInt)
+	}
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	if c.Query("paginated") == "true" {
+		var total int64
+		if err := query.Count(&total).Error; err != nil {
+			utils.InternalServerError(c, "统计赛事失败", err)
+			return
+		}
+		if err := query.Select("id", "comp_name", "comp_code", "comp_level", "year").Order("year DESC, id DESC").Offset((page - 1) * size).Limit(size).Find(&list).Error; err != nil {
+			utils.InternalServerError(c, "查询失败", err)
+			return
+		}
+		utils.Success(c, gin.H{"list": list, "total": total})
+		return
+	}
+	if err := query.Select("id", "comp_name", "year").Order("create_time DESC").Limit(size).Find(&list).Error; err != nil {
 		utils.InternalServerError(c, "查询失败", err)
 		return
 	}
@@ -235,7 +262,7 @@ func GetCompAwards(c *gin.Context) {
 	}
 	db := database.DB.WithContext(c.Request.Context())
 	var awards []models.Award
-	if err := db.Where("comp_id = ?", id).Preload("Members").Preload("Register.Leader").Preload("Register.Members").Order("create_time DESC").Find(&awards).Error; err != nil {
+	if err := db.Where("comp_id = ? AND status IN ?", id, []string{"approved", "1"}).Preload("Members").Preload("Register.Leader").Preload("Register.Members").Order("create_time DESC").Find(&awards).Error; err != nil {
 		utils.InternalServerError(c, "查询失败", err)
 		return
 	}
@@ -284,7 +311,7 @@ func GetCompAwards(c *gin.Context) {
 			project = a.Register.TeamName
 		}
 		studentCount += len(members)
-		list = append(list, gin.H{"id": a.ID, "project_name": project, "team_name": project, "award_category": a.AwardCategory, "award_name": a.AwardName, "award_level": a.AwardLevel, "award_month": month, "members": members, "can_edit_team": allowed, "status": a.Status})
+		list = append(list, gin.H{"id": a.ID, "project_name": project, "team_name": project, "award_category": a.AwardCategory, "award_name": a.AwardName, "award_level": a.AwardLevel, "award_month": month, "members": members, "can_edit_team": allowed, "status": a.Status, "advisor_info": a.AdvisorInfo, "remark": a.Remark, "participation_type": a.ParticipationType})
 	}
 	var hierarchy []string
 	_ = json.Unmarshal([]byte(comp.Detail.AwardHierarchy), &hierarchy)
@@ -362,6 +389,19 @@ func GetStudentMyAwardList(c *gin.Context) {
 		if a.ProjectName != "" {
 			a.Register.TeamName = a.ProjectName
 		}
+		hasParticipantSnapshot := false
+		for _, m := range a.Members {
+			if m.IsLeader {
+				hasParticipantSnapshot = true
+				break
+			}
+		}
+		if a.Source == "supplement" && hasParticipantSnapshot {
+			a.Register.Members = nil
+			for _, m := range a.Members {
+				a.Register.Members = append(a.Register.Members, models.RegMember{Name: m.Name, StudentID: m.StudentNumber, College: m.College, Phone: m.Phone, Email: m.Email, IsLeader: m.IsLeader})
+			}
+		}
 		a.Register.Competition = a.Competition
 	}
 	utils.Success(c, gin.H{
@@ -385,17 +425,33 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 	}
 
 	var req struct {
-		CompID     uint                   `json:"comp_id" binding:"required"`
-		TeamName   string                 `json:"team_name" binding:"required"`
-		Members    []models.RegMemberInfo `json:"members" binding:"required,dive"`
-		AwardLevel string                 `json:"award_level" binding:"required"`
-		AwardName  string                 `json:"award_name" binding:"required"`
-		AwardDate  DateOnly               `json:"award_date"`
-		ProofURL   string                 `json:"proof_url" binding:"required"`
+		ParticipationType string                 `json:"participation_type"`
+		AwardCategory     string                 `json:"award_category"`
+		Advisors          []models.AdvisorInfo   `json:"advisors"`
+		Remark            string                 `json:"remark"`
+		CompID            uint                   `json:"comp_id" binding:"required"`
+		TeamName          string                 `json:"team_name" binding:"required"`
+		Members           []models.RegMemberInfo `json:"members" binding:"required,dive"`
+		AwardLevel        string                 `json:"award_level" binding:"required"`
+		AwardName         string                 `json:"award_name" binding:"required"`
+		AwardDate         DateOnly               `json:"award_date"`
+		ProofURL          string                 `json:"proof_url" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "参数错误")
 		return
+	}
+
+	advisorJSON, _ := json.Marshal(req.Advisors)
+	if req.Advisors == nil {
+		advisorJSON = []byte("[]")
+	}
+	if req.ParticipationType != "" {
+		if err := validateStudentAwardDetails(req.ParticipationType, req.AwardCategory, req.AwardName, req.AwardDate.Time, req.Members, req.Advisors, req.Remark); err != nil {
+			utils.BadRequest(c, err.Error())
+			return
+		}
+		req.AwardLevel = req.AwardCategory + req.AwardName
 	}
 
 	leaderCount := 0
@@ -413,6 +469,24 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 		return
 	}
 
+	submittedMembers := make([]models.AwardMember, 0, len(req.Members))
+	includesApplicant := false
+	for _, m := range req.Members {
+		var u models.User
+		if err := database.DB.WithContext(c.Request.Context()).Where("username = ?", m.StudentID).First(&u).Error; err != nil {
+			utils.BadRequest(c, "参赛成员学号不存在，请重新选择成员")
+			return
+		}
+		if u.ID == leaderID {
+			includesApplicant = true
+		}
+		submittedMembers = append(submittedMembers, models.AwardMember{StudentID: u.ID, Name: u.Realname, StudentNumber: u.Username, College: u.College, Major: u.Major, Phone: m.Phone, Email: m.Email, IsLeader: m.IsLeader, Remark: req.Remark})
+	}
+	if !includesApplicant {
+		utils.BadRequest(c, "申报人必须是参赛成员，个人赛只能申报本人")
+		return
+	}
+
 	var comp models.CompDirectory
 	if err := database.DB.WithContext(c.Request.Context()).First(&comp, req.CompID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -424,8 +498,8 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 	}
 
 	req.TeamName = strings.TrimSpace(req.TeamName)
-	if req.TeamName == "" {
-		utils.BadRequest(c, "项目名称不能为空")
+	if req.TeamName == "" || len([]rune(req.TeamName)) > 255 {
+		utils.BadRequest(c, "项目名称不能为空且不能超过255字")
 		return
 	}
 	projectKey := database.AwardProjectKey(req.TeamName)
@@ -448,6 +522,10 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 
 	var existingReg models.Register
 	existsErr := database.DB.WithContext(c.Request.Context()).Where("comp_id = ? AND leader_id = ?", req.CompID, leaderID).First(&existingReg).Error
+	// Any participant may correct a rejected project; retain its original registration.
+	if len(projectAwards) > 0 && projectAwards[0].RegID != 0 {
+		existsErr = database.DB.WithContext(c.Request.Context()).First(&existingReg, projectAwards[0].RegID).Error
+	}
 
 	var regID uint
 
@@ -515,6 +593,8 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 		switch existingAward.Status {
 		case "rejected":
 			if err := tx.Model(&existingAward).Updates(map[string]interface{}{
+				"award_category": req.AwardCategory, "participation_type": req.ParticipationType,
+				"advisor_info": string(advisorJSON), "remark": req.Remark, "auditor_id": nil, "audit_time": nil,
 				"project_name":  req.TeamName,
 				"project_key":   projectKey,
 				"award_time":    awardTime,
@@ -526,6 +606,11 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 			}).Error; err != nil {
 				tx.Rollback()
 				utils.InternalServerError(c, "重新提交失败", err)
+				return
+			}
+			if err := saveStudentAwardMembers(tx, existingAward.ID, regID, submittedMembers); err != nil {
+				tx.Rollback()
+				utils.InternalServerError(c, "保存获奖成员失败", err)
 				return
 			}
 			if existingAward.RegID != 0 {
@@ -563,6 +648,8 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 	}
 
 	award := models.Award{
+		ParticipationType: req.ParticipationType, AwardCategory: req.AwardCategory,
+		AdvisorInfo: string(advisorJSON), Remark: req.Remark,
 		ProjectName: req.TeamName,
 		ProjectKey:  &projectKey,
 		CompID:      req.CompID,
@@ -582,7 +669,7 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 		return
 	}
 
-	if err := database.EnsureAwardMembers(tx, award.ID); err != nil {
+	if err := saveStudentAwardMembers(tx, award.ID, regID, submittedMembers); err != nil {
 		tx.Rollback()
 		utils.InternalServerError(c, "保存获奖成员失败", err)
 		return
@@ -658,6 +745,11 @@ func GetAwardAuditList(c *gin.Context) {
 		if len(a.Members) > 0 {
 			leaderName = a.Members[0].Name
 			leaderID = a.Members[0].StudentNumber
+			for _, m := range a.Members {
+				if m.IsLeader {
+					leaderName, leaderID, phone = m.Name, m.StudentNumber, m.Phone
+				}
+			}
 		}
 		if keyword != "" {
 			if !strings.Contains(leaderName, keyword) && !strings.Contains(leaderID, keyword) {
@@ -751,7 +843,10 @@ func GetAwardAuditDetail(c *gin.Context) {
 		college = award.Members[0].College
 		teammates = make([]gin.H, 0, len(award.Members))
 		for _, m := range award.Members {
-			teammates = append(teammates, gin.H{"name": m.Name, "student_id": m.StudentNumber, "college": m.College})
+			teammates = append(teammates, gin.H{"name": m.Name, "student_id": m.StudentNumber, "college": m.College, "phone": m.Phone, "email": m.Email, "is_leader": m.IsLeader})
+			if m.IsLeader {
+				leaderName, leaderID, college, phone, email = m.Name, m.StudentNumber, m.College, m.Phone, m.Email
+			}
 		}
 	}
 
@@ -766,22 +861,24 @@ func GetAwardAuditDetail(c *gin.Context) {
 	}
 
 	resp := AwardAuditDetailResp{
-		ID:            award.ID,
-		StudentName:   leaderName,
-		StudentID:     leaderID,
-		College:       college,
-		Phone:         phone,
-		Email:         email,
-		CompName:      award.Competition.CompName,
-		AwardLevel:    award.AwardLevel,
-		AwardSpecific: award.AwardName,
-		AwardDate:     awardDate,
-		TeamName:      award.ProjectName,
-		Teammates:     teammates,
-		CertImage:     award.ProofUrl,
-		SubmitTime:    submitTime,
-		Status:        mapAwardStatusToInt(award.Status),
-		RejectReason:  award.RejectReason,
+		ID:                award.ID,
+		StudentName:       leaderName,
+		StudentID:         leaderID,
+		College:           college,
+		Phone:             phone,
+		Email:             email,
+		CompName:          award.Competition.CompName,
+		AwardLevel:        award.AwardLevel,
+		AwardSpecific:     award.AwardName,
+		AwardDate:         awardDate,
+		ParticipationType: award.ParticipationType, AwardCategory: award.AwardCategory,
+		AdvisorInfo: award.AdvisorInfo, Remark: award.Remark,
+		TeamName:     award.ProjectName,
+		Teammates:    teammates,
+		CertImage:    award.ProofUrl,
+		SubmitTime:   submitTime,
+		Status:       mapAwardStatusToInt(award.Status),
+		RejectReason: award.RejectReason,
 	}
 
 	utils.Success(c, resp)
@@ -1015,4 +1112,59 @@ func BatchRejectAwardAudit(c *gin.Context) {
 	}
 
 	utils.SuccessWithMessage(c, "批量驳回成功", nil)
+}
+
+// Keep award participants separate from the original registration.
+func saveStudentAwardMembers(tx *gorm.DB, awardID, regID uint, members []models.AwardMember) error {
+	if err := tx.Unscoped().Where("award_id = ?", awardID).Delete(&models.AwardMember{}).Error; err != nil {
+		return err
+	}
+	for i := range members {
+		members[i].AwardID = awardID
+		members[i].RegID = &regID
+	}
+	if err := tx.Create(&members).Error; err != nil {
+		return err
+	}
+	return tx.Model(&models.Award{}).Where("id = ?", awardID).Update("members_migrated", true).Error
+}
+
+func validateStudentAwardDetails(kind, category, level string, date time.Time, members []models.RegMemberInfo, advisors []models.AdvisorInfo, remark string) error {
+	if kind != "individual" && kind != "team" {
+		return errors.New("请选择个人赛或团队赛")
+	}
+	if kind == "individual" && len(members) != 1 {
+		return errors.New("个人赛只能填写本人信息")
+	}
+	if kind == "team" && len(members) < 2 {
+		return errors.New("团队赛必须填写队长和至少一名团队成员")
+	}
+	if category != "国家级" && category != "省级" && category != "校级" {
+		return errors.New("请选择有效的获奖类别")
+	}
+	if level != "一等奖" && level != "二等奖" && level != "三等奖" {
+		return errors.New("请选择有效的获奖等级")
+	}
+	if date.IsZero() {
+		return errors.New("请选择获奖时间")
+	}
+	if len([]rune(remark)) > 2000 {
+		return errors.New("备注不能超过2000字")
+	}
+	if len(advisors) == 0 {
+		return errors.New("请填写指导老师")
+	}
+	for _, a := range advisors {
+		if strings.TrimSpace(a.Name) == "" || len([]rune(a.Name)) > 100 || len([]rune(a.College)) > 255 {
+			return errors.New("指导老师姓名不能为空且不能超过100字，单位不能超过255字")
+		}
+	}
+	seen := map[string]bool{}
+	for _, m := range members {
+		if seen[m.StudentID] {
+			return errors.New("参赛成员不能重复")
+		}
+		seen[m.StudentID] = true
+	}
+	return nil
 }

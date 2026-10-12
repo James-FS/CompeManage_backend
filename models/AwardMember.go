@@ -5,6 +5,9 @@ type AwardMember struct {
 	AwardID            uint   `gorm:"not null;uniqueIndex:idx_award_student" json:"award_id"`
 	StudentID          uint   `gorm:"not null;index;uniqueIndex:idx_award_student" json:"student_user_id"`
 	RegID              *uint  `gorm:"index" json:"reg_id"`
+	Phone              string `gorm:"type:varchar(32)" json:"phone"`
+	Email              string `gorm:"type:varchar(255)" json:"email"`
+	IsLeader           bool   `gorm:"default:false" json:"is_leader"`
 	Name               string `gorm:"type:varchar(100)" json:"name"`
 	StudentNumber      string `gorm:"type:varchar(50)" json:"student_id"`
 	College            string `gorm:"type:varchar(255)" json:"college"`

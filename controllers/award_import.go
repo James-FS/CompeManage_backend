@@ -482,6 +482,9 @@ func ImportAward(c *gin.Context) {
 					month, _ := time.Parse("2006-01", r.AwardMonth)
 					now := time.Now()
 					a := models.Award{MembersMigrated: true, CompID: compID, ProjectName: r.ProjectName, ProjectKey: &key, AwardCategory: r.Category, AwardName: r.AwardName, AwardLevel: r.Category + r.AwardName, AwardTime: &month, Status: "approved", Source: "import", AuditTime: &now, LevelRank: 99, AdvisorInfo: advisorPairsJSON(r.Advisors, r.AdvisorColleges)}
+					if a.AdvisorInfo == "" {
+						a.AdvisorInfo = "[]"
+					}
 					if err := tx.Create(&a).Error; err != nil {
 						return err
 					}
