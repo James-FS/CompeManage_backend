@@ -35,6 +35,22 @@ type collegeDataResponse struct {
 	Result  collegeDataResult `json:"result"`
 }
 
+// collegeOrgType 按机构代码判定学院下拉的分类：
+// 00xx 党政机关（职能管理部门）、04xx 教辅部门（含实验教学中心）、
+// 0201~0298 且名称含“学院”的为学院；两位分类头行及科研/后勤等类别不参与。
+func collegeOrgType(code, name string) string {
+	if len(code) == 4 && strings.HasPrefix(code, "00") {
+		return "government"
+	}
+	if len(code) == 4 && strings.HasPrefix(code, "04") {
+		return "auxiliary"
+	}
+	if code >= "0201" && code <= "0298" && strings.Contains(name, "学院") {
+		return "college"
+	}
+	return ""
+}
+
 func fetchAllColleges(token string) ([]collegeItem, error) {
 	var allColleges []collegeItem
 	page := 1
@@ -131,7 +147,8 @@ func SyncColleges() {
 			failed++
 			continue
 		}
-		if !strings.Contains(name, "学院") || code < "0201" || code > "0298" {
+		orgType := collegeOrgType(code, name)
+		if orgType == "" {
 			skipped++
 			continue
 		}
@@ -173,7 +190,7 @@ func SyncColleges() {
 		}
 
 		if found {
-			if college.Name == name && college.Code == code && college.Ename == ename && college.IsValid {
+			if college.Name == name && college.Code == code && college.Ename == ename && college.IsValid && college.Category == orgType {
 				skipped++
 				continue
 			}
@@ -182,6 +199,7 @@ func SyncColleges() {
 				"code":     code,
 				"ename":    ename,
 				"is_valid": true,
+				"category": orgType,
 			}).Error; err != nil {
 				log.Printf("[DataHall-College] 更新机构 %s 失败: %v", name, err)
 				failed++
@@ -190,10 +208,11 @@ func SyncColleges() {
 			updated++
 		} else {
 			if err := database.DB.Create(&models.College{
-				Name:    name,
-				Code:    code,
-				Ename:   ename,
-				IsValid: true,
+				Name:     name,
+				Code:     code,
+				Ename:    ename,
+				IsValid:  true,
+				Category: orgType,
 			}).Error; err != nil {
 				log.Printf("[DataHall-College] 创建机构 %s 失败: %v", name, err)
 				failed++

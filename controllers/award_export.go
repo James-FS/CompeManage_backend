@@ -132,8 +132,21 @@ func awardExportScope(c *gin.Context) (*UserAccessScope, bool) {
 	if !ok {
 		return nil, false
 	}
-	if !scope.IsSchoolAdmin() && !scope.IsCollegeAdmin() {
-		utils.Forbidden(c, "仅支持校级或院级管理员导出")
+	switch {
+	case scope.IsSchoolAdmin(), scope.IsCollegeAdmin():
+		// 校级导全校，院级按提交学院过滤（见导出查询）
+	case scope.RoleCode == "competition_manager":
+		// 赛事负责人：用于线下盖章上报，仅导出本人所属学院的数据
+		var college string
+		if err := database.DB.WithContext(c.Request.Context()).Table("users").
+			Where("id = ? AND delete_time IS NULL", scope.UserID).
+			Pluck("college", &college).Error; err != nil || college == "" {
+			utils.Forbidden(c, "赛事负责人未配置所属学院，无法导出")
+			return nil, false
+		}
+		scope.College = college
+	default:
+		utils.Forbidden(c, "仅校级/院级管理员或赛事负责人可导出")
 		return nil, false
 	}
 	return scope, true
@@ -208,7 +221,9 @@ func ExportAwardProjects(c *gin.Context) {
 	if year != "" {
 		q = q.Where("cd.year = ?", year)
 	}
-	if !scope.IsSchoolAdmin() {
+	if scope.RoleCode == "competition_manager" {
+		q = q.Where("EXISTS (SELECT 1 FROM award_members am WHERE am.award_id = awards.id AND am.delete_time IS NULL AND am.college = ?)", scope.College)
+	} else if !scope.IsSchoolAdmin() {
 		q = q.Where("EXISTS (SELECT 1 FROM award_members am WHERE am.award_id = awards.id AND am.submitted_college_id = ? AND am.delete_time IS NULL)", *scope.ManagedCollegeID)
 	}
 	var projects []struct {
@@ -278,7 +293,9 @@ func ExportAwardStudents(c *gin.Context) {
 	if year != "" {
 		q = q.Where("cd.year = ?", year)
 	}
-	if !scope.IsSchoolAdmin() {
+	if scope.RoleCode == "competition_manager" {
+		q = q.Where("am.college = ?", scope.College)
+	} else if !scope.IsSchoolAdmin() {
 		q = q.Where("am.submitted_college_id = ?", *scope.ManagedCollegeID)
 	}
 	var list []struct {

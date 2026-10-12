@@ -42,8 +42,8 @@ func TestSyncCollegesValidity(t *testing.T) {
 				mock.ExpectQuery("SELECT .* FROM `colleges` WHERE code = ").WithArgs("0206", 1).
 					WillReturnRows(sqlmock.NewRows([]string{"id", "name", "code", "ename", "is_valid"}).AddRow(8, "计算机学院", "0206", "CS", false))
 				mock.ExpectBegin()
-				mock.ExpectExec(regexp.QuoteMeta("UPDATE `colleges` SET `code`=?,`ename`=?,`is_valid`=?,`name`=? WHERE `id` = ?")).
-					WithArgs("0206", "CS", true, "计算机学院", 8).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec(regexp.QuoteMeta("UPDATE `colleges` SET `category`=?,`code`=?,`ename`=?,`is_valid`=?,`name`=? WHERE `id` = ?")).
+					WithArgs("college", "0206", "CS", true, "计算机学院", 8).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectCommit()
 			} else {
 				// 无效或缺少状态时不新增学院，禁用旧记录且不影响其他同名代码。
@@ -56,4 +56,26 @@ func TestSyncCollegesValidity(t *testing.T) {
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
+}
+
+func TestCollegeOrgType(t *testing.T) {
+	// 分类头行（两位代码）不参与
+	require.Equal(t, "", collegeOrgType("02", "学院"))
+	require.Equal(t, "", collegeOrgType("00", "职能管理部门"))
+	require.Equal(t, "", collegeOrgType("04", "教辅单位"))
+	// 党政机关 00xx / 教辅部门 04xx（含实验教学中心）
+	require.Equal(t, "government", collegeOrgType("0040", "教务处（含非学历教育办学管理办公室）"))
+	require.Equal(t, "government", collegeOrgType("0092", "教师教育学部"))
+	require.Equal(t, "auxiliary", collegeOrgType("0480", "实验教学中心"))
+	require.Equal(t, "auxiliary", collegeOrgType("0470", "图书馆（知识产权信息服务中心）"))
+	// 学院段：仅名称含“学院”的参与
+	require.Equal(t, "college", collegeOrgType("0206", "计算机科学与网络工程学院"))
+	require.Equal(t, "", collegeOrgType("0229", "社科部")) // 0201~0298 内但名称不含学院
+	// 其他类别（科研/后勤/直属/二级学院等）不参与
+	require.Equal(t, "", collegeOrgType("0301", "广州大学计算科技研究院"))
+	require.Equal(t, "", collegeOrgType("1101", "广州大学岭南统计科学研究院"))
+	require.Equal(t, "", collegeOrgType("0701", "广州大学附属中学"))
+	require.Equal(t, "", collegeOrgType("0802", "广州大学华软软件学院"))
+	// 历史无效记录仍按原范围识别（有效性由 is_valid 单独控制）
+	require.Equal(t, "college", collegeOrgType("0210", "旅游学院（中法旅游学院）（已撤销）"))
 }
