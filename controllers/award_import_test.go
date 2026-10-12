@@ -53,6 +53,11 @@ func TestAwardCategoryNormalization(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestAwardImportAdvisorInfoDefaultsToEmptyArray(t *testing.T) {
+	require.JSONEq(t, `[]`, advisorInfoForImport("", ""))
+	require.JSONEq(t, `[{"id":0,"username":"","name":"指导教师","phone":"","email":"","college":"学院"}]`, advisorInfoForImport("指导教师", "学院"))
+}
+
 // 模板说明新增/修改时必须同步 noteHeights（行高数组在函数内，长度不一致会越界panic），
 // 此用例兜底：模板能生成且最新一条说明落在预期单元格。
 func TestAwardTemplateGeneration(t *testing.T) {
