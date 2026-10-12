@@ -352,11 +352,22 @@ func BatchImportCompetition(c *gin.Context) {
 	var compDirs []models.CompDirectory
 	var promotions []RolePromotion
 	err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
-		promotedSet := make(map[uint]bool)
+		collegeIDByName := make(map[string]*uint)
+		collegeResolved := make(map[string]bool)
+		processedManagers := make(map[uint]bool)
 		for i, item := range req.Items {
-			collegeID, collegeErr := resolveCollegeIDByName(tx, item.College)
-			if collegeErr != nil {
-				return fmt.Errorf("第%d项(%s): %w", i+1, item.CompName, collegeErr)
+			collegeName := strings.TrimSpace(item.College)
+			var collegeID *uint
+			if collegeName != "" {
+				if !collegeResolved[collegeName] {
+					resolvedID, collegeErr := resolveCollegeIDByName(tx, collegeName)
+					if collegeErr != nil {
+						return fmt.Errorf("第%d项(%s): %w", i+1, item.CompName, collegeErr)
+					}
+					collegeIDByName[collegeName] = resolvedID
+					collegeResolved[collegeName] = true
+				}
+				collegeID = collegeIDByName[collegeName]
 			}
 
 			year := resolveCompetitionYear(item.Year)
@@ -386,13 +397,13 @@ func BatchImportCompetition(c *gin.Context) {
 			compDirs = append(compDirs, compDir)
 
 			// 同一批导入中同一负责人只提升一次；教师自动提升为赛事负责人。
-			if !promotedSet[item.ManagerID] {
+			if !processedManagers[item.ManagerID] {
+				processedManagers[item.ManagerID] = true
 				oldRoleID, newRoleID, promoteErr := promoteCompetitionManagerIfTeacher(tx, item.ManagerID)
 				if promoteErr != nil {
 					return promoteErr
 				}
 				if oldRoleID != 0 {
-					promotedSet[item.ManagerID] = true
 					promotions = append(promotions, RolePromotion{
 						UserID:    item.ManagerID,
 						OldRoleID: oldRoleID,
@@ -431,6 +442,94 @@ type ManagerResp struct {
 	WorkID   string `json:"work_id"`
 	College  string `json:"college"`
 	RoleCode string `json:"role_code"` // 当前角色：teacher / competition_manager，供前端展示提权预判
+}
+
+type ManagerLookupReq struct {
+	WorkIDs []string `json:"work_ids" binding:"required,min=1,max=5000,dive,required"`
+}
+
+// LookupManagersByWorkIDs 批量按工号查询负责人，供赛事 Excel 导入使用，避免逐条请求。
+func LookupManagersByWorkIDs(c *gin.Context) {
+	var req ManagerLookupReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "工号列表参数错误")
+		return
+	}
+
+	workIDs := make([]string, 0, len(req.WorkIDs))
+	seen := make(map[string]struct{}, len(req.WorkIDs))
+	for _, workID := range req.WorkIDs {
+		workID = strings.TrimSpace(workID)
+		if workID == "" {
+			continue
+		}
+		if _, exists := seen[workID]; exists {
+			continue
+		}
+		seen[workID] = struct{}{}
+		workIDs = append(workIDs, workID)
+	}
+	if len(workIDs) == 0 {
+		utils.Success(c, gin.H{"list": []ManagerResp{}})
+		return
+	}
+
+	query := database.DB.WithContext(c.Request.Context()).Model(&models.User{}).
+		Where("users.delete_time IS NULL").
+		Where("users.username IN ?", workIDs).
+		Where(`(
+			users.identity_type = 'staff'
+			OR EXISTS (
+				SELECT 1 FROM user_roles ur
+				JOIN roles r ON r.id = ur.role_id AND r.delete_time IS NULL
+				WHERE ur.user_id = users.id AND r.role_code = 'competition_manager'
+			)
+		)`).
+		Where(`NOT EXISTS (
+			SELECT 1 FROM user_roles ur
+			JOIN roles r ON r.id = ur.role_id AND r.delete_time IS NULL
+			WHERE ur.user_id = users.id AND r.role_code IN ('school_admin', 'college_admin', 'expert', 'guest')
+		)`)
+
+	var users []models.User
+	if err := query.Select("users.id", "users.realname", "users.username", "users.college").
+		Order("users.id").Find(&users).Error; err != nil {
+		utils.InternalServerError(c, "批量查询负责人失败", err)
+		return
+	}
+
+	roleByUser := make(map[uint]string, len(users))
+	if len(users) > 0 {
+		ids := make([]uint, 0, len(users))
+		for _, user := range users {
+			ids = append(ids, user.ID)
+		}
+		var roleRows []struct {
+			UserID   uint
+			RoleCode string
+		}
+		if err := database.DB.WithContext(c.Request.Context()).
+			Table("user_roles").
+			Select("user_roles.user_id AS user_id, roles.role_code AS role_code").
+			Joins("JOIN roles ON roles.id = user_roles.role_id AND roles.delete_time IS NULL").
+			Where("user_roles.user_id IN ?", ids).
+			Scan(&roleRows).Error; err != nil {
+			utils.InternalServerError(c, "批量查询负责人角色失败", err)
+			return
+		}
+		for _, row := range roleRows {
+			roleByUser[row.UserID] = row.RoleCode
+		}
+	}
+
+	managers := make([]ManagerResp, 0, len(users))
+	for _, user := range users {
+		managers = append(managers, ManagerResp{
+			ID: user.ID, Name: user.Realname, WorkID: user.Username,
+			College: user.College, RoleCode: roleByUser[user.ID],
+		})
+	}
+	utils.Success(c, gin.H{"list": managers})
 }
 
 func GetManagerList(c *gin.Context) {

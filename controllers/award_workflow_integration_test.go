@@ -222,11 +222,55 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 		require.NoError(t, db.Where("award_id = ?", supplement.ID).Find(&members).Error)
 		require.Len(t, members, 1)
 		require.Equal(t, studentB.ID, members[0].StudentID)
+		body["participation_type"] = "team"
+		body["award_category"] = "省级"
+		body["award_name"] = "二等奖"
+		body["award_date"] = "2026-10-12"
+		body["advisors"] = []map[string]string{{"name": "教师甲", "college": ca.Name}, {"name": "教师乙", "college": cb.Name}}
+		body["remark"] = "团队项目说明"
+		body["members"] = []map[string]interface{}{
+			{"name": studentA.Realname, "student_id": studentA.Username, "college": studentA.College, "phone": "13800000001", "email": "a@example.com", "is_leader": true},
+			{"name": studentB.Realname, "student_id": studentB.Username, "college": studentB.College, "phone": "13800000002", "email": "b@example.com", "is_leader": false},
+		}
+		require.NoError(t, db.Model(&supplement).Update("status", "rejected").Error)
+		w = invoke("POST", "/supplement", "student", nil, studentB.ID, body, SubmitStudentAwardSupplement)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		require.NoError(t, db.Preload("Members").First(&supplement, supplement.ID).Error)
+		require.Equal(t, "省级二等奖", supplement.AwardLevel)
+		require.Equal(t, "team", supplement.ParticipationType)
+		require.Equal(t, "团队项目说明", supplement.Remark)
+		require.Contains(t, supplement.AdvisorInfo, "教师乙")
+		require.Len(t, supplement.Members, 2)
+		w = invoke("GET", fmt.Sprintf("/comp-awards?comp_id=%d", other.ID), "school_admin", nil, studentA.ID, nil, GetCompAwards)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		require.NotContains(t, w.Body.String(), supplement.ProjectName)
+		detail := invoke("GET", "/detail", "competition_manager", nil, studentB.ID, nil, func(c *gin.Context) {
+			c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(supplement.ID)}}
+			GetAwardAuditDetail(c)
+		})
+		require.Equal(t, 200, detail.Code, detail.Body.String())
+		require.Contains(t, detail.Body.String(), `"student_name":"学生甲"`)
+		require.Contains(t, detail.Body.String(), "13800000001")
+		require.Contains(t, detail.Body.String(), "教师甲")
+		w = invoke("PUT", "/pass", "competition_manager", nil, studentB.ID, nil, func(c *gin.Context) {
+			c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(supplement.ID)}}
+			PassAwardAudit(c)
+		})
+		require.Equal(t, 200, w.Code, w.Body.String())
+		w = invoke("GET", fmt.Sprintf("/comp-awards?comp_id=%d", other.ID), "school_admin", nil, studentA.ID, nil, GetCompAwards)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		require.Contains(t, w.Body.String(), supplement.ProjectName)
+		require.Contains(t, w.Body.String(), "团队项目说明")
+		w = invoke("GET", "/student/my-awards", "student", nil, studentB.ID, nil, GetStudentMyAwardList)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		require.Contains(t, w.Body.String(), "13800000002")
+		require.Contains(t, w.Body.String(), "教师乙")
+
 	})
 	t.Run("legacy migration idempotent and no inferred ownership", func(t *testing.T) {
 		var reg models.Register
 		require.NoError(t, db.First(&reg).Error)
-		legacy := models.Award{CompID: school.ID, RegID: reg.ID, Status: "approved", AwardName: "二等奖"}
+		legacy := models.Award{CompID: school.ID, RegID: reg.ID, Status: "approved", AwardName: "二等奖", AdvisorInfo: "[]"}
 		require.NoError(t, db.Create(&legacy).Error)
 		require.NoError(t, database.BackfillAwardMembers(db))
 		require.NoError(t, database.BackfillAwardMembers(db))
