@@ -104,7 +104,7 @@ func awardCompetitionScope(q *gorm.DB, scope *UserAccessScope) *gorm.DB {
 		if scope.ManagedCollegeID == nil {
 			return q.Where("1=0")
 		}
-		return q.Where("(comp_directories.college_id = ? OR comp_directories.comp_level IN ?)", *scope.ManagedCollegeID, []string{"校级", "校赛"})
+		return q.Where("(comp_directories.college_id = ? OR comp_directories.college_id IS NULL OR comp_directories.college_id = 0 OR comp_directories.comp_level IN ?)", *scope.ManagedCollegeID, []string{"校级", "校赛"})
 	}
 	return applyCompetitionScope(q, scope, "comp_directories")
 }
@@ -507,7 +507,7 @@ func ImportAward(c *gin.Context) {
 			return err
 		}
 		// 提交时再次检查，不能使用预览阶段的权限或报名结果。
-		if !scope.IsSchoolAdmin() && !(scope.IsCollegeAdmin() && scope.ManagedCollegeID != nil && ((comp.CollegeID != nil && *comp.CollegeID == *scope.ManagedCollegeID) || comp.CompLevel == "校级" || comp.CompLevel == "校赛")) && !(scope.RoleCode == "competition_manager" && comp.ManagerID == scope.UserID) {
+		if !scope.IsSchoolAdmin() && !(scope.IsCollegeAdmin() && scope.ManagedCollegeID != nil && (comp.CollegeID == nil || *comp.CollegeID == 0 || *comp.CollegeID == *scope.ManagedCollegeID || comp.CompLevel == "校级" || comp.CompLevel == "校赛")) && !(scope.RoleCode == "competition_manager" && comp.ManagerID == scope.UserID) {
 			return errors.New("赛事权限已变化")
 		}
 		rows, bad, err = validateAwardRows(tx, compID, input, setting.RequireRegistration)

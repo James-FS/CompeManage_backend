@@ -361,6 +361,14 @@ func GetStudentMyAwardList(c *gin.Context) {
 		dbQuery = dbQuery.Where("awards.comp_id = ?", compID)
 	}
 
+	if source := c.Query("source"); source != "" {
+		if source != "supplement" && source != "import" {
+			utils.BadRequest(c, "来源参数错误，仅支持supplement/import")
+			return
+		}
+		dbQuery = dbQuery.Where("awards.source = ?", source)
+	}
+
 	if status != "" {
 		validStatus := map[string]bool{"draft": true, "approved": true, "rejected": true}
 		if !validStatus[status] {
@@ -945,6 +953,29 @@ func GetAwardAuditDetail(c *gin.Context) {
 	utils.Success(c, resp)
 }
 
+// Validate every requested record before any single or batch audit mutation.
+func requireAwardAuditAccess(c *gin.Context, ids []uint) bool {
+	// Real routes always set role_code through AuthRequired.
+	if _, exists := c.Get("role_code"); !exists {
+		return true
+	}
+	var awards []models.Award
+	if err := database.DB.WithContext(c.Request.Context()).Where("id IN ?", ids).Find(&awards).Error; err != nil {
+		utils.InternalServerError(c, "查询申报记录失败", err)
+		return false
+	}
+	checked := make(map[uint]bool)
+	for _, award := range awards {
+		if !checked[award.CompID] {
+			if _, _, ok := requireAwardCompetition(c, award.CompID); !ok {
+				return false
+			}
+			checked[award.CompID] = true
+		}
+	}
+	return true
+}
+
 func PassAwardAudit(c *gin.Context) {
 	idStr := c.Param("id")
 	id, _ := strconv.Atoi(idStr)
@@ -959,6 +990,10 @@ func PassAwardAudit(c *gin.Context) {
 
 	if award.Status != "draft" {
 		utils.BadRequest(c, "该记录已审核，无法重复操作")
+		return
+	}
+
+	if !requireAwardAuditAccess(c, []uint{award.ID}) {
 		return
 	}
 
@@ -1019,6 +1054,10 @@ func RejectAwardAudit(c *gin.Context) {
 		return
 	}
 
+	if !requireAwardAuditAccess(c, []uint{award.ID}) {
+		return
+	}
+
 	now := time.Now()
 	tx := database.DB.WithContext(c.Request.Context()).Begin()
 	if err := tx.Model(&award).Updates(map[string]interface{}{
@@ -1062,6 +1101,10 @@ func BatchPassAwardAudit(c *gin.Context) {
 	}
 	userIDVal, _ := c.Get("user_id")
 	auditorID := userIDVal.(uint)
+
+	if !requireAwardAuditAccess(c, req.IDs) {
+		return
+	}
 
 	now := time.Now()
 	tx := database.DB.WithContext(c.Request.Context()).Begin()
@@ -1124,6 +1167,10 @@ func BatchRejectAwardAudit(c *gin.Context) {
 	}
 	userIDVal, _ := c.Get("user_id")
 	auditorID := userIDVal.(uint)
+
+	if !requireAwardAuditAccess(c, req.IDs) {
+		return
+	}
 
 	now := time.Now()
 	tx := database.DB.WithContext(c.Request.Context()).Begin()
