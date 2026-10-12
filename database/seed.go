@@ -134,7 +134,7 @@ func ensureAwardStudentPermissions() {
 
 	ensurePerm("award:student:my-list", "查看我的获奖", "学生查看个人获奖申报列表")
 	ensurePerm("award:student:supplement", "学生补录获奖", "学生提交获奖补录")
-	// P0-2/A-2：补齐获奖审核权限行（对存量库生效），并显式授予管理员——
+	// 补齐获奖审核权限，对存量库的管理员和赛事负责人均生效。
 	// 存量库中 school_admin 的权限是初始化时一次性写入的，新增权限不会自动追加。
 	ensurePerm("award:audit", "获奖审核", "审核学生获奖申报")
 	ensurePerm("award:import", "导入获奖信息", "导入获奖名单和编辑获奖信息")
@@ -142,6 +142,7 @@ func ensureAwardStudentPermissions() {
 	grantRolePermissionsByCode("student", []string{"award:student:my-list", "award:student:supplement"})
 	grantRolePermissionsByCode("school_admin", []string{"award:audit"})
 	grantRolePermissionsByCode("college_admin", []string{"award:audit"})
+	grantRolePermissionsByCode("competition_manager", []string{"award:audit"})
 	grantRolePermissionsByCode("college_admin", []string{"award:import"})
 }
 
@@ -610,7 +611,7 @@ func InitData() {
 		// 赛事申报（仅查看）
 		"declare:get", "declare:list", "declare:pending-list", "declare:audited-list", "declare:all-declares",
 		// 获奖管理
-		"award:list", "award:comp:list", "award:import",
+		"award:list", "award:comp:list", "award:audit", "award:import",
 		// 赛事总结
 		"summary:list", "summary:detail", "summary:edit",
 		// 报名配置（全权限）
