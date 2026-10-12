@@ -235,7 +235,7 @@ func GetCompAwards(c *gin.Context) {
 	}
 	db := database.DB.WithContext(c.Request.Context())
 	var awards []models.Award
-	if err := db.Where("comp_id = ?", id).Preload("Members").Preload("Register.Leader").Preload("Register.Members").Order("create_time DESC").Find(&awards).Error; err != nil {
+	if err := db.Where("comp_id = ?", id).Preload("Members").Preload("Advisors").Preload("Register.Leader").Preload("Register.Members").Order("create_time DESC").Find(&awards).Error; err != nil {
 		utils.InternalServerError(c, "查询失败", err)
 		return
 	}
@@ -283,8 +283,12 @@ func GetCompAwards(c *gin.Context) {
 		if project == "" {
 			project = a.Register.TeamName
 		}
+		advisors := []gin.H{}
+		for _, adv := range a.Advisors {
+			advisors = append(advisors, gin.H{"username": adv.Username, "name": adv.Name, "college": adv.College, "sort": adv.Sort})
+		}
 		studentCount += len(members)
-		list = append(list, gin.H{"id": a.ID, "project_name": project, "team_name": project, "award_category": a.AwardCategory, "award_name": a.AwardName, "award_level": a.AwardLevel, "award_month": month, "members": members, "can_edit_team": allowed, "status": a.Status})
+		list = append(list, gin.H{"id": a.ID, "project_name": project, "team_name": project, "award_category": a.AwardCategory, "award_name": a.AwardName, "award_level": a.AwardLevel, "award_month": month, "members": members, "advisors": advisors, "can_edit_team": allowed, "status": a.Status})
 	}
 	var hierarchy []string
 	_ = json.Unmarshal([]byte(comp.Detail.AwardHierarchy), &hierarchy)

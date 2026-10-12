@@ -85,6 +85,7 @@ func autoMigrate() {
 		&models.CompDeclaration{},
 		&models.Award{},
 		&models.AwardMember{},
+		&models.AwardAdvisor{},
 		&models.AwardImportSetting{},
 		&models.Summary{},
 		&models.FileRecord{},

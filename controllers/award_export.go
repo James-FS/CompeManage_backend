@@ -94,6 +94,23 @@ func awardExportAdvisors(awardJSON, regJSON string) (names, collegesJoined strin
 	return strings.Join(nameList, " "), collegesJoined
 }
 
+// awardExportAdvisorsFromRows 从多行指导教师数据拼接附件1两列：姓名按序、学院按出现顺序去重。
+func awardExportAdvisorsFromRows(rows []models.AwardAdvisor) (names, collegesJoined string) {
+	nameList := []string{}
+	seen := map[string]bool{}
+	for _, row := range rows {
+		if name := strings.TrimSpace(row.Name); name != "" {
+			nameList = append(nameList, name)
+		}
+		college := strings.TrimSpace(row.College)
+		if college != "" && !seen[college] {
+			seen[college] = true
+			collegesJoined = strings.TrimSpace(strings.Join([]string{collegesJoined, college}, " "))
+		}
+	}
+	return strings.Join(nameList, " "), collegesJoined
+}
+
 // 历史学生补录仅保存合并等级；只补全其明确类别，不修改原数据或换算奖项等级。
 func awardExportCategory(category, level string) string {
 	for _, value := range []string{strings.TrimSpace(category), strings.TrimSpace(level)} {
@@ -246,6 +263,21 @@ func ExportAwardProjects(c *gin.Context) {
 			ids = append(ids, p.ID)
 		}
 	}
+	var advisorRows []models.AwardAdvisor
+	if len(ids) > 0 {
+		if err := database.DB.WithContext(c.Request.Context()).
+			Where("award_id IN ?", ids).
+			Order("award_id ASC, sort ASC, id ASC").
+			Find(&advisorRows).Error; err != nil {
+			utils.InternalServerError(c, "查询指导教师失败", err)
+			return
+		}
+	}
+	advisorsByAward := map[uint][]models.AwardAdvisor{}
+	for _, adv := range advisorRows {
+		advisorsByAward[adv.AwardID] = append(advisorsByAward[adv.AwardID], adv)
+	}
+
 	var members []awardExportMember
 	if len(ids) > 0 {
 		if err := database.DB.WithContext(c.Request.Context()).Table("award_members").Select("award_id, name, college").Where("award_id IN ? AND delete_time IS NULL", ids).Order("id ASC").Find(&members).Error; err != nil {
@@ -268,7 +300,10 @@ func ExportAwardProjects(c *gin.Context) {
 		if p.AwardTime != nil {
 			month = p.AwardTime.Format("2006-01")
 		}
-		advNames, advColleges := awardExportAdvisors(p.AdvisorInfo, p.RegAdvisorInfo)
+		advNames, advColleges := awardExportAdvisorsFromRows(advisorsByAward[p.ID])
+		if advNames == "" {
+			advNames, advColleges = awardExportAdvisors(p.AdvisorInfo, p.RegAdvisorInfo)
+		}
 		rows[p.CompetitionYear] = append(rows[p.CompetitionYear], []interface{}{len(rows[p.CompetitionYear]) + 1, p.CompName, p.ProjectName, p.Organizer, category + awardExportGrade(p.AwardName, p.AwardLevel), names, colleges, advNames, advColleges, month, awardParticipantLabel(p.ParticipantType)})
 	}
 	awardExportWorkbook(c, "projects", year, rows)

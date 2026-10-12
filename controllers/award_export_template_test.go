@@ -174,7 +174,7 @@ func TestAwardExportStudentsUsesCompetitionYearAndFiltersSchoolAwards(t *testing
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestAwardExportProjectsGroupsMembersAndLeavesTeacherFieldsBlank(t *testing.T) {
+func TestAwardExportProjectsGroupsMembersAndJoinsTeacherRows(t *testing.T) {
 	previousDB := database.DB
 	mock := setupAwardDBMock(t)
 	db, err := database.DB.DB()
@@ -186,6 +186,9 @@ func TestAwardExportProjectsGroupsMembersAndLeavesTeacherFieldsBlank(t *testing.
 	}).AddRow(1, "项目", "省级二等奖", "省级", "二等奖", nil, "赛事", "主办单位", 2025, 2).
 		AddRow(2, "校赛项目", "校赛一等奖", "校赛", "一等奖", nil, "赛事", "主办单位", 2025, 1).
 		AddRow(3, "国际项目", "国际级金奖", "", "", nil, "国际赛事", "主办单位", 2025, 1))
+	mock.ExpectQuery(`SELECT .* FROM .award_advisor.*award_id IN`).WithArgs(1, 3).
+		WillReturnRows(sqlmock.NewRows([]string{"award_id", "username", "name", "college", "sort"}).
+			AddRow(1, "T2023010", "刘老师", "计算机学院", 0))
 	mock.ExpectQuery(`SELECT award_id, name, college FROM .award_members.*award_id IN`).WithArgs(1, 3).
 		WillReturnRows(sqlmock.NewRows([]string{"award_id", "name", "college"}).AddRow(1, "张三", "学院甲").AddRow(1, "李四", "学院乙"))
 	_, w, c := buildGET("/api/award/export/projects?year=2025")
@@ -198,8 +201,10 @@ func TestAwardExportProjectsGroupsMembersAndLeavesTeacherFieldsBlank(t *testing.
 	defer f.Close()
 	require.Equal(t, "张三 李四", exportCell(t, f, "获奖项目", "F4"))
 	require.Equal(t, "学院甲 学院乙", exportCell(t, f, "获奖项目", "G4"))
-	require.Empty(t, exportCell(t, f, "获奖项目", "H4"))
-	require.Empty(t, exportCell(t, f, "获奖项目", "I4"))
+	require.Equal(t, "刘老师", exportCell(t, f, "获奖项目", "H4"))
+	require.Equal(t, "计算机学院", exportCell(t, f, "获奖项目", "I4"))
+	// 无指导教师的项目两列保持为空（历史JSON/报名回退也为空）
+	require.Empty(t, exportCell(t, f, "获奖项目", "H5"))
 	require.Equal(t, "团体", exportCell(t, f, "获奖项目", "K4"))
 	require.Equal(t, "国际项目", exportCell(t, f, "获奖项目", "C5"))
 	require.Equal(t, "国家级金奖", exportCell(t, f, "获奖项目", "E5"))

@@ -28,5 +28,6 @@ type Award struct {
 	Auditor     User          `gorm:"foreignKey:AuditorID" json:"auditor,omitempty"` // 审核人信息
 	Register    Register      `gorm:"foreignKey:RegID" json:"register"`
 	Members     []AwardMember `gorm:"foreignKey:AwardID" json:"award_members"`
+	Advisors    []AwardAdvisor `gorm:"foreignKey:AwardID" json:"advisors"`
 	Competition CompDirectory `gorm:"foreignKey:CompID" json:"competition"`
 }

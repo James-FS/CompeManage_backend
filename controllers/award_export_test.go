@@ -1,20 +1,31 @@
 package controllers
 
 import (
+	"CompeManage_backend/models"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
-func TestAdvisorPairsJSONAndNormalize(t *testing.T) {
-	// 空格分隔多人，按序与学院对应
-	require.Equal(t, "刘涛 曾岑", normalizeAdvisorList("刘涛  曾岑	王满四")[:len("刘涛 曾岑")]+""[:0])
+func TestAdvisorsMirrorAndRowsJoin(t *testing.T) {
 	require.Equal(t, "刘涛 曾岑 王满四", normalizeAdvisorList("刘涛  曾岑	王满四"))
-	// 学院不足时补空串
-	got := advisorPairsJSON("刘涛 曾岑", "新闻学院")
-	require.JSONEq(t, `[{"id":0,"username":"","name":"刘涛","phone":"","email":"","college":"新闻学院"},{"id":0,"username":"","name":"曾岑","phone":"","email":"","college":""}]`, got)
-	// 无姓名返回空
-	require.Empty(t, advisorPairsJSON("", ""))
+	// 镜像 JSON 保留三元组
+	pairs := []models.AdvisorInfo{
+		{Username: "T2023010", Name: "刘涛", College: "新闻学院"},
+		{Username: "T2023011", Name: "曾岑", College: "创新创业学院"},
+	}
+	mirror := advisorsMirrorJSON(pairs)
+	require.Contains(t, mirror, "T2023010")
+	require.Contains(t, mirror, "新闻学院")
+	require.Empty(t, advisorsMirrorJSON(nil))
+	// 多行数据拼接：姓名按序、学院去重保序
+	names, colleges := awardExportAdvisorsFromRows([]models.AwardAdvisor{
+		{Name: "刘涛", College: "新闻学院"},
+		{Name: "曾岑", College: "创新创业学院"},
+		{Name: "王满四", College: "新闻学院"},
+	})
+	require.Equal(t, "刘涛 曾岑 王满四", names)
+	require.Equal(t, "新闻学院 创新创业学院", colleges)
 }
 
 func TestAwardExportAdvisors(t *testing.T) {

@@ -18,35 +18,36 @@ import (
 	"unicode/utf8"
 )
 
-var awardImportHeaders = []string{"序号", "学号", "学生姓名", "所属学院", "所在专业", "参赛项目名称", "获奖时间（年/月）", "获奖类别", "获奖等级", "指导教师姓名", "指导教师所在学院", "备注"}
+var awardImportHeaders = []string{"序号", "学号", "学生姓名", "所属学院", "所在专业", "参赛项目名称", "获奖时间（年/月）", "获奖类别", "获奖等级", "指导教师工号", "指导教师所在学院", "备注"}
 var awardTemplateNotes = []string{
 	"说明：1. 获奖类别：校赛、国家级、省级、国际级；国际级统一保存为国家级。",
 	"2. 获奖等级：指一等奖、二等奖、三等奖，冠军（金奖）、特等奖等同于一等奖，亚军（银奖）等同于二等奖，季军（铜奖）等同于三等奖。如冠亚季军、金银铜奖从一等奖获奖者中决出，则按一等奖计算。",
 	"3. 一行只能填写1个学生。学生须为我校全日制本科生（不含继续教育、二级学院），学号务必准确（否则影响奖励发放）。",
 	"4. 获奖时间填写 YYYY-MM；同一赛事内项目名称相同视为同一团队，类别、等级、时间必须一致。",
 	"5. 所属学院和专业需填写完整名称。",
-	"6. 指导教师多人用空格分隔，姓名与所在学院两列按顺序对应；不填表示无指导教师。",
+	"6. 指导教师填教师工号（多人空格分隔），与所在学院两列按顺序对应；工号须为系统在职教师，学院须与教师归属一致，否则整行报错；不填表示无指导教师。",
 	"7. 同个团队的参赛项目名称一定要一样：同一赛事内项目名称相同才会归为同一团队，名称不同会被拆成不同团队。",
 }
 
 type AwardImportRow struct {
-	StudentNumber   string `json:"student_id"`
-	Name            string `json:"name"`
-	College         string `json:"college"`
-	Major           string `json:"major"`
-	ProjectName     string `json:"project_name"`
-	AwardMonth      string `json:"award_month"`
-	Category        string `json:"award_category"`
-	AwardName       string `json:"award_name"`
-	Advisors        string `json:"advisor_names"`    // 空格分隔的指导教师姓名
-	AdvisorColleges string `json:"advisor_colleges"` // 空格分隔的指导教师所在学院
-	Remark          string `json:"remark"`
-	RowNumber       int    `json:"row_number"`
-	Error           string `json:"error,omitempty"`
-	Existing        bool   `json:"existing"`
-	UserID          uint   `json:"-"`
-	RegID           *uint  `json:"-"`
-	AwardID         uint   `json:"-"`
+	StudentNumber    string               `json:"student_id"`
+	Name             string               `json:"name"`
+	College          string               `json:"college"`
+	Major            string               `json:"major"`
+	ProjectName      string               `json:"project_name"`
+	AwardMonth       string               `json:"award_month"`
+	Category         string               `json:"award_category"`
+	AwardName        string               `json:"award_name"`
+	AdvisorUsernames string               `json:"advisor_usernames"` // 空格分隔的指导教师工号
+	AdvisorColleges  string               `json:"advisor_colleges"`  // 空格分隔的指导教师所在学院（归属校验用）
+	Resolved         []models.AdvisorInfo `json:"-"`                 // 校验通过后的系统三元组快照
+	Remark           string               `json:"remark"`
+	RowNumber        int                  `json:"row_number"`
+	Error            string               `json:"error,omitempty"`
+	Existing         bool                 `json:"existing"`
+	UserID           uint                 `json:"-"`
+	RegID            *uint                `json:"-"`
+	AwardID          uint                 `json:"-"`
 }
 
 // normalizeAdvisorList 把空格分隔的教师列表规范化为单空格连接（兼容全半角/制表符分隔）。
@@ -54,27 +55,122 @@ func normalizeAdvisorList(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-// advisorPairsJSON 把姓名/学院两列（空格分隔、按序对应）序列化为指导教师 JSON 数组。
-// 学院列可能缺失或数量不足，缺少的学院记为空串。
-func advisorPairsJSON(names, colleges string) string {
-	nameList := strings.Fields(names)
-	if len(nameList) == 0 {
-		return ""
+// findAwardTeacher 按工号查系统教师，口径与指导教师候选接口（role=teacher）一致：
+// identity_type=staff 且非校管/院管/专家/访客角色。查不到即视为非法工号。
+func findAwardTeacher(tx *gorm.DB, username string) (models.User, error) {
+	var user models.User
+	err := tx.Model(&models.User{}).
+		Where("username = ? AND delete_time IS NULL AND identity_type = 'staff'", username).
+		Where(`NOT EXISTS (
+			SELECT 1 FROM user_roles ur
+			JOIN roles r ON r.id = ur.role_id AND r.delete_time IS NULL
+			WHERE ur.user_id = users.id AND r.role_code IN ('school_admin', 'college_admin', 'expert', 'guest'))`).
+		First(&user).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return models.User{}, fmt.Errorf("指导教师工号 %s 不存在或不是可选教师", username)
 	}
-	collegeList := strings.Fields(colleges)
-	pairs := make([]models.AdvisorInfo, 0, len(nameList))
-	for i, name := range nameList {
-		college := ""
-		if i < len(collegeList) {
-			college = collegeList[i]
+	return user, err
+}
+
+// resolveAwardAdvisors 按工号解析指导教师（任务6/8）：
+// 工号为唯一标识（同名/多工号均可区分），姓名与学院一律取系统资料；
+// 所在学院列若填写，须与教师系统归属学院一致，否则报错。
+func resolveAwardAdvisors(tx *gorm.DB, usernames, colleges string) ([]models.AdvisorInfo, error) {
+	uList := strings.Fields(usernames)
+	if len(uList) == 0 {
+		return nil, nil
+	}
+	cList := strings.Fields(colleges)
+	pairs := make([]models.AdvisorInfo, 0, len(uList))
+	seen := map[string]bool{}
+	for i, username := range uList {
+		if seen[username] {
+			return nil, fmt.Errorf("指导教师工号 %s 重复填写", username)
 		}
-		pairs = append(pairs, models.AdvisorInfo{Name: name, College: college})
+		seen[username] = true
+		user, err := findAwardTeacher(tx, username)
+		if err != nil {
+			return nil, err
+		}
+		if i < len(cList) && cList[i] != "" && cList[i] != user.College {
+			return nil, fmt.Errorf("指导教师 %s 归属学院不符（系统：%s）", username, user.College)
+		}
+		pairs = append(pairs, models.AdvisorInfo{Username: user.Username, Name: user.Realname, College: user.College})
+	}
+	return pairs, nil
+}
+
+// advisorsMirrorJSON 三元组镜像到 awards.advisor_info，保持历史消费方兼容。
+func advisorsMirrorJSON(pairs []models.AdvisorInfo) string {
+	if len(pairs) == 0 {
+		return ""
 	}
 	data, err := json.Marshal(pairs)
 	if err != nil {
 		return ""
 	}
 	return string(data)
+}
+
+// fillAwardAdvisorsIfEmpty 为尚无指导教师的奖项写入多行数据并镜像 JSON（幂等，事务内调用）。
+func fillAwardAdvisorsIfEmpty(tx *gorm.DB, awardID uint, pairs []models.AdvisorInfo) error {
+	if len(pairs) == 0 {
+		return nil
+	}
+	var count int64
+	if err := tx.Model(&models.AwardAdvisor{}).Where("award_id = ?", awardID).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	for i, pair := range pairs {
+		row := models.AwardAdvisor{AwardID: awardID, Username: pair.Username, Name: pair.Name, College: pair.College, Sort: i}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
+			return err
+		}
+	}
+	return tx.Model(&models.Award{}).
+		Where("id = ? AND (advisor_info IS NULL OR advisor_info IN ('', '[]'))", awardID).
+		Update("advisor_info", advisorsMirrorJSON(pairs)).Error
+}
+
+// replaceAwardAdvisors 整体替换项目指导教师（弹窗选择提交，任务7）：
+// 忽略客户端提交的姓名/学院，以工号回查系统资料重建三元组。
+func replaceAwardAdvisors(tx *gorm.DB, awardID uint, edits []AwardAdvisorEditReq) error {
+	pairs := make([]models.AdvisorInfo, 0, len(edits))
+	seen := map[string]bool{}
+	for _, e := range edits {
+		username := strings.TrimSpace(e.Username)
+		if username == "" || seen[username] {
+			continue
+		}
+		seen[username] = true
+		user, err := findAwardTeacher(tx, username)
+		if err != nil {
+			return err
+		}
+		pairs = append(pairs, models.AdvisorInfo{Username: user.Username, Name: user.Realname, College: user.College})
+	}
+	// 指导教师为快照数据：物理删除，否则软删记录仍占唯一索引(award_id+username)导致重建冲突
+	if err := tx.Unscoped().Where("award_id = ?", awardID).Delete(&models.AwardAdvisor{}).Error; err != nil {
+		return err
+	}
+	for i, pair := range pairs {
+		row := models.AwardAdvisor{AwardID: awardID, Username: pair.Username, Name: pair.Name, College: pair.College, Sort: i}
+		if err := tx.Create(&row).Error; err != nil {
+			return err
+		}
+	}
+	return tx.Model(&models.Award{}).Where("id = ?", awardID).
+		Update("advisor_info", advisorsMirrorJSON(pairs)).Error
+}
+
+// AwardAdvisorEditReq 弹窗提交的指导教师条目（仅 username 参与校验）。
+type AwardAdvisorEditReq struct {
+	Username string `json:"username"`
+	Name     string `json:"name"`
+	College  string `json:"college"`
 }
 
 func normalizeAwardCategory(category string) (string, error) {
@@ -176,7 +272,7 @@ func newAwardTemplate() *excelize.File {
 	}
 	f.SetRowHeight(sheet, 14, 12)
 	f.SetRowHeight(sheet, 15, 12)
-	noteHeights := []float64{32, 52, 44, 36, 32, 36, 48}
+	noteHeights := []float64{32, 52, 44, 36, 32, 52, 48}
 	for i, note := range awardTemplateNotes {
 		row := 16 + i
 		f.MergeCell(sheet, fmt.Sprintf("A%d", row), fmt.Sprintf("L%d", row))
@@ -225,8 +321,8 @@ func parseAwardSheet(rows [][]string) ([]AwardImportRow, error) {
 			}
 			return strings.TrimSpace(row[i])
 		}
-		r := AwardImportRow{RowNumber: index + 2, StudentNumber: value("学号"), Name: value("学生姓名"), College: value("所属学院"), Major: value("所在专业"), ProjectName: value("参赛项目名称"), AwardMonth: value("获奖时间（年/月）"), Category: value("获奖类别"), AwardName: value("获奖等级"), Advisors: normalizeAdvisorList(value("指导教师姓名")), AdvisorColleges: normalizeAdvisorList(value("指导教师所在学院")), Remark: value("备注")}
-		if r.StudentNumber == "" && r.Name == "" && r.ProjectName == "" && r.Category == "" && r.AwardName == "" && r.College == "" && r.Major == "" && r.AwardMonth == "" && r.Advisors == "" && r.AdvisorColleges == "" && r.Remark == "" {
+		r := AwardImportRow{RowNumber: index + 2, StudentNumber: value("学号"), Name: value("学生姓名"), College: value("所属学院"), Major: value("所在专业"), ProjectName: value("参赛项目名称"), AwardMonth: value("获奖时间（年/月）"), Category: value("获奖类别"), AwardName: value("获奖等级"), AdvisorUsernames: normalizeAdvisorList(value("指导教师工号")), AdvisorColleges: normalizeAdvisorList(value("指导教师所在学院")), Remark: value("备注")}
+		if r.StudentNumber == "" && r.Name == "" && r.ProjectName == "" && r.Category == "" && r.AwardName == "" && r.College == "" && r.Major == "" && r.AwardMonth == "" && r.AdvisorUsernames == "" && r.AdvisorColleges == "" && r.Remark == "" {
 			continue
 		}
 		result = append(result, r)
@@ -280,6 +376,7 @@ func validateAwardRows(tx *gorm.DB, compID uint, input []AwardImportRow, require
 	bad := 0
 	groups := map[string]AwardImportRow{}
 	seen := map[string]bool{}
+	advisorResolveCache := map[string][]models.AdvisorInfo{}
 	for i := range result {
 		r := &result[i]
 		r.Error = ""
@@ -316,8 +413,22 @@ func validateAwardRows(tx *gorm.DB, compID uint, input []AwardImportRow, require
 			fail("获奖时间须为 YYYY-MM")
 			continue
 		}
+		if r.AdvisorUsernames != "" {
+			cacheKey := r.AdvisorUsernames + "\x00" + r.AdvisorColleges
+			if pairs, ok := advisorResolveCache[cacheKey]; ok {
+				r.Resolved = pairs
+			} else {
+				pairs, err := resolveAwardAdvisors(tx, r.AdvisorUsernames, r.AdvisorColleges)
+				if err != nil {
+					fail(err.Error())
+					continue
+				}
+				advisorResolveCache[cacheKey] = pairs
+				r.Resolved = pairs
+			}
+		}
 		key := database.AwardProjectKey(r.ProjectName)
-		if first, ok := groups[key]; ok && (first.Category != r.Category || first.AwardName != r.AwardName || first.AwardMonth != r.AwardMonth || first.Advisors != r.Advisors || first.AdvisorColleges != r.AdvisorColleges) {
+		if first, ok := groups[key]; ok && (first.Category != r.Category || first.AwardName != r.AwardName || first.AwardMonth != r.AwardMonth || first.AdvisorUsernames != r.AdvisorUsernames) {
 			fail("同一团队的获奖类别、等级、时间或指导教师不一致")
 			continue
 		}
@@ -376,16 +487,25 @@ func validateAwardRows(tx *gorm.DB, compID uint, input []AwardImportRow, require
 				fail("与已有团队的类别、等级或时间冲突，请先更正团队奖项")
 				continue
 			}
-			if r.Advisors != "" {
+			if r.AdvisorUsernames != "" {
 				var stored []models.AdvisorInfo
 				_ = json.Unmarshal([]byte(a.AdvisorInfo), &stored)
-				storedNames := make([]string, 0, len(stored))
+				storedKeys := make([]string, 0, len(stored))
+				allKeyed := len(stored) > 0
 				for _, adv := range stored {
-					if adv.Name != "" {
-						storedNames = append(storedNames, adv.Name)
+					if strings.TrimSpace(adv.Username) == "" {
+						allKeyed = false
+					}
+					key := strings.TrimSpace(adv.Username)
+					if key == "" {
+						key = strings.TrimSpace(adv.Name)
+					}
+					if key != "" {
+						storedKeys = append(storedKeys, key)
 					}
 				}
-				if len(storedNames) > 0 && strings.Join(storedNames, " ") != r.Advisors {
+				// 仅当历史数据均为工号键时才比对；旧自由文本数据不拦截，交由编辑维护
+				if allKeyed && strings.Join(storedKeys, " ") != r.AdvisorUsernames {
 					fail("与已有团队的指导教师不一致，请先更正团队奖项")
 					continue
 				}
@@ -481,7 +601,7 @@ func ImportAward(c *gin.Context) {
 				if awardID == 0 {
 					month, _ := time.Parse("2006-01", r.AwardMonth)
 					now := time.Now()
-					a := models.Award{MembersMigrated: true, CompID: compID, ProjectName: r.ProjectName, ProjectKey: &key, AwardCategory: r.Category, AwardName: r.AwardName, AwardLevel: r.Category + r.AwardName, AwardTime: &month, Status: "approved", Source: "import", AuditTime: &now, LevelRank: 99, AdvisorInfo: advisorPairsJSON(r.Advisors, r.AdvisorColleges)}
+					a := models.Award{MembersMigrated: true, CompID: compID, ProjectName: r.ProjectName, ProjectKey: &key, AwardCategory: r.Category, AwardName: r.AwardName, AwardLevel: r.Category + r.AwardName, AwardTime: &month, Status: "approved", Source: "import", AuditTime: &now, LevelRank: 99, AdvisorInfo: advisorsMirrorJSON(r.Resolved)}
 					if err := tx.Create(&a).Error; err != nil {
 						return err
 					}
@@ -490,16 +610,12 @@ func ImportAward(c *gin.Context) {
 					if err := tx.Model(&models.Award{}).Where("id = ?", awardID).Update("project_key", key).Error; err != nil {
 						return err
 					}
-					// 历史奖项无指导教师时用本行补录；已有则保持（校验阶段已保证不冲突）
-					if advJSON := advisorPairsJSON(r.Advisors, r.AdvisorColleges); advJSON != "" {
-						if err := tx.Model(&models.Award{}).
-							Where("id = ? AND (advisor_info IS NULL OR advisor_info IN ('', '[]'))", awardID).
-							Update("advisor_info", advJSON).Error; err != nil {
-							return err
-						}
-					}
 				}
 				groupIDs[key] = awardID
+			}
+			// 指导教师多行写入：仅当奖项尚无教师时补录（幂等，校验阶段已保证同团队一致）
+			if err := fillAwardAdvisorsIfEmpty(tx, awardID, r.Resolved); err != nil {
+				return err
 			}
 			if r.Existing {
 				existing++
@@ -706,10 +822,11 @@ func UpdateAwardTeam(c *gin.Context) {
 		return
 	}
 	var req struct {
-		ProjectName string `json:"project_name"`
-		Category    string `json:"award_category"`
-		AwardName   string `json:"award_name"`
-		Month       string `json:"award_month"`
+		ProjectName string                 `json:"project_name"`
+		Category    string                 `json:"award_category"`
+		AwardName   string                 `json:"award_name"`
+		Month       string                 `json:"award_month"`
+		Advisors    *[]AwardAdvisorEditReq `json:"advisors"` // 指导教师（弹窗提交）；nil=不改动
 	}
 	if c.ShouldBindJSON(&req) != nil {
 		utils.BadRequest(c, "参数错误")
@@ -725,6 +842,7 @@ func UpdateAwardTeam(c *gin.Context) {
 	}
 	forbidden := false
 	conflict := false
+	advisorInvalid := false
 	err = db.Transaction(func(tx *gorm.DB) error {
 		var comp models.CompDirectory
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&comp, a.CompID).Error; err != nil {
@@ -747,7 +865,16 @@ func UpdateAwardTeam(c *gin.Context) {
 			conflict = true
 			return errors.New("项目名称已存在")
 		}
-		return tx.Model(&a).Updates(map[string]interface{}{"project_name": req.ProjectName, "project_key": key, "award_category": category, "award_name": req.AwardName, "award_level": category + req.AwardName, "award_time": month}).Error
+		if err := tx.Model(&a).Updates(map[string]interface{}{"project_name": req.ProjectName, "project_key": key, "award_category": category, "award_name": req.AwardName, "award_level": category + req.AwardName, "award_time": month}).Error; err != nil {
+			return err
+		}
+		if req.Advisors != nil {
+			if err := replaceAwardAdvisors(tx, a.ID, *req.Advisors); err != nil {
+				advisorInvalid = true
+				return err
+			}
+		}
+		return nil
 	})
 	if forbidden {
 		utils.Forbidden(c, "仅团队成员所在学院的管理员或校级管理员可修改团队奖项")
@@ -755,6 +882,10 @@ func UpdateAwardTeam(c *gin.Context) {
 	}
 	if conflict {
 		utils.BadRequest(c, "该赛事已存在同名项目，请勿合并覆盖")
+		return
+	}
+	if advisorInvalid {
+		utils.BadRequest(c, err.Error())
 		return
 	}
 	if err != nil {

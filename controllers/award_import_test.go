@@ -2,7 +2,11 @@ package controllers
 
 import (
 	"CompeManage_backend/models"
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+	"regexp"
 	"testing"
 )
 
@@ -16,7 +20,7 @@ func TestParseAwardTemplateNotesAndReorderedColumns(t *testing.T) {
 	require.Equal(t, "0002", parsed[0].StudentNumber)
 	require.Equal(t, "李四", parsed[0].Name)
 	require.Equal(t, 4, parsed[0].RowNumber)
-	require.Equal(t, "刘涛 曾岑", parsed[0].Advisors)
+	require.Equal(t, "刘涛 曾岑", parsed[0].AdvisorUsernames)
 	require.Equal(t, "新闻学院 创新创业学院", parsed[0].AdvisorColleges)
 	_, err = parseAwardSheet([][]string{{"奖项等级", "获奖项目名称", "负责人", "学号"}})
 	require.ErrorContains(t, err, "新版模板")
@@ -25,7 +29,7 @@ func TestParseAwardTemplateNotesAndReorderedColumns(t *testing.T) {
 	oldParsed, err := parseAwardSheet([][]string{oldHeaders, {"1", "0002", "李四", "学院", "专业", "项目", "2026-10", "国家级", "一等奖", "无教师"}})
 	require.NoError(t, err)
 	require.Len(t, oldParsed, 1)
-	require.Empty(t, oldParsed[0].Advisors)
+	require.Empty(t, oldParsed[0].AdvisorUsernames)
 }
 
 func TestAwardMemberPermissionIsSubmittingCollege(t *testing.T) {
@@ -64,5 +68,45 @@ func TestAwardTemplateGeneration(t *testing.T) {
 	// 表头12列含指导教师
 	h, err := f.GetCellValue("Sheet1", "J1")
 	require.NoError(t, err)
-	require.Equal(t, "指导教师姓名", h)
+	require.Equal(t, "指导教师工号", h)
+}
+
+// 三元组校验（任务6/8）：工号必须为系统可选教师，学院须与归属一致
+func TestResolveAwardAdvisors(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer sqlDB.Close()
+	db, err := gorm.Open(mysql.New(mysql.Config{Conn: sqlDB, SkipInitializeWithVersion: true}), &gorm.Config{})
+	require.NoError(t, err)
+
+	teacherRow := func() *sqlmock.Rows {
+		return sqlmock.NewRows([]string{"id", "username", "realname", "college", "identity_type"}).
+			AddRow(5, "T2023010", "陈老师", "计算机科学与网络工程学院", "staff")
+	}
+
+	// 工号存在且学院一致 → 快照取系统资料
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM `users`")).WithArgs("T2023010", 1).WillReturnRows(teacherRow())
+	pairs, err := resolveAwardAdvisors(db, "T2023010", "计算机科学与网络工程学院")
+	require.NoError(t, err)
+	require.Len(t, pairs, 1)
+	require.Equal(t, "T2023010", pairs[0].Username)
+	require.Equal(t, "陈老师", pairs[0].Name)
+	require.Equal(t, "计算机科学与网络工程学院", pairs[0].College)
+
+	// 学院列与系统归属不符 → 报错
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM `users`")).WithArgs("T2023010", 1).WillReturnRows(teacherRow())
+	_, err = resolveAwardAdvisors(db, "T2023010", "新闻学院")
+	require.ErrorContains(t, err, "归属学院不符")
+
+	// 工号不存在/非教师 → 报错
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM `users`")).WithArgs("X99999", 1).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	_, err = resolveAwardAdvisors(db, "X99999", "")
+	require.ErrorContains(t, err, "不存在")
+
+	// 工号重复填写 → 报错
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM `users`")).WithArgs("T2023010", 1).WillReturnRows(teacherRow())
+	_, err = resolveAwardAdvisors(db, "T2023010 T2023010", "")
+	require.ErrorContains(t, err, "重复")
+
+	require.NoError(t, mock.ExpectationsWereMet())
 }
