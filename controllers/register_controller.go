@@ -55,14 +55,16 @@ type SubTrackReq struct {
 }
 
 type ApplicationReq struct {
-	CompID        uint                `json:"comp_id" binding:"required"`
-	TeamName      string              `json:"team_name"`
-	Leader        MemberReq           `json:"leader"`
-	Members       []MemberReq         `json:"members"`
-	AdvisorID     *uint               `json:"advisor_id"`
-	AdvisorInfo   *models.AdvisorInfo `json:"advisor_info"`
-	AttachmentUrl string              `json:"attachment_url"`
-	Track         string              `json:"track"`
+	RegID             uint                `json:"reg_id"`
+	ParticipationType string              `json:"participation_type"`
+	CompID            uint                `json:"comp_id" binding:"required"`
+	TeamName          string              `json:"team_name"`
+	Leader            MemberReq           `json:"leader"`
+	Members           []MemberReq         `json:"members"`
+	AdvisorID         *uint               `json:"advisor_id"`
+	AdvisorInfo       *models.AdvisorInfo `json:"advisor_info"`
+	AttachmentUrl     string              `json:"attachment_url"`
+	Track             string              `json:"track"`
 }
 
 type MemberReq struct {
@@ -461,6 +463,19 @@ func SubmitRegistration(c *gin.Context) {
 		return
 	}
 
+	if req.ParticipationType != "" {
+		actorID, ok := c.Get("user_id")
+		userID, valid := actorID.(uint)
+		if !ok || !valid {
+			utils.Unauthorized(c, "用户信息异常")
+			return
+		}
+		if err := validateRegistrationParticipation(database.DB.WithContext(c.Request.Context()), &req, comp.Detail, userID); err != nil {
+			utils.BadRequest(c, err.Error())
+			return
+		}
+	}
+
 	now := time.Now()
 
 	if now.Before(comp.Detail.RegStartTime) {
@@ -540,6 +555,7 @@ func SubmitRegistration(c *gin.Context) {
 		CompID:        req.CompID,
 		LeaderID:      leader.ID,
 		TeamName:      req.TeamName,
+		AdvisorInfo:   "{}",
 		AttachmentUrl: req.AttachmentUrl,
 		Status:        0,
 		Members:       make([]models.RegMember, 0),
@@ -1211,7 +1227,17 @@ func ResubmitRegistration(c *gin.Context) {
 	}
 
 	var reg models.Register
-	if err := database.DB.WithContext(c.Request.Context()).Where("comp_id = ? AND leader_id = ?", req.CompID, userID).First(&reg).Error; err != nil {
+	query := database.DB.WithContext(c.Request.Context()).Where("comp_id = ?", req.CompID)
+	if req.ParticipationType != "" {
+		if req.RegID == 0 {
+			utils.BadRequest(c, "缺少原报名记录ID")
+			return
+		}
+		query = query.Where("registers.id = ? AND EXISTS (SELECT 1 FROM reg_members rm JOIN users u ON u.username = rm.username WHERE rm.reg_id = registers.id AND u.id = ? AND u.delete_time IS NULL)", req.RegID, userID)
+	} else {
+		query = query.Where("leader_id = ?", userID)
+	}
+	if err := query.First(&reg).Error; err != nil {
 		utils.NotFound(c, "未找到原报名记录")
 		return
 	}
@@ -1229,6 +1255,18 @@ func ResubmitRegistration(c *gin.Context) {
 			utils.InternalServerError(c, "查询赛事配置失败", err)
 		}
 		return
+	}
+
+	var selectedLeader models.User
+	if req.ParticipationType != "" {
+		if err := validateRegistrationParticipation(database.DB.WithContext(c.Request.Context()), &req, detail, userID); err != nil {
+			utils.BadRequest(c, err.Error())
+			return
+		}
+		if err := database.DB.WithContext(c.Request.Context()).Where("username = ?", req.Leader.StuID).First(&selectedLeader).Error; err != nil {
+			utils.BadRequest(c, "队长学号不存在")
+			return
+		}
 	}
 
 	now := time.Now()
@@ -1298,6 +1336,12 @@ func ResubmitRegistration(c *gin.Context) {
 		}
 	}()
 
+	if selectedLeader.ID != 0 {
+		reg.LeaderID = selectedLeader.ID
+	}
+	if req.ParticipationType != "" && req.AdvisorInfo == nil {
+		reg.AdvisorInfo = "{}"
+	}
 	reg.TeamName = req.TeamName
 	reg.AttachmentUrl = req.AttachmentUrl
 	reg.AdvisorID = req.AdvisorID
@@ -1408,6 +1452,10 @@ func GetMyRegList(c *gin.Context) {
 		Where("id IN (?)", subQuery).
 		Preload("Competition").
 		Preload("Competition.Detail")
+
+	if c.Query("registration_only") == "true" {
+		query = query.Where("registers.supplement_time IS NULL")
+	}
 
 	if targetRegID != "" {
 		query = query.Where("id = ?", targetRegID)
@@ -1659,4 +1707,65 @@ func GetUserList(c *gin.Context) {
 	}()
 
 	utils.Success(c, respData)
+}
+
+// Verify the selected mode against the competition's participant limits.
+func validateRegistrationParticipation(db *gorm.DB, req *ApplicationReq, detail models.CompDetail, userID uint) error {
+	req.TeamName = strings.TrimSpace(req.TeamName)
+	if req.TeamName == "" || len([]rune(req.TeamName)) > 255 {
+		return errors.New("参赛项目名称不能为空且不能超过255字")
+	}
+	if req.ParticipationType != "individual" && req.ParticipationType != "team" {
+		return errors.New("请选择个人参赛或团队参赛")
+	}
+	count := len(req.Members) + 1
+	min, max := detail.MinTeamMember, detail.MaxTeamMember
+	if min < 1 {
+		min = 1
+	}
+	if max < 1 {
+		max = 1
+	}
+	if detail.ParticipantType == 1 {
+		if req.ParticipationType != "individual" || count != 1 {
+			return errors.New("个人赛只能由本人单独参赛")
+		}
+	} else if req.ParticipationType == "individual" {
+		if min > 1 || count != 1 {
+			return errors.New("该赛事不允许个人参赛")
+		}
+	} else {
+		if min < 2 {
+			min = 2
+		}
+		if count < min || count > max {
+			return fmt.Errorf("团队参赛人数须为%d-%d人（含队长）", min, max)
+		}
+	}
+	var applicant models.User
+	if err := db.First(&applicant, userID).Error; err != nil {
+		return errors.New("无法获取申报人信息")
+	}
+	if req.ParticipationType == "individual" && req.Leader.StuID != applicant.Username {
+		return errors.New("个人参赛只能填写本人信息")
+	}
+	seen := map[string]bool{}
+	includesApplicant := false
+	all := append([]MemberReq{req.Leader}, req.Members...)
+	for _, member := range all {
+		if strings.TrimSpace(member.StuID) == "" || strings.TrimSpace(member.Name) == "" {
+			return errors.New("请完整填写参赛成员的姓名和学号")
+		}
+		if seen[member.StuID] {
+			return errors.New("参赛成员不能重复")
+		}
+		seen[member.StuID] = true
+		if member.StuID == applicant.Username {
+			includesApplicant = true
+		}
+	}
+	if !includesApplicant {
+		return errors.New("申报人必须在参赛成员中")
+	}
+	return nil
 }
