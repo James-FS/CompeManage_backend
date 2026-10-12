@@ -55,6 +55,7 @@ coverage.txt
 # Docker MySQL data
 mysql_data/
 app.logger
+/benchmark-results/
 server
 logger/app.logger
 logger/app.logger
