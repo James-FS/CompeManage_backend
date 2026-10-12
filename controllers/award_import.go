@@ -26,6 +26,7 @@ var awardTemplateNotes = []string{
 	"4. 获奖时间填写 YYYY-MM；同一赛事内项目名称相同视为同一团队，类别、等级、时间必须一致。",
 	"5. 所属学院和专业需填写完整名称。",
 	"6. 指导教师多人用空格分隔，姓名与所在学院两列按顺序对应；不填表示无指导教师。",
+	"7. 同个团队的参赛项目名称一定要一样：同一赛事内项目名称相同才会归为同一团队，名称不同会被拆成不同团队。",
 }
 
 type AwardImportRow struct {
@@ -175,7 +176,7 @@ func newAwardTemplate() *excelize.File {
 	}
 	f.SetRowHeight(sheet, 14, 12)
 	f.SetRowHeight(sheet, 15, 12)
-	noteHeights := []float64{32, 52, 44, 36, 32, 36}
+	noteHeights := []float64{32, 52, 44, 36, 32, 36, 48}
 	for i, note := range awardTemplateNotes {
 		row := 16 + i
 		f.MergeCell(sheet, fmt.Sprintf("A%d", row), fmt.Sprintf("L%d", row))

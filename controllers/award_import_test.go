@@ -52,3 +52,17 @@ func TestAwardCategoryNormalization(t *testing.T) {
 	_, err = normalizeAwardCategory("其他")
 	require.Error(t, err)
 }
+
+// 模板说明新增/修改时必须同步 noteHeights（行高数组在函数内，长度不一致会越界panic），
+// 此用例兜底：模板能生成且最新一条说明落在预期单元格。
+func TestAwardTemplateGeneration(t *testing.T) {
+	f := newAwardTemplate()
+	defer f.Close()
+	v, err := f.GetCellValue("Sheet1", "A22")
+	require.NoError(t, err)
+	require.Contains(t, v, "参赛项目名称一定要一样")
+	// 表头12列含指导教师
+	h, err := f.GetCellValue("Sheet1", "J1")
+	require.NoError(t, err)
+	require.Equal(t, "指导教师姓名", h)
+}
