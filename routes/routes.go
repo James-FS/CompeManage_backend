@@ -111,6 +111,9 @@ func SetupRoutes(r *gin.Engine) {
 		comp.GET("/manager/list",
 			middleware.RequirePermission("manager:list"),
 			controllers.GetManagerList)
+		comp.POST("/manager/lookup-by-work-ids",
+			middleware.RequirePermission("manager:list"),
+			controllers.LookupManagersByWorkIDs)
 		comp.GET("/years",
 			middleware.RequirePermission("comp:years:list"),
 			controllers.GetCompetitionYears)
