@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -18,8 +19,10 @@ const awardExportApprovedStatus = "approved"
 const awardExportLegacyStatus = "1"
 
 type awardExportMember struct {
-	AwardID       uint
-	Name, College string
+	AwardID              uint
+	Name, College        string
+	SubmittedCollegeID   *uint
+	SubmittedCollegeName string
 }
 
 func awardMergedLevel(level, category, name string) string {
@@ -52,7 +55,7 @@ func awardJoinMembers(members []awardExportMember) (names, collegesJoined string
 			collegesList = append(collegesList, college)
 		}
 	}
-	return strings.Join(namesList, " "), strings.Join(collegesList, " ")
+	return strings.Join(namesList, "、"), strings.Join(collegesList, "、")
 }
 
 // decodeAwardAdvisors 解析指导教师 JSON：兼容数组（奖项表）与单对象（报名表），空值返回 nil。
@@ -88,10 +91,14 @@ func awardExportAdvisors(awardJSON, regJSON string) (names, collegesJoined strin
 		college := strings.TrimSpace(adv.College)
 		if college != "" && !seen[college] {
 			seen[college] = true
-			collegesJoined = strings.TrimSpace(strings.Join([]string{collegesJoined, college}, " "))
+			if collegesJoined == "" {
+				collegesJoined = college
+			} else {
+				collegesJoined += "、" + college
+			}
 		}
 	}
-	return strings.Join(nameList, " "), collegesJoined
+	return strings.Join(nameList, "、"), collegesJoined
 }
 
 // awardExportAdvisorsFromRows 从多行指导教师数据拼接附件1两列：姓名按序、学院按出现顺序去重。
@@ -105,10 +112,14 @@ func awardExportAdvisorsFromRows(rows []models.AwardAdvisor) (names, collegesJoi
 		college := strings.TrimSpace(row.College)
 		if college != "" && !seen[college] {
 			seen[college] = true
-			collegesJoined = strings.TrimSpace(strings.Join([]string{collegesJoined, college}, " "))
+			if collegesJoined == "" {
+				collegesJoined = college
+			} else {
+				collegesJoined += "、" + college
+			}
 		}
 	}
-	return strings.Join(nameList, " "), collegesJoined
+	return strings.Join(nameList, "、"), collegesJoined
 }
 
 // 历史学生补录仅保存合并等级；只补全其明确类别，不修改原数据或换算奖项等级。
@@ -240,21 +251,15 @@ func awardExportWorkbook(c *gin.Context, kind, year, unit string, rowsByYear map
 }
 
 // ExportAwardProjects 导出附件1：按奖项一行，教师及签章区留空供人工填写。
-func ExportAwardProjects(c *gin.Context) {
-	scope, ok := awardExportScope(c)
-	if !ok {
-		return
-	}
-	year, ok := awardExportYear(c)
-	if !ok {
-		return
-	}
-	unit := awardExportUnit(c, scope)
-	q := database.DB.WithContext(c.Request.Context()).Table("awards").
-		Select("awards.id, awards.project_name, awards.award_level, awards.award_category, awards.award_name, awards.award_time, awards.advisor_info, r.advisor_info AS reg_advisor_info, cd.comp_name, cd.organizer, cd.year AS competition_year, cdp.participant_type").
+// buildAwardProjectRows 查询并构造附件1数据行（按赛事年份分组）。
+// 上报学院 = 项目首个成员的提交学院，缺省回退赛事所属学院。
+func buildAwardProjectRows(ctx context.Context, scope *UserAccessScope, year string) (map[int][][]interface{}, error) {
+	q := database.DB.WithContext(ctx).Table("awards").
+		Select("awards.id, awards.project_name, awards.award_level, awards.award_category, awards.award_name, awards.award_time, awards.advisor_info, r.advisor_info AS reg_advisor_info, cd.comp_name, cd.organizer, cd.year AS competition_year, cdp.participant_type, cn.name AS comp_college").
 		Joins("JOIN comp_directories cd ON cd.id = awards.comp_id AND cd.delete_time IS NULL").
 		Joins("LEFT JOIN comp_details cdp ON cdp.comp_id = awards.comp_id AND cdp.delete_time IS NULL").
 		Joins("LEFT JOIN registers r ON r.id = awards.reg_id AND r.delete_time IS NULL").
+		Joins("LEFT JOIN colleges cn ON cn.id = cd.college_id").
 		Where("awards.delete_time IS NULL").Where("awards.status IN ?", awardExportFilterStatus()).
 		Order("cd.year ASC, awards.award_time ASC, cd.comp_name ASC, awards.project_name ASC, awards.id ASC")
 	if year != "" {
@@ -269,14 +274,13 @@ func ExportAwardProjects(c *gin.Context) {
 		ID                                                uint
 		ProjectName, AwardLevel, AwardCategory, AwardName string
 		AwardTime                                         *time.Time
-		CompName, Organizer                               string
+		CompName, Organizer, CompCollege                  string
 		AdvisorInfo, RegAdvisorInfo                       string
 		CompetitionYear                                   int
 		ParticipantType                                   *int8
 	}
 	if err := q.Find(&projects).Error; err != nil {
-		utils.InternalServerError(c, "查询获奖项目失败", err)
-		return
+		return nil, err
 	}
 	ids := []uint{}
 	for _, p := range projects {
@@ -287,12 +291,11 @@ func ExportAwardProjects(c *gin.Context) {
 	}
 	var advisorRows []models.AwardAdvisor
 	if len(ids) > 0 {
-		if err := database.DB.WithContext(c.Request.Context()).
+		if err := database.DB.WithContext(ctx).
 			Where("award_id IN ?", ids).
 			Order("award_id ASC, sort ASC, id ASC").
 			Find(&advisorRows).Error; err != nil {
-			utils.InternalServerError(c, "查询指导教师失败", err)
-			return
+			return nil, err
 		}
 	}
 	advisorsByAward := map[uint][]models.AwardAdvisor{}
@@ -302,9 +305,11 @@ func ExportAwardProjects(c *gin.Context) {
 
 	var members []awardExportMember
 	if len(ids) > 0 {
-		if err := database.DB.WithContext(c.Request.Context()).Table("award_members").Select("award_id, name, college").Where("award_id IN ? AND delete_time IS NULL", ids).Order("id ASC").Find(&members).Error; err != nil {
-			utils.InternalServerError(c, "查询获奖学生失败", err)
-			return
+		if err := database.DB.WithContext(ctx).Table("award_members am").
+			Select("am.award_id, am.name, am.college, am.submitted_college_id, sc.name AS submitted_college_name").
+			Joins("LEFT JOIN colleges sc ON sc.id = am.submitted_college_id").
+			Where("am.award_id IN ? AND am.delete_time IS NULL", ids).Order("am.id ASC").Find(&members).Error; err != nil {
+			return nil, err
 		}
 	}
 	membersByAward := map[uint][]awardExportMember{}
@@ -326,26 +331,28 @@ func ExportAwardProjects(c *gin.Context) {
 		if advNames == "" {
 			advNames, advColleges = awardExportAdvisors(p.AdvisorInfo, p.RegAdvisorInfo)
 		}
-		rows[p.CompetitionYear] = append(rows[p.CompetitionYear], []interface{}{len(rows[p.CompetitionYear]) + 1, p.CompName, p.ProjectName, p.Organizer, category + awardExportGrade(p.AwardName, p.AwardLevel), names, colleges, advNames, advColleges, month, awardParticipantLabel(p.ParticipantType)})
+		// 上报学院：成员提交学院优先，缺省用赛事所属学院
+		reportCollege := strings.TrimSpace(p.CompCollege)
+		for _, m := range membersByAward[p.ID] {
+			if name := strings.TrimSpace(m.SubmittedCollegeName); name != "" {
+				reportCollege = name
+				break
+			}
+		}
+		rows[p.CompetitionYear] = append(rows[p.CompetitionYear], []interface{}{len(rows[p.CompetitionYear]) + 1, reportCollege, p.CompName, p.ProjectName, p.Organizer, category + awardExportGrade(p.AwardName, p.AwardLevel), names, colleges, advNames, advColleges, month, awardParticipantLabel(p.ParticipantType)})
 	}
-	awardExportWorkbook(c, "projects", year, unit, rows)
+	return rows, nil
 }
 
-// ExportAwardStudents 导出附件2：按学生一行，列顺序与学校模板保持一致。
-func ExportAwardStudents(c *gin.Context) {
-	scope, ok := awardExportScope(c)
-	if !ok {
-		return
-	}
-	year, ok := awardExportYear(c)
-	if !ok {
-		return
-	}
-	unit := awardExportUnit(c, scope)
-	q := database.DB.WithContext(c.Request.Context()).Table("award_members am").
-		Select("am.student_number, am.name, am.college, am.major, am.remark, a.project_name, a.award_level, a.award_category, a.award_name, a.award_time, cd.comp_name, cd.undertaker, cd.year AS competition_year").
+// buildAwardStudentRows 查询并构造附件2数据行（按赛事年份分组）。
+// 上报学院 = 成员提交学院，缺省回退赛事所属学院。
+func buildAwardStudentRows(ctx context.Context, scope *UserAccessScope, year string) (map[int][][]interface{}, error) {
+	q := database.DB.WithContext(ctx).Table("award_members am").
+		Select("am.student_number, am.name, am.college, am.major, am.remark, a.project_name, a.award_level, a.award_category, a.award_name, a.award_time, cd.comp_name, cd.year AS competition_year, sc.name AS submitted_college_name, cn.name AS comp_college").
 		Joins("JOIN awards a ON a.id = am.award_id AND a.delete_time IS NULL").
 		Joins("JOIN comp_directories cd ON cd.id = a.comp_id AND cd.delete_time IS NULL").
+		Joins("LEFT JOIN colleges sc ON sc.id = am.submitted_college_id").
+		Joins("LEFT JOIN colleges cn ON cn.id = cd.college_id").
 		Where("am.delete_time IS NULL").Where("a.status IN ?", awardExportFilterStatus()).
 		Order("cd.year ASC, a.award_time ASC, cd.comp_name ASC, a.project_name ASC, am.id ASC")
 	if year != "" {
@@ -359,12 +366,12 @@ func ExportAwardStudents(c *gin.Context) {
 	var list []struct {
 		StudentNumber, Name, College, Major, Remark, ProjectName, AwardLevel, AwardCategory, AwardName string
 		AwardTime                                                                                      *time.Time
-		CompName, Undertaker                                                                           string
+		CompName                                                                                       string
 		CompetitionYear                                                                                int
+		SubmittedCollegeName, CompCollege                                                              string
 	}
 	if err := q.Find(&list).Error; err != nil {
-		utils.InternalServerError(c, "查询获奖学生失败", err)
-		return
+		return nil, err
 	}
 	rows := map[int][][]interface{}{}
 	for _, s := range list {
@@ -376,7 +383,47 @@ func ExportAwardStudents(c *gin.Context) {
 		if s.AwardTime != nil {
 			month = s.AwardTime.Format("2006-01")
 		}
-		rows[s.CompetitionYear] = append(rows[s.CompetitionYear], []interface{}{len(rows[s.CompetitionYear]) + 1, s.Undertaker, s.StudentNumber, s.Name, s.College, s.Major, s.CompName, s.ProjectName, month, category, awardExportGrade(s.AwardName, s.AwardLevel), s.Remark})
+		reportCollege := strings.TrimSpace(s.SubmittedCollegeName)
+		if reportCollege == "" {
+			reportCollege = strings.TrimSpace(s.CompCollege)
+		}
+		rows[s.CompetitionYear] = append(rows[s.CompetitionYear], []interface{}{len(rows[s.CompetitionYear]) + 1, reportCollege, s.StudentNumber, s.Name, s.College, s.Major, s.CompName, s.ProjectName, month, category, awardExportGrade(s.AwardName, s.AwardLevel), s.Remark})
+	}
+	return rows, nil
+}
+
+func ExportAwardProjects(c *gin.Context) {
+	scope, ok := awardExportScope(c)
+	if !ok {
+		return
+	}
+	year, ok := awardExportYear(c)
+	if !ok {
+		return
+	}
+	unit := awardExportUnit(c, scope)
+	rows, err := buildAwardProjectRows(c.Request.Context(), scope, year)
+	if err != nil {
+		utils.InternalServerError(c, "查询获奖项目失败", err)
+		return
+	}
+	awardExportWorkbook(c, "projects", year, unit, rows)
+}
+
+func ExportAwardStudents(c *gin.Context) {
+	scope, ok := awardExportScope(c)
+	if !ok {
+		return
+	}
+	year, ok := awardExportYear(c)
+	if !ok {
+		return
+	}
+	unit := awardExportUnit(c, scope)
+	rows, err := buildAwardStudentRows(c.Request.Context(), scope, year)
+	if err != nil {
+		utils.InternalServerError(c, "查询获奖学生失败", err)
+		return
 	}
 	awardExportWorkbook(c, "students", year, unit, rows)
 }
