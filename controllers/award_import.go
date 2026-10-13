@@ -173,6 +173,38 @@ type AwardAdvisorEditReq struct {
 	College  string `json:"college"`
 }
 
+// advisorPairsJSON serializes legacy name/college columns for consumers that
+// still read the advisor_info JSON snapshot.
+func advisorPairsJSON(names, colleges string) string {
+	nameList := strings.Fields(names)
+	if len(nameList) == 0 {
+		return ""
+	}
+	collegeList := strings.Fields(colleges)
+	pairs := make([]models.AdvisorInfo, 0, len(nameList))
+	for i, name := range nameList {
+		college := ""
+		if i < len(collegeList) {
+			college = collegeList[i]
+		}
+		pairs = append(pairs, models.AdvisorInfo{Name: name, College: college})
+	}
+	data, err := json.Marshal(pairs)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// advisorInfoForImport keeps the advisor_info JSON column valid when the
+// optional teacher columns are empty.
+func advisorInfoForImport(names, colleges string) string {
+	if data := advisorPairsJSON(names, colleges); data != "" {
+		return data
+	}
+	return "[]"
+}
+
 func normalizeAwardCategory(category string) (string, error) {
 	switch strings.TrimSpace(category) {
 	case "校赛":
@@ -191,7 +223,7 @@ func awardCompetitionScope(q *gorm.DB, scope *UserAccessScope) *gorm.DB {
 		if scope.ManagedCollegeID == nil {
 			return q.Where("1=0")
 		}
-		return q.Where("(comp_directories.college_id = ? OR comp_directories.comp_level IN ?)", *scope.ManagedCollegeID, []string{"校级", "校赛"})
+		return q.Where("(comp_directories.college_id = ? OR comp_directories.college_id IS NULL OR comp_directories.college_id = 0 OR comp_directories.comp_level IN ?)", *scope.ManagedCollegeID, []string{"校级", "校赛"})
 	}
 	return applyCompetitionScope(q, scope, "comp_directories")
 }
@@ -377,6 +409,7 @@ func validateAwardRows(tx *gorm.DB, compID uint, input []AwardImportRow, require
 	groups := map[string]AwardImportRow{}
 	seen := map[string]bool{}
 	advisorResolveCache := map[string][]models.AdvisorInfo{}
+	seenStudents := map[uint]bool{}
 	for i := range result {
 		r := &result[i]
 		r.Error = ""
@@ -454,6 +487,11 @@ func validateAwardRows(tx *gorm.DB, compID uint, input []AwardImportRow, require
 		}
 		r.UserID = user.ID
 		r.Major = user.Major
+		if seenStudents[user.ID] {
+			fail("同一赛事中，每名学生只能申报一条获奖记录")
+			continue
+		}
+		seenStudents[user.ID] = true
 		var ids []uint
 		err = tx.Model(&models.Register{}).Where("comp_id = ? AND status IN ?", compID, []int{1, 4}).Where("leader_id = ? OR EXISTS (SELECT 1 FROM reg_members WHERE reg_members.reg_id = registers.id AND reg_members.username = ?)", user.ID, user.Username).Pluck("id", &ids).Error
 		if err != nil {
@@ -520,8 +558,38 @@ func validateAwardRows(tx *gorm.DB, compID uint, input []AwardImportRow, require
 			}
 			r.Existing = count > 0
 		}
+		excludedAwardID := uint(0)
+		if r.Existing {
+			excludedAwardID = r.AwardID
+		}
+		count, err := countOtherAwardMemberships(tx, compID, user.ID, 0, excludedAwardID)
+		if err != nil {
+			return nil, 0, err
+		}
+		if count > 0 {
+			fail("该学生在本赛事已有其他获奖记录")
+			continue
+		}
 	}
 	return result, bad, nil
+}
+
+// countOtherAwardMemberships checks the event-wide student uniqueness rule.
+// excludeMemberID is used when correcting a member; excludeAwardID is used
+// when validating an idempotent import or resubmitting a rejected award.
+func countOtherAwardMemberships(tx *gorm.DB, compID, studentID, excludeMemberID, excludeAwardID uint) (int64, error) {
+	query := tx.Model(&models.AwardMember{}).
+		Joins("JOIN awards ON awards.id = award_members.award_id").
+		Where("awards.comp_id = ? AND awards.delete_time IS NULL AND award_members.student_id = ?", compID, studentID)
+	if excludeMemberID != 0 {
+		query = query.Where("award_members.id <> ?", excludeMemberID)
+	}
+	if excludeAwardID != 0 {
+		query = query.Where("award_members.award_id <> ?", excludeAwardID)
+	}
+	var count int64
+	err := query.Count(&count).Error
+	return count, err
 }
 
 func getAwardSetting(tx *gorm.DB, lock bool) (models.AwardImportSetting, error) {
@@ -582,7 +650,7 @@ func ImportAward(c *gin.Context) {
 			return err
 		}
 		// 提交时再次检查，不能使用预览阶段的权限或报名结果。
-		if !scope.IsSchoolAdmin() && !(scope.IsCollegeAdmin() && scope.ManagedCollegeID != nil && ((comp.CollegeID != nil && *comp.CollegeID == *scope.ManagedCollegeID) || comp.CompLevel == "校级" || comp.CompLevel == "校赛")) && !(scope.RoleCode == "competition_manager" && comp.ManagerID == scope.UserID) {
+		if !scope.IsSchoolAdmin() && !(scope.IsCollegeAdmin() && scope.ManagedCollegeID != nil && (comp.CollegeID == nil || *comp.CollegeID == 0 || *comp.CollegeID == *scope.ManagedCollegeID || comp.CompLevel == "校级" || comp.CompLevel == "校赛")) && !(scope.RoleCode == "competition_manager" && comp.ManagerID == scope.UserID) {
 			return errors.New("赛事权限已变化")
 		}
 		rows, bad, err = validateAwardRows(tx, compID, input, setting.RequireRegistration)
@@ -601,7 +669,11 @@ func ImportAward(c *gin.Context) {
 				if awardID == 0 {
 					month, _ := time.Parse("2006-01", r.AwardMonth)
 					now := time.Now()
-					a := models.Award{MembersMigrated: true, CompID: compID, ProjectName: r.ProjectName, ProjectKey: &key, AwardCategory: r.Category, AwardName: r.AwardName, AwardLevel: r.Category + r.AwardName, AwardTime: &month, Status: "approved", Source: "import", AuditTime: &now, LevelRank: 99, AdvisorInfo: advisorsMirrorJSON(r.Resolved)}
+					advisorInfo := advisorsMirrorJSON(r.Resolved)
+					if advisorInfo == "" {
+						advisorInfo = advisorInfoForImport(r.AdvisorUsernames, r.AdvisorColleges)
+					}
+					a := models.Award{MembersMigrated: true, CompID: compID, ProjectName: r.ProjectName, ProjectKey: &key, AwardCategory: r.Category, AwardName: r.AwardName, AwardLevel: r.Category + r.AwardName, AwardTime: &month, Status: "approved", Source: "import", AuditTime: &now, LevelRank: 99, AdvisorInfo: advisorInfo}
 					if err := tx.Create(&a).Error; err != nil {
 						return err
 					}
@@ -776,12 +848,12 @@ func UpdateAwardMember(c *gin.Context) {
 				}
 				return err
 			}
-			var count int64
-			if err := tx.Model(&models.AwardMember{}).Where("award_id = ? AND student_id = ? AND id <> ?", a.ID, user.ID, m.ID).Count(&count).Error; err != nil {
+			count, err := countOtherAwardMemberships(tx, a.CompID, user.ID, m.ID, 0)
+			if err != nil {
 				return err
 			}
 			if count > 0 {
-				invalid = "该学生已存在，不能覆盖其他填报记录"
+				invalid = "该学生在本赛事已有其他获奖记录，不能覆盖其他填报记录"
 				return errors.New(invalid)
 			}
 			updates["student_id"] = user.ID

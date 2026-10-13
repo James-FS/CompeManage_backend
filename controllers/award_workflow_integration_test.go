@@ -154,10 +154,40 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 		require.EqualValues(t, 1, n)
 	})
 	t.Run("college competition visibility", func(t *testing.T) {
+		unassignedProvince := models.CompDirectory{CompCode: "UNASSIGNED_S", CompName: "未设置学院的省赛", CompLevel: "省级", ManagerID: studentA.ID}
+		unassignedNational := models.CompDirectory{CompCode: "UNASSIGNED_G", CompName: "未设置学院的国赛", CompLevel: "国家级", ManagerID: studentA.ID}
+		require.NoError(t, db.Create(&unassignedProvince).Error)
+		require.NoError(t, db.Create(&unassignedNational).Error)
+
 		w := invoke("GET", "/api/award/list", "college_admin", &ca.ID, studentA.ID, nil, GetAwardCompList)
 		require.Equal(t, 200, w.Code, w.Body.String())
 		require.Contains(t, w.Body.String(), own.CompName)
 		require.NotContains(t, w.Body.String(), other.CompName)
+		require.Contains(t, w.Body.String(), unassignedProvince.CompName)
+		require.Contains(t, w.Body.String(), unassignedNational.CompName)
+		secondCollege := invoke("GET", "/api/award/list", "college_admin", &cb.ID, studentB.ID, nil, GetAwardCompList)
+		require.Equal(t, 200, secondCollege.Code, secondCollege.Body.String())
+		require.Contains(t, secondCollege.Body.String(), unassignedProvince.CompName)
+		require.Contains(t, secondCollege.Body.String(), unassignedNational.CompName)
+		require.NotContains(t, secondCollege.Body.String(), own.CompName)
+		managerList := invoke("GET", "/api/award/list", "competition_manager", nil, studentB.ID, nil, GetAwardCompList)
+		require.Equal(t, 200, managerList.Code, managerList.Body.String())
+		require.Contains(t, managerList.Body.String(), other.CompName)
+		require.NotContains(t, managerList.Body.String(), unassignedProvince.CompName)
+		template := invoke("GET", fmt.Sprintf("/api/award/export-template?comp_id=%d", unassignedProvince.ID), "college_admin", &ca.ID, studentA.ID, nil, ExportAwardTemplate)
+		require.Equal(t, 200, template.Code, template.Body.String())
+		for _, collegeCase := range []struct {
+			collegeID *uint
+			userID    uint
+			row       AwardImportRow
+		}{{&ca.ID, studentA.ID, rowA}, {&cb.ID, studentB.ID, rowB}} {
+			imported := invoke("POST", fmt.Sprintf("/api/award/import?comp_id=%d", unassignedProvince.ID), "college_admin", collegeCase.collegeID, collegeCase.userID, map[string]interface{}{"rows": []AwardImportRow{collegeCase.row}}, ImportAward)
+			require.Equal(t, 200, imported.Code, imported.Body.String())
+		}
+		compAwards := invoke("GET", fmt.Sprintf("/comp-awards?comp_id=%d", unassignedProvince.ID), "college_admin", &cb.ID, studentB.ID, nil, GetCompAwards)
+		require.Equal(t, 200, compAwards.Code, compAwards.Body.String())
+		require.Contains(t, compAwards.Body.String(), rowA.ProjectName)
+
 		w = invoke("POST", fmt.Sprintf("/api/award/import?comp_id=%d", other.ID), "college_admin", &ca.ID, studentA.ID, map[string]interface{}{"rows": []AwardImportRow{rowA}}, ImportAward)
 		require.Equal(t, 403, w.Code)
 	})
@@ -222,11 +252,83 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 		require.NoError(t, db.Where("award_id = ?", supplement.ID).Find(&members).Error)
 		require.Len(t, members, 1)
 		require.Equal(t, studentB.ID, members[0].StudentID)
+		body["participation_type"] = "team"
+		body["award_category"] = "省级"
+		body["award_name"] = "二等奖"
+		body["award_date"] = "2026-10-12"
+		body["advisors"] = []map[string]string{{"name": "教师甲", "college": ca.Name}, {"name": "教师乙", "college": cb.Name}}
+		body["remark"] = "团队项目说明"
+		body["members"] = []map[string]interface{}{
+			{"name": studentA.Realname, "student_id": studentA.Username, "college": studentA.College, "phone": "13800000001", "email": "a@example.com", "is_leader": true},
+			{"name": studentB.Realname, "student_id": studentB.Username, "college": studentB.College, "phone": "13800000002", "email": "b@example.com", "is_leader": false},
+		}
+		require.NoError(t, db.Model(&supplement).Update("status", "rejected").Error)
+		w = invoke("POST", "/supplement", "student", nil, studentB.ID, body, SubmitStudentAwardSupplement)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		require.NoError(t, db.Preload("Members").First(&supplement, supplement.ID).Error)
+		require.Equal(t, "省级二等奖", supplement.AwardLevel)
+		require.Equal(t, "team", supplement.ParticipationType)
+		require.Equal(t, "团队项目说明", supplement.Remark)
+		require.Contains(t, supplement.AdvisorInfo, "教师乙")
+		require.Len(t, supplement.Members, 2)
+		w = invoke("GET", fmt.Sprintf("/comp-awards?comp_id=%d", other.ID), "school_admin", nil, studentA.ID, nil, GetCompAwards)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		require.NotContains(t, w.Body.String(), supplement.ProjectName)
+		detail := invoke("GET", "/detail", "competition_manager", nil, studentB.ID, nil, func(c *gin.Context) {
+			c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(supplement.ID)}}
+			GetAwardAuditDetail(c)
+		})
+		require.Equal(t, 200, detail.Code, detail.Body.String())
+		require.Contains(t, detail.Body.String(), `"student_name":"学生甲"`)
+		require.Contains(t, detail.Body.String(), "13800000001")
+		require.Contains(t, detail.Body.String(), "教师甲")
+		w = invoke("PUT", "/pass", "competition_manager", nil, studentB.ID, nil, func(c *gin.Context) {
+			c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(supplement.ID)}}
+			PassAwardAudit(c)
+		})
+		require.Equal(t, 200, w.Code, w.Body.String())
+		w = invoke("GET", fmt.Sprintf("/comp-awards?comp_id=%d", other.ID), "school_admin", nil, studentA.ID, nil, GetCompAwards)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		require.Contains(t, w.Body.String(), supplement.ProjectName)
+		require.Contains(t, w.Body.String(), "团队项目说明")
+		w = invoke("GET", "/student/my-awards", "student", nil, studentB.ID, nil, GetStudentMyAwardList)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		require.Contains(t, w.Body.String(), "13800000002")
+		require.Contains(t, w.Body.String(), "教师乙")
+
+	})
+	t.Run("award audits stay within managed competitions including batches", func(t *testing.T) {
+		mine := models.Award{CompID: own.ID, ProjectName: "我的申报", Status: "draft", AdvisorInfo: "[]"}
+		foreign := models.Award{CompID: other.ID, ProjectName: "他人申报", Status: "draft", AdvisorInfo: "[]"}
+		require.NoError(t, db.Create(&mine).Error)
+		require.NoError(t, db.Create(&foreign).Error)
+		for _, handler := range []gin.HandlerFunc{PassAwardAudit, RejectAwardAudit} {
+			w := invoke("PUT", "/audit", "competition_manager", nil, studentA.ID, map[string]interface{}{"reason": "材料不全"}, func(c *gin.Context) {
+				c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(foreign.ID)}}
+				handler(c)
+			})
+			require.Equal(t, 403, w.Code, w.Body.String())
+		}
+		for _, handler := range []gin.HandlerFunc{BatchPassAwardAudit, BatchRejectAwardAudit} {
+			w := invoke("PUT", "/batch", "competition_manager", nil, studentA.ID, map[string]interface{}{"ids": []uint{mine.ID, foreign.ID}, "reason": "材料不全"}, handler)
+			require.Equal(t, 403, w.Code, w.Body.String())
+			require.NoError(t, db.First(&mine, mine.ID).Error)
+			require.Equal(t, "draft", mine.Status)
+			require.NoError(t, db.First(&foreign, foreign.ID).Error)
+			require.Equal(t, "draft", foreign.Status)
+		}
+		w := invoke("PUT", "/batch", "competition_manager", nil, studentA.ID, map[string]interface{}{"ids": []uint{mine.ID}}, BatchPassAwardAudit)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		w = invoke("PUT", "/audit", "competition_manager", nil, studentB.ID, map[string]interface{}{"reason": "补交证明"}, func(c *gin.Context) {
+			c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(foreign.ID)}}
+			RejectAwardAudit(c)
+		})
+		require.Equal(t, 200, w.Code, w.Body.String())
 	})
 	t.Run("legacy migration idempotent and no inferred ownership", func(t *testing.T) {
 		var reg models.Register
 		require.NoError(t, db.First(&reg).Error)
-		legacy := models.Award{CompID: school.ID, RegID: reg.ID, Status: "approved", AwardName: "二等奖"}
+		legacy := models.Award{CompID: school.ID, RegID: reg.ID, Status: "approved", AwardName: "二等奖", AdvisorInfo: "[]"}
 		require.NoError(t, db.Create(&legacy).Error)
 		require.NoError(t, database.BackfillAwardMembers(db))
 		require.NoError(t, database.BackfillAwardMembers(db))
@@ -235,4 +337,74 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 		require.Len(t, members, 2)
 		require.Nil(t, members[0].SubmittedCollegeID)
 	})
+
+	t.Run("student declarations separated from approved awards and real registrations", func(t *testing.T) {
+		pending := models.Award{CompID: other.ID, ProjectName: "待审核申报项目", Status: "draft", Source: "supplement", AdvisorInfo: "[]", MembersMigrated: true}
+		require.NoError(t, db.Create(&pending).Error)
+		require.NoError(t, db.Create(&models.AwardMember{AwardID: pending.ID, StudentID: studentB.ID, Name: studentB.Realname, StudentNumber: studentB.Username, College: studentB.College}).Error)
+		w := invoke("GET", "/student/my-awards?source=supplement", "student", nil, studentB.ID, nil, GetStudentMyAwardList)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		var result struct {
+			Data struct {
+				List  []models.Award `json:"list"`
+				Total int            `json:"total"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		require.Equal(t, 2, result.Data.Total)
+		for _, award := range result.Data.List {
+			require.Equal(t, "supplement", award.Source)
+		}
+		require.Contains(t, w.Body.String(), pending.ProjectName)
+		w = invoke("GET", "/student/my-awards?status=approved", "student", nil, studentB.ID, nil, GetStudentMyAwardList)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+		for _, award := range result.Data.List {
+			require.Equal(t, "approved", award.Status)
+		}
+		require.NotContains(t, w.Body.String(), pending.ProjectName)
+		w = invoke("GET", "/my-reg?registration_only=true", "student", nil, studentB.ID, nil, GetMyRegList)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		require.Contains(t, w.Body.String(), school.CompName)
+		require.NotContains(t, w.Body.String(), other.CompName)
+	})
+	t.Run("registration participant modes and member resubmission", func(t *testing.T) {
+		comp := models.CompDirectory{CompCode: "REGMODE", CompName: "报名参赛方式测试", ManagerID: studentB.ID}
+		require.NoError(t, db.Create(&comp).Error)
+		detail := models.CompDetail{CompStartTime: time.Now(), CompEndTime: time.Now(), SubmitStartTime: time.Now(), SubmitEndTime: time.Now(), ReviewStartTime: time.Now(), ReviewEndTime: time.Now(), Track: "[]", AwardHierarchy: "[]", CompID: comp.ID, ParticipantType: 2, MinTeamMember: 1, MaxTeamMember: 5, RegStartTime: time.Now().Add(-time.Hour), RegEndTime: time.Now().Add(time.Hour), NeedRegAudit: 1}
+		require.NoError(t, db.Create(&detail).Error)
+		leader := map[string]interface{}{"name": studentB.Realname, "stuID": studentB.Username, "phone": "13800000001", "email": "b@example.com", "college": studentB.College}
+		member := map[string]interface{}{"name": studentA.Realname, "stuID": studentA.Username, "phone": "13800000002", "email": "a@example.com", "college": studentA.College}
+		body := map[string]interface{}{"comp_id": comp.ID, "team_name": "团队参赛项目", "participation_type": "team", "leader": leader, "members": []interface{}{member}}
+		w := invoke("POST", "/reg/submit", "student", nil, studentA.ID, body, SubmitRegistration)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		var reg models.Register
+		require.NoError(t, db.Where("comp_id = ?", comp.ID).Preload("Members").First(&reg).Error)
+		require.Equal(t, studentB.ID, reg.LeaderID)
+		require.Len(t, reg.Members, 2)
+		require.NoError(t, db.Model(&models.Register{}).Where("id = ?", reg.ID).Update("status", 2).Error)
+		body["reg_id"] = reg.ID
+		body["team_name"] = "普通成员重新提交项目"
+		body["leader"] = member
+		body["members"] = []interface{}{leader}
+		w = invoke("PUT", "/reg/resubmit", "student", nil, studentA.ID, body, ResubmitRegistration)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		var updated models.Register
+		require.NoError(t, db.Preload("Members").First(&updated, reg.ID).Error)
+		require.Equal(t, studentA.ID, updated.LeaderID)
+		require.Equal(t, "普通成员重新提交项目", updated.TeamName)
+		require.Len(t, updated.Members, 2)
+		body["participation_type"] = "individual"
+		body["members"] = []interface{}{}
+		require.NoError(t, db.Model(&models.CompDetail{}).Where("id = ?", detail.ID).Update("min_team_member", 2).Error)
+		w = invoke("POST", "/reg/submit", "student", nil, studentA.ID, body, SubmitRegistration)
+		require.Equal(t, 400, w.Code, w.Body.String())
+		require.Contains(t, w.Body.String(), "不允许个人参赛")
+		require.NoError(t, db.Model(&models.CompDetail{}).Where("id = ?", detail.ID).Updates(map[string]interface{}{"participant_type": 1, "min_team_member": 1, "max_team_member": 1}).Error)
+		body["leader"] = leader
+		w = invoke("POST", "/reg/submit", "student", nil, studentA.ID, body, SubmitRegistration)
+		require.Equal(t, 400, w.Code, w.Body.String())
+		require.Contains(t, w.Body.String(), "只能填写本人信息")
+	})
+
 }
