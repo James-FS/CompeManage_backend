@@ -483,6 +483,7 @@ func TestUpdateCompetition_CollegeNotFound(t *testing.T) {
 	// 设置 school_admin 使 scope 短路（真实请求由 AuthRequired 写入）。
 	c.Set("role_code", "school_admin")
 	c.Set("user_id", uint(1))
+	c.Set("permission_codes", []string{"comp:update"})
 	UpdateCompetition(c)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)

@@ -92,6 +92,9 @@ func CreateDeclare(c *gin.Context) {
 
 	var promotions []RolePromotion
 	if err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		if err := validateCompetitionManager(c, tx, req.ManagerID, &req.CollegeID); err != nil {
+			return err
+		}
 		if err := tx.Create(&declaration).Error; err != nil {
 			return err
 		}
@@ -109,7 +112,7 @@ func CreateDeclare(c *gin.Context) {
 		}
 		return nil
 	}); err != nil {
-		utils.InternalServerError(c, "创建申报失败", err)
+		respondCompetitionMutationError(c, "创建申报失败", err)
 		return
 	}
 
@@ -215,6 +218,16 @@ func UpdateDeclare(c *gin.Context) {
 	var promotions []RolePromotion
 	managerChanged := req.ManagerID != 0 && req.ManagerID != declaration.ManagerID
 	err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		managerID, collegeID := declaration.ManagerID, declaration.CollegeID
+		if req.ManagerID != 0 {
+			managerID = req.ManagerID
+		}
+		if req.CollegeID != 0 {
+			collegeID = req.CollegeID
+		}
+		if err := validateCompetitionManager(c, tx, managerID, &collegeID); err != nil {
+			return err
+		}
 		if err := tx.Model(&declaration).Updates(updates).Error; err != nil {
 			return err
 		}
@@ -234,7 +247,7 @@ func UpdateDeclare(c *gin.Context) {
 		return nil
 	})
 	if err != nil {
-		utils.InternalServerError(c, "更新失败", err)
+		respondCompetitionMutationError(c, "更新失败", err)
 		return
 	}
 

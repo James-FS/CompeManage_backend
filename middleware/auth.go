@@ -78,6 +78,11 @@ func AuthRequired() gin.HandlerFunc {
 
 // RequirePermission 按当前数据库角色和权限版本校验，不读取旧的用户权限缓存。
 func RequirePermission(permCode string) gin.HandlerFunc {
+	return RequireAnyPermission(permCode)
+}
+
+// RequireAnyPermission checks endpoint permissions; handlers still enforce resource scope.
+func RequireAnyPermission(permCodes ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if _, exists := c.Get("user_id"); !exists {
 			c.AbortWithStatusJSON(401, gin.H{"msg": "未登录"})
@@ -121,14 +126,36 @@ func RequirePermission(permCode string) gin.HandlerFunc {
 				cancel()
 			}
 		}
+		c.Set("permission_codes", codes)
 		for _, code := range codes {
-			if code == permCode {
-				c.Next()
-				return
+			for _, permCode := range permCodes {
+				if code == permCode {
+					c.Next()
+					return
+				}
 			}
 		}
 		c.AbortWithStatusJSON(403, gin.H{"msg": "权限不足，禁止访问"})
 	}
+}
+
+// UserPermissionCodes loads permissions once per request, including read endpoints.
+func UserPermissionCodes(c *gin.Context) ([]string, error) {
+	if value, ok := c.Get("permission_codes"); ok {
+		return value.([]string), nil
+	}
+	roleID, _ := c.Get("role_id")
+	version, _ := c.Get("permission_version")
+	var codes []string
+	err := database.DB.WithContext(c.Request.Context()).Table("permissions").
+		Joins("JOIN role_permissions ON role_permissions.permission_id = permissions.id").
+		Joins("JOIN roles ON roles.id = role_permissions.role_id").
+		Where("roles.id = ? AND roles.permission_version = ? AND roles.delete_time IS NULL", roleID, version).
+		Pluck("permissions.code", &codes).Error
+	if err == nil {
+		c.Set("permission_codes", codes)
+	}
+	return codes, err
 }
 
 // Redis 是可选加速层，避免故障时拖慢每次权限校验。

@@ -32,6 +32,8 @@ type SummaryListItem struct {
 	CollegeName   string     `json:"college_name"`
 	ManagerName   string     `json:"manager"`
 	EndTime       *time.Time `json:"end_time"`
+	ManagerID     uint       `json:"-"`
+	CollegeID     *uint      `json:"-"`
 	SummaryStatus int8       `json:"summary_status"`
 }
 
@@ -109,6 +111,8 @@ func GetSummaryList(c *gin.Context) {
 	var list []SummaryListItem
 	if err := query.Select(`
 		comp_directories.id as id,
+		comp_directories.manager_id,
+		comp_directories.college_id,
 		comp_directories.comp_name,
 		comp_directories.organizer,
 		comp_directories.undertaker,
@@ -126,11 +130,19 @@ func GetSummaryList(c *gin.Context) {
 
 	respList := make([]gin.H, 0, len(list))
 	for _, item := range list {
+		caps, ok := competitionCapabilities(c, models.CompDirectory{ID: item.ID, ManagerID: item.ManagerID, CollegeID: item.CollegeID, Status: 2})
+		if !ok {
+			return
+		}
+		if caps != nil && item.SummaryStatus == 1 {
+			caps["can_edit_summary"] = false
+		}
 		endTimeStr := ""
 		if item.EndTime != nil && !item.EndTime.IsZero() {
 			endTimeStr = item.EndTime.Format("2006-01-02")
 		}
 		respList = append(respList, gin.H{
+			"capabilities":   caps,
 			"id":             item.ID,
 			"comp_name":      item.CompName,
 			"organizer":      item.Organizer,
@@ -296,7 +308,15 @@ func GetSummaryDetail(c *gin.Context) {
 		summaryContent = summary.SummaryContent
 	}
 
+	caps, ok := competitionCapabilities(c, comp)
+	if !ok {
+		return
+	}
+	if caps != nil && status == 1 {
+		caps["can_edit_summary"] = false
+	}
 	utils.Success(c, gin.H{
+		"capabilities":      caps,
 		"comp_id":           comp.ID,
 		"comp_name":         comp.CompName,
 		"organizer":         comp.Organizer,
@@ -356,6 +376,9 @@ func SaveSummary(c *gin.Context) {
 
 	if !canAccessCompetition(scope, comp) {
 		utils.Forbidden(c, "无权操作该赛事总结")
+		return
+	}
+	if !requireCompetitionWrite(c, scope, comp, "summary:edit") {
 		return
 	}
 	if comp.Status != 2 {

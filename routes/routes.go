@@ -124,7 +124,7 @@ func SetupRoutes(r *gin.Engine) {
 			middleware.RequirePermission("comp:detail"),
 			controllers.GetCompetitionDetail)
 		comp.PUT("/:id",
-			middleware.RequirePermission("comp:update"),
+			middleware.RequireAnyPermission("comp:update", "comp:update:own"),
 			controllers.UpdateCompetition)
 	}
 
@@ -178,7 +178,7 @@ func SetupRoutes(r *gin.Engine) {
 	reg := r.Group("/api/reg", middleware.AuthRequired())
 	{
 		reg.POST("/config",
-			middleware.RequirePermission("reg:config:edit"),
+			middleware.RequireAnyPermission("reg:config:edit", "reg:config:edit:own"),
 			controllers.SaveRegConfig)
 		reg.GET("/config/get",
 			middleware.RequirePermission("reg:config:view"),
@@ -279,7 +279,7 @@ func SetupRoutes(r *gin.Engine) {
 			controllers.GetSummaryDetail,
 		)
 		summary.POST("/:id",
-			middleware.RequirePermission("summary:edit"),
+			middleware.RequireAnyPermission("summary:edit", "summary:edit:own"),
 			controllers.SaveSummary,
 		)
 	}

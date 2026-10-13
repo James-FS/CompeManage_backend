@@ -348,6 +348,7 @@ func ensureTestUsers() {
 	testUsers := []testUser{
 		{User: models.User{Username: "900001", Realname: "测试校管理员", Password: hashPassword("Pw@yy03"), College: "教务处", Grade: "教职员工", Major: "管理", IdentityType: "staff"}, RoleCode: "school_admin"},
 		{User: models.User{Username: "900006", Realname: "测试学生", Password: hashPassword("Pw@yy03"), College: "计算机科学与网络工程学院", Grade: "2024级", Major: "计算机科学与技术", IdentityType: "student"}, RoleCode: "student"},
+		{User: models.User{Username: "900007", Realname: "测试教师", Password: hashPassword("Pw@yy03"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "计算机科学与技术", IdentityType: "staff"}, RoleCode: "teacher"},
 	}
 
 	for _, tu := range testUsers {
@@ -419,6 +420,7 @@ func InitData() {
 		log.Println("数据库已有数据，跳过初始化...")
 		ensureNoticeManagePermissions()
 		ensureCompetitionCorePermissions()
+		ensureCollegeManagerPermissions()
 		ensureAwardStudentPermissions()
 		ensureStudentBrowsePermissions()
 		ensureDeclarePermissions()
@@ -711,6 +713,7 @@ func InitData() {
 
 	ensureNoticeManagePermissions()
 	ensureCompetitionCorePermissions()
+	ensureCollegeManagerPermissions()
 	ensureAwardStudentPermissions()
 	ensureStudentBrowsePermissions()
 	ensureUserManagePermissions()

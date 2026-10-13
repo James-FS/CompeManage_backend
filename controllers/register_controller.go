@@ -173,6 +173,9 @@ func SaveRegConfig(c *gin.Context) {
 		return
 	}
 
+	if !requireCompetitionWrite(c, scope, comp, "reg:config:edit") {
+		return
+	}
 	gradeJson, err := json.Marshal(req.GradeRequirement)
 	if err != nil {
 		utils.InternalServerError(c, "年级数据处理失败", err)
@@ -343,8 +346,12 @@ func GetRegConfig(c *gin.Context) {
 		return
 	}
 
+	caps, ok := competitionCapabilities(c, comp)
+	if !ok {
+		return
+	}
 	if comp.Detail.ID == 0 {
-		utils.Success(c, gin.H{"comp_name": comp.CompName})
+		utils.Success(c, gin.H{"comp_name": comp.CompName, "capabilities": caps})
 		return
 	}
 
@@ -416,6 +423,7 @@ func GetRegConfig(c *gin.Context) {
 
 	utils.Success(c, gin.H{
 		"comp_name":         comp.CompName,
+		"capabilities":      caps,
 		"participant_type":  detail.ParticipantType,
 		"min_team_member":   detail.MinTeamMember,
 		"max_team_member":   detail.MaxTeamMember,
