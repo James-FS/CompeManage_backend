@@ -94,6 +94,23 @@ func awardExportAdvisors(awardJSON, regJSON string) (names, collegesJoined strin
 	return strings.Join(nameList, " "), collegesJoined
 }
 
+// awardExportAdvisorsFromRows 从多行指导教师数据拼接附件1两列：姓名按序、学院按出现顺序去重。
+func awardExportAdvisorsFromRows(rows []models.AwardAdvisor) (names, collegesJoined string) {
+	nameList := []string{}
+	seen := map[string]bool{}
+	for _, row := range rows {
+		if name := strings.TrimSpace(row.Name); name != "" {
+			nameList = append(nameList, name)
+		}
+		college := strings.TrimSpace(row.College)
+		if college != "" && !seen[college] {
+			seen[college] = true
+			collegesJoined = strings.TrimSpace(strings.Join([]string{collegesJoined, college}, " "))
+		}
+	}
+	return strings.Join(nameList, " "), collegesJoined
+}
+
 // 历史学生补录仅保存合并等级；只补全其明确类别，不修改原数据或换算奖项等级。
 func awardExportCategory(category, level string) string {
 	for _, value := range []string{strings.TrimSpace(category), strings.TrimSpace(level)} {
@@ -132,8 +149,21 @@ func awardExportScope(c *gin.Context) (*UserAccessScope, bool) {
 	if !ok {
 		return nil, false
 	}
-	if !scope.IsSchoolAdmin() && !scope.IsCollegeAdmin() {
-		utils.Forbidden(c, "仅支持校级或院级管理员导出")
+	switch {
+	case scope.IsSchoolAdmin(), scope.IsCollegeAdmin():
+		// 校级导全校，院级按提交学院过滤（见导出查询）
+	case scope.RoleCode == "competition_manager":
+		// 赛事负责人：用于线下盖章上报，仅导出本人所属学院的数据
+		var college string
+		if err := database.DB.WithContext(c.Request.Context()).Table("users").
+			Where("id = ? AND delete_time IS NULL", scope.UserID).
+			Pluck("college", &college).Error; err != nil || college == "" {
+			utils.Forbidden(c, "赛事负责人未配置所属学院，无法导出")
+			return nil, false
+		}
+		scope.College = college
+	default:
+		utils.Forbidden(c, "仅校级/院级管理员或赛事负责人可导出")
 		return nil, false
 	}
 	return scope, true
@@ -159,12 +189,33 @@ func awardExportYear(c *gin.Context) (string, bool) {
 	return year, true
 }
 
+// awardExportUnit 导出人所属单位（附件"单位名称（公章）"自动填写）：
+// 赛事负责人复用 scope.College；其余角色查本人 users.college，
+// 院级管理员为空时回落其管理学院名称。
+func awardExportUnit(c *gin.Context, scope *UserAccessScope) string {
+	unit := strings.TrimSpace(scope.College)
+	if unit == "" {
+		_ = database.DB.WithContext(c.Request.Context()).Table("users").
+			Where("id = ? AND delete_time IS NULL", scope.UserID).
+			Pluck("college", &unit).Error
+		unit = strings.TrimSpace(unit)
+	}
+	if unit == "" && scope.ManagedCollegeID != nil {
+		var college models.College
+		if err := database.DB.WithContext(c.Request.Context()).
+			First(&college, *scope.ManagedCollegeID).Error; err == nil {
+			unit = college.Name
+		}
+	}
+	return unit
+}
+
 func awardExportFilterStatus() []string {
 	return []string{awardExportApprovedStatus, awardExportLegacyStatus}
 }
 
-func awardExportWorkbook(c *gin.Context, kind, year string, rowsByYear map[int][][]interface{}) {
-	f, err := buildAwardExportWorkbook(kind, year, rowsByYear)
+func awardExportWorkbook(c *gin.Context, kind, year, unit string, rowsByYear map[int][][]interface{}) {
+	f, err := buildAwardExportWorkbook(kind, year, unit, rowsByYear)
 	if err != nil {
 		utils.InternalServerError(c, "生成附件失败", err)
 		return
@@ -198,6 +249,7 @@ func ExportAwardProjects(c *gin.Context) {
 	if !ok {
 		return
 	}
+	unit := awardExportUnit(c, scope)
 	q := database.DB.WithContext(c.Request.Context()).Table("awards").
 		Select("awards.id, awards.project_name, awards.award_level, awards.award_category, awards.award_name, awards.award_time, awards.advisor_info, r.advisor_info AS reg_advisor_info, cd.comp_name, cd.organizer, cd.year AS competition_year, cdp.participant_type").
 		Joins("JOIN comp_directories cd ON cd.id = awards.comp_id AND cd.delete_time IS NULL").
@@ -208,7 +260,9 @@ func ExportAwardProjects(c *gin.Context) {
 	if year != "" {
 		q = q.Where("cd.year = ?", year)
 	}
-	if !scope.IsSchoolAdmin() {
+	if scope.RoleCode == "competition_manager" {
+		q = q.Where("EXISTS (SELECT 1 FROM award_members am WHERE am.award_id = awards.id AND am.delete_time IS NULL AND am.college = ?)", scope.College)
+	} else if !scope.IsSchoolAdmin() {
 		q = q.Where("EXISTS (SELECT 1 FROM award_members am WHERE am.award_id = awards.id AND am.submitted_college_id = ? AND am.delete_time IS NULL)", *scope.ManagedCollegeID)
 	}
 	var projects []struct {
@@ -231,6 +285,21 @@ func ExportAwardProjects(c *gin.Context) {
 			ids = append(ids, p.ID)
 		}
 	}
+	var advisorRows []models.AwardAdvisor
+	if len(ids) > 0 {
+		if err := database.DB.WithContext(c.Request.Context()).
+			Where("award_id IN ?", ids).
+			Order("award_id ASC, sort ASC, id ASC").
+			Find(&advisorRows).Error; err != nil {
+			utils.InternalServerError(c, "查询指导教师失败", err)
+			return
+		}
+	}
+	advisorsByAward := map[uint][]models.AwardAdvisor{}
+	for _, adv := range advisorRows {
+		advisorsByAward[adv.AwardID] = append(advisorsByAward[adv.AwardID], adv)
+	}
+
 	var members []awardExportMember
 	if len(ids) > 0 {
 		if err := database.DB.WithContext(c.Request.Context()).Table("award_members").Select("award_id, name, college").Where("award_id IN ? AND delete_time IS NULL", ids).Order("id ASC").Find(&members).Error; err != nil {
@@ -253,10 +322,13 @@ func ExportAwardProjects(c *gin.Context) {
 		if p.AwardTime != nil {
 			month = p.AwardTime.Format("2006-01")
 		}
-		advNames, advColleges := awardExportAdvisors(p.AdvisorInfo, p.RegAdvisorInfo)
+		advNames, advColleges := awardExportAdvisorsFromRows(advisorsByAward[p.ID])
+		if advNames == "" {
+			advNames, advColleges = awardExportAdvisors(p.AdvisorInfo, p.RegAdvisorInfo)
+		}
 		rows[p.CompetitionYear] = append(rows[p.CompetitionYear], []interface{}{len(rows[p.CompetitionYear]) + 1, p.CompName, p.ProjectName, p.Organizer, category + awardExportGrade(p.AwardName, p.AwardLevel), names, colleges, advNames, advColleges, month, awardParticipantLabel(p.ParticipantType)})
 	}
-	awardExportWorkbook(c, "projects", year, rows)
+	awardExportWorkbook(c, "projects", year, unit, rows)
 }
 
 // ExportAwardStudents 导出附件2：按学生一行，列顺序与学校模板保持一致。
@@ -269,6 +341,7 @@ func ExportAwardStudents(c *gin.Context) {
 	if !ok {
 		return
 	}
+	unit := awardExportUnit(c, scope)
 	q := database.DB.WithContext(c.Request.Context()).Table("award_members am").
 		Select("am.student_number, am.name, am.college, am.major, am.remark, a.project_name, a.award_level, a.award_category, a.award_name, a.award_time, cd.comp_name, cd.undertaker, cd.year AS competition_year").
 		Joins("JOIN awards a ON a.id = am.award_id AND a.delete_time IS NULL").
@@ -278,7 +351,9 @@ func ExportAwardStudents(c *gin.Context) {
 	if year != "" {
 		q = q.Where("cd.year = ?", year)
 	}
-	if !scope.IsSchoolAdmin() {
+	if scope.RoleCode == "competition_manager" {
+		q = q.Where("am.college = ?", scope.College)
+	} else if !scope.IsSchoolAdmin() {
 		q = q.Where("am.submitted_college_id = ?", *scope.ManagedCollegeID)
 	}
 	var list []struct {
@@ -303,5 +378,5 @@ func ExportAwardStudents(c *gin.Context) {
 		}
 		rows[s.CompetitionYear] = append(rows[s.CompetitionYear], []interface{}{len(rows[s.CompetitionYear]) + 1, s.Undertaker, s.StudentNumber, s.Name, s.College, s.Major, s.CompName, s.ProjectName, month, category, awardExportGrade(s.AwardName, s.AwardLevel), s.Remark})
 	}
-	awardExportWorkbook(c, "students", year, rows)
+	awardExportWorkbook(c, "students", year, unit, rows)
 }

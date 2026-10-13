@@ -215,6 +215,29 @@ func ensureDeclarePermissions() {
 	})
 }
 
+// ensureUserPickerPermissions 补齐"选取用户"入口权限（存量库与全新库同口径）：
+// reg:user:list 用于报名选队员与指导教师候选弹窗（/api/reg/user/list）。
+// 全量初始化只授予了学生角色，管理员侧团队编辑选择指导教师会 403，此处幂等补齐。
+func ensureUserPickerPermissions() {
+	// 存量库可能连权限行都没有（reg:user:list 后期才加入全量种子），先按目录补齐行
+	var regSubmitDir models.Permission
+	if err := DB.Where("code = ?", "reg:submit").First(&regSubmitDir).Error; err == nil {
+		var existed models.Permission
+		if DB.Where("code = ?", "reg:user:list").First(&existed).Error != nil {
+			if err := DB.Create(&models.Permission{
+				Name: "查看学生列表", Code: "reg:user:list", Type: 3,
+				ParentID: regSubmitDir.ID, Description: "选取学生填入报名信息",
+			}).Error; err != nil {
+				log.Printf("补齐权限失败(reg:user:list): %v", err)
+			}
+		}
+	}
+	grantRolePermissionsByCode("school_admin", []string{"reg:user:list"})
+	grantRolePermissionsByCode("college_admin", []string{"reg:user:list"})
+	grantRolePermissionsByCode("competition_manager", []string{"reg:user:list"})
+	grantRolePermissionsByCode("student", []string{"reg:user:list"})
+}
+
 func ensureReviewPermissions() {
 	var reviewParent models.Permission
 	if err := DB.Where("code = ?", "review").First(&reviewParent).Error; err != nil {
@@ -399,6 +422,7 @@ func InitData() {
 		ensureAwardStudentPermissions()
 		ensureStudentBrowsePermissions()
 		ensureDeclarePermissions()
+		ensureUserPickerPermissions()
 		ensureReviewPermissions()
 		ensureUserManagePermissions()
 		ensureExpertUsers()
@@ -690,6 +714,7 @@ func InitData() {
 	ensureAwardStudentPermissions()
 	ensureStudentBrowsePermissions()
 	ensureUserManagePermissions()
+	ensureUserPickerPermissions()
 
 	// --- G. 访客：无特殊权限 ---
 	// 不分配任何权限

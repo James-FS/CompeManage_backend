@@ -15,6 +15,7 @@ type UserAccessScope struct {
 	UserID           uint
 	RoleCode         string
 	ManagedCollegeID *uint
+	College          string // 本人所属学院(users.college)，赛事负责人导出范围用；JWT快路径按需回查
 }
 
 func GetUserAccessScope(ctx context.Context, userID uint) (*UserAccessScope, error) {

@@ -31,7 +31,7 @@ func awardExportTemplateLayout(kind string) awardExportLayout {
 }
 
 // 一份附件按赛事年份分工作表；获奖时间仅显示原获奖月份，不用于选择赛事年份。
-func buildAwardExportWorkbook(kind, selectedYear string, rowsByYear map[int][][]interface{}) (*excelize.File, error) {
+func buildAwardExportWorkbook(kind, selectedYear, unit string, rowsByYear map[int][][]interface{}) (*excelize.File, error) {
 	data, err := awardExportTemplates.ReadFile("templates/award_" + kind + ".xlsx")
 	if err != nil {
 		return nil, err
@@ -87,7 +87,7 @@ func buildAwardExportWorkbook(kind, selectedYear string, rowsByYear map[int][][]
 			}
 			sheet = name
 		}
-		if err := fillAwardExportSheet(f, sheet, layout, year, rowsByYear[year]); err != nil {
+		if err := fillAwardExportSheet(f, sheet, layout, year, unit, rowsByYear[year]); err != nil {
 			return fail(err)
 		}
 	}
@@ -95,7 +95,7 @@ func buildAwardExportWorkbook(kind, selectedYear string, rowsByYear map[int][][]
 	return f, nil
 }
 
-func fillAwardExportSheet(f *excelize.File, sheet string, layout awardExportLayout, year int, rows [][]interface{}) error {
+func fillAwardExportSheet(f *excelize.File, sheet string, layout awardExportLayout, year int, unit string, rows [][]interface{}) error {
 	title, err := f.GetCellValue(sheet, "A1")
 	if err != nil {
 		return err
@@ -107,6 +107,10 @@ func fillAwardExportSheet(f *excelize.File, sheet string, layout awardExportLayo
 		yearLabel = "未设置赛事年份"
 	}
 	if err := f.SetCellStr(sheet, "A1", strings.ReplaceAll(title, "{{year}}年", yearLabel)); err != nil {
+		return err
+	}
+	// "单位名称（公章）"自动填写导出人所属单位（附件2官方版式无此行时跳过）
+	if err := fillAwardUnitLine(f, sheet, unit); err != nil {
 		return err
 	}
 	// 先读取数据行样式；没有数据时，模板中的所有数据行都会被删除。
@@ -194,4 +198,29 @@ func awardExportRowHeight(row []interface{}, widths []float64, minimum float64) 
 		}
 	}
 	return math.Min(409.5, math.Max(minimum, float64(lines)*13+8))
+}
+
+// fillAwardUnitLine 在前几行查找"单位名称（公章）"单元格，把导出人单位填在冒号后，
+// 保留原有空格与签名区文本；未找到单位行（如附件2官方版式）则不处理。
+func fillAwardUnitLine(f *excelize.File, sheet, unit string) error {
+	if strings.TrimSpace(unit) == "" {
+		return nil
+	}
+	for _, addr := range []string{"A1", "A2", "A3"} {
+		value, err := f.GetCellValue(sheet, addr)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(value, "单位名称（公章）") {
+			continue
+		}
+		const label = "单位名称（公章）"
+		idx := strings.Index(value, label)
+		rest := value[idx+len(label):]
+		if strings.HasPrefix(rest, "：") || strings.HasPrefix(rest, ":") {
+			rest = rest[1:]
+		}
+		return f.SetCellStr(sheet, addr, label+"："+strings.TrimSpace(unit)+rest)
+	}
+	return nil
 }
