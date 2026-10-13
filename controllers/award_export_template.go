@@ -25,7 +25,7 @@ type awardExportLayout struct {
 
 func awardExportTemplateLayout(kind string) awardExportLayout {
 	if kind == "projects" {
-		return awardExportLayout{"获奖项目", 4, 8, 18, 3, 11, 56.25}
+		return awardExportLayout{"获奖项目", 4, 8, 18, 3, 12, 56.25}
 	}
 	return awardExportLayout{"获奖学生", 3, 18, 25, 2, 12, 33}
 }
@@ -103,7 +103,7 @@ func fillAwardExportSheet(f *excelize.File, sheet string, layout awardExportLayo
 	yearLabel := "全部赛事年份"
 	if year > 0 {
 		yearLabel = fmt.Sprintf("%d年", year)
-	} else if len(rows) > 0 {
+	} else if year == 0 && len(rows) > 0 {
 		yearLabel = "未设置赛事年份"
 	}
 	if err := f.SetCellStr(sheet, "A1", strings.ReplaceAll(title, "{{year}}年", yearLabel)); err != nil {

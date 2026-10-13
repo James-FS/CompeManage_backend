@@ -239,6 +239,9 @@ func SetupRoutes(r *gin.Engine) {
 		award.GET("/export/students",
 			middleware.RequirePermission("award:list"),
 			controllers.ExportAwardStudents)
+		award.GET("/export/report",
+			middleware.RequirePermission("award:list"),
+			controllers.ExportAwardReport)
 		award.GET("/comp/list",
 			controllers.SearchCompetition)
 		award.GET("/student/my-awards",

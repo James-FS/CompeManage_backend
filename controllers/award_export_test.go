@@ -24,15 +24,15 @@ func TestAdvisorsMirrorAndRowsJoin(t *testing.T) {
 		{Name: "曾岑", College: "创新创业学院"},
 		{Name: "王满四", College: "新闻学院"},
 	})
-	require.Equal(t, "刘涛 曾岑 王满四", names)
-	require.Equal(t, "新闻学院 创新创业学院", colleges)
+	require.Equal(t, "刘涛、曾岑、王满四", names)
+	require.Equal(t, "新闻学院、创新创业学院", colleges)
 }
 
 func TestAwardExportAdvisors(t *testing.T) {
 	// 奖项自带指导教师：姓名拼接、学院去重保序
 	names, colleges := awardExportAdvisors(`[{"name":"刘涛","college":"新闻学院"},{"name":"曾岑","college":"创新创业学院"},{"name":"王满四","college":"新闻学院"}]`, "")
-	require.Equal(t, "刘涛 曾岑 王满四", names)
-	require.Equal(t, "新闻学院 创新创业学院", colleges)
+	require.Equal(t, "刘涛、曾岑、王满四", names)
+	require.Equal(t, "新闻学院、创新创业学院", colleges)
 	// 奖项为空时回退报名（单对象格式）
 	names, colleges = awardExportAdvisors("", `{"name":"白鹤云飞","college":"地理学院"}`)
 	require.Equal(t, "白鹤云飞", names)
@@ -69,8 +69,8 @@ func TestAwardJoinMembers(t *testing.T) {
 		{AwardID: 1, Name: "王菲樱", College: "公共管理学院"},
 		{AwardID: 1, Name: "罗思卓", College: "管理学院"},
 	})
-	require.Equal(t, "金楠 李秋荣 王菲樱 罗思卓", names)
-	require.Equal(t, "新闻与传播学院 公共管理学院 管理学院", colleges)
+	require.Equal(t, "金楠、李秋荣、王菲樱、罗思卓", names)
+	require.Equal(t, "新闻与传播学院、公共管理学院、管理学院", colleges)
 
 	// 空成员与空学院
 	names, colleges = awardJoinMembers(nil)
