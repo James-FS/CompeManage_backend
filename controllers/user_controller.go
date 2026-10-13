@@ -18,12 +18,13 @@ import (
 )
 
 type UserManageListReq struct {
-	Page             int    `form:"page"`
-	PageSize         int    `form:"page_size"`
-	Search           string `form:"search"`
-	RoleID           uint   `form:"role_id"`
-	IdentityType     string `form:"identity_type"`
-	ManagedCollegeID uint   `form:"managed_college_id"`
+	Page         int    `form:"page"`
+	PageSize     int    `form:"page_size"`
+	Search       string `form:"search"`
+	RoleID       uint   `form:"role_id"`
+	IdentityType string `form:"identity_type"`
+	// CollegeID 按用户所属学院（users.college）筛选，与院级管理员的授权范围 managed_college_id 无关。
+	CollegeID uint `form:"college_id"`
 }
 
 type RoleBrief struct {
@@ -83,8 +84,18 @@ func GetAllUsers(c *gin.Context) {
 	if req.IdentityType != "" {
 		query = query.Where("identity_type = ?", req.IdentityType)
 	}
-	if req.ManagedCollegeID != 0 {
-		query = query.Where("managed_college_id = ?", req.ManagedCollegeID)
+	if req.CollegeID != 0 {
+		// users.college 存的是学院名称，需先解析出名称再匹配
+		var college models.College
+		if err := database.DB.WithContext(c.Request.Context()).Select("id", "name").First(&college, req.CollegeID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				utils.BadRequest(c, "学院不存在")
+				return
+			}
+			utils.InternalServerError(c, "查询学院失败", err)
+			return
+		}
+		query = query.Where("college = ?", college.Name)
 	}
 
 	var total int64

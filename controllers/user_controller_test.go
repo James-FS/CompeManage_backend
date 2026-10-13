@@ -325,6 +325,46 @@ func TestGetAllUsers_RejectsInvalidIdentityType(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "人员身份类型无效")
 }
 
+func TestGetAllUsers_FiltersByOwnedCollegeName(t *testing.T) {
+	mock := setupUserManageDBMock(t)
+	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
+	// 先用 college_id 解析出学院名称，再按 users.college 匹配
+	mock.ExpectQuery("SELECT `id`,`name` FROM `colleges` WHERE `colleges`.`id` = \\? .*").
+		WithArgs(uint(3), 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(3, "计算机科学与技术学院"))
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `users` WHERE college = \\?").
+		WithArgs("计算机科学与技术学院").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery("SELECT .* FROM `users` WHERE college = \\? .*ORDER BY users.create_time DESC, users.id DESC").
+		WithArgs("计算机科学与技术学院", 20).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "realname", "college", "identity_type"}).
+			AddRow(5, "S2024001", "张三", "计算机科学与技术学院", "student"))
+	mock.ExpectQuery("SELECT .* FROM `user_roles` WHERE `user_roles`.`user_id` = .*").
+		WithArgs(uint(5)).
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "role_id"}))
+
+	_, w, c := buildGET("/api/perm/member/list?page=1&page_size=20&college_id=3")
+	GetAllUsers(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"total":1`)
+	assert.Contains(t, w.Body.String(), "计算机科学与技术学院")
+}
+
+func TestGetAllUsers_UnknownCollegeRejected(t *testing.T) {
+	mock := setupUserManageDBMock(t)
+	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
+	mock.ExpectQuery("SELECT `id`,`name` FROM `colleges` WHERE `colleges`.`id` = \\? .*").
+		WithArgs(uint(999), 1).
+		WillReturnError(gorm.ErrRecordNotFound)
+
+	_, w, c := buildGET("/api/perm/member/list?college_id=999")
+	GetAllUsers(c)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "学院不存在")
+}
+
 func TestGetAllUsers_EmptyPage(t *testing.T) {
 	mock := setupUserManageDBMock(t)
 	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
