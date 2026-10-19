@@ -220,6 +220,13 @@ func fillAwardUnitLine(f *excelize.File, sheet, unit string) error {
 		if strings.HasPrefix(rest, "：") || strings.HasPrefix(rest, ":") {
 			rest = rest[1:]
 		}
+		// 模板在单位名称和签名栏之间预留了大量空格，部分表格查看器会将其
+		// 显示为特殊符号。只保留签名栏文字，用普通间距重新排版。
+		if signatureIndex := strings.Index(rest, "分管院领导签名"); signatureIndex >= 0 {
+			rest = "    " + strings.TrimSpace(rest[signatureIndex:])
+		} else {
+			rest = ""
+		}
 		return f.SetCellStr(sheet, addr, label+"："+strings.TrimSpace(unit)+rest)
 	}
 	return nil

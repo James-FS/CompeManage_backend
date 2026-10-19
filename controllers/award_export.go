@@ -13,6 +13,7 @@ import (
 	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 const awardExportApprovedStatus = "approved"
@@ -201,15 +202,16 @@ func awardExportYear(c *gin.Context) (string, bool) {
 }
 
 // awardExportUnit 导出人所属单位（附件"单位名称（公章）"自动填写）：
-// 赛事负责人复用 scope.College；其余角色查本人 users.college，
-// 院级管理员为空时回落其管理学院名称。
+// 优先取本人 users.college；未填写时，赛事负责人复用 scope.College，
+// 院级管理员回落其管理学院名称。
 func awardExportUnit(c *gin.Context, scope *UserAccessScope) string {
-	unit := strings.TrimSpace(scope.College)
+	var unit string
+	_ = database.DB.WithContext(c.Request.Context()).Table("users").
+		Where("id = ? AND delete_time IS NULL", scope.UserID).
+		Pluck("college", &unit).Error
+	unit = strings.TrimSpace(unit)
 	if unit == "" {
-		_ = database.DB.WithContext(c.Request.Context()).Table("users").
-			Where("id = ? AND delete_time IS NULL", scope.UserID).
-			Pluck("college", &unit).Error
-		unit = strings.TrimSpace(unit)
+		unit = strings.TrimSpace(scope.College)
 	}
 	if unit == "" && scope.ManagedCollegeID != nil {
 		var college models.College
@@ -223,6 +225,27 @@ func awardExportUnit(c *gin.Context, scope *UserAccessScope) string {
 
 func awardExportFilterStatus() []string {
 	return []string{awardExportApprovedStatus, awardExportLegacyStatus}
+}
+
+// applyAwardExportCompetitionScope keeps downloaded rows within the competitions
+// visible to the same role on the award list page.
+func applyAwardExportCompetitionScope(q *gorm.DB, scope *UserAccessScope) *gorm.DB {
+	if scope == nil {
+		return q.Where("1 = 0")
+	}
+	switch scope.RoleCode {
+	case "school_admin":
+		return q
+	case "college_admin":
+		if scope.ManagedCollegeID == nil {
+			return q.Where("1 = 0")
+		}
+		return q.Where("(cd.college_id = ? OR cd.college_id IS NULL OR cd.college_id = 0 OR cd.comp_level IN ?)", *scope.ManagedCollegeID, []string{"校级", "校赛"})
+	case "competition_manager":
+		return q.Where("cd.manager_id = ?", scope.UserID)
+	default:
+		return q.Where("1 = 0")
+	}
 }
 
 func awardExportWorkbook(c *gin.Context, kind, year, unit string, rowsByYear map[int][][]interface{}) {
@@ -262,6 +285,7 @@ func buildAwardProjectRows(ctx context.Context, scope *UserAccessScope, year str
 		Joins("LEFT JOIN colleges cn ON cn.id = cd.college_id").
 		Where("awards.delete_time IS NULL").Where("awards.status IN ?", awardExportFilterStatus()).
 		Order("cd.year ASC, awards.award_time ASC, cd.comp_name ASC, awards.project_name ASC, awards.id ASC")
+	q = applyAwardExportCompetitionScope(q, scope)
 	if year != "" {
 		q = q.Where("cd.year = ?", year)
 	}
@@ -355,6 +379,7 @@ func buildAwardStudentRows(ctx context.Context, scope *UserAccessScope, year str
 		Joins("LEFT JOIN colleges cn ON cn.id = cd.college_id").
 		Where("am.delete_time IS NULL").Where("a.status IN ?", awardExportFilterStatus()).
 		Order("cd.year ASC, a.award_time ASC, cd.comp_name ASC, a.project_name ASC, am.id ASC")
+	q = applyAwardExportCompetitionScope(q, scope)
 	if year != "" {
 		q = q.Where("cd.year = ?", year)
 	}
