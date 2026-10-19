@@ -13,9 +13,13 @@ func TestEnsureAwardStudentPermissionsGrantsManagerAuditAndInvalidatesCache(t *t
 	t.Cleanup(func() { DB = previousDB })
 	mock.ExpectQuery("SELECT .* FROM `permissions`").WithArgs("award", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "code"}).AddRow(1, "award"))
-	for _, code := range []string{"award:student:my-list", "award:student:supplement", "award:audit", "award:import"} {
+	for _, code := range []string{"award:student:my-list", "award:student:supplement", "award:audit", "award:import", "award:advisor:list", "award:advisor:update"} {
 		mock.ExpectQuery("SELECT .* FROM `permissions`").WithArgs(code, 1).
 			WillReturnRows(sqlmock.NewRows([]string{"id", "code"}).AddRow(2, code))
+	}
+	for _, role := range []string{"teacher", "competition_manager"} {
+		mock.ExpectQuery("SELECT .* FROM `roles`").WithArgs(role, 1).
+			WillReturnRows(sqlmock.NewRows([]string{"id", "role_code"}))
 	}
 	for _, role := range []string{"student", "school_admin", "college_admin"} {
 		mock.ExpectQuery("SELECT .* FROM `roles`").WithArgs(role, 1).

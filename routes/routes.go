@@ -220,6 +220,10 @@ func SetupRoutes(r *gin.Engine) {
 
 	award := r.Group("/api/award", middleware.AuthRequired())
 	{
+		award.GET("/advisor/list", middleware.RequirePermission("award:advisor:list"), controllers.GetAdvisorAwards)
+		award.GET("/:id/changes", controllers.GetAwardChanges)
+		award.GET("/advisor/:id", middleware.RequirePermission("award:advisor:list"), controllers.GetAdvisorAwardDetail)
+		award.PUT("/advisor/:id", middleware.RequirePermission("award:advisor:update"), controllers.UpdateAdvisorAward)
 		award.GET("/list",
 			middleware.RequirePermission("award:list"),
 			controllers.GetAwardCompList)

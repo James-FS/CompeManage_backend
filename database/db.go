@@ -86,6 +86,7 @@ func autoMigrate() {
 		&models.Award{},
 		&models.AwardMember{},
 		&models.AwardAdvisor{},
+		&models.AwardChange{},
 		&models.AwardImportSetting{},
 		&models.Summary{},
 		&models.FileRecord{},
@@ -109,6 +110,9 @@ func autoMigrate() {
 	}
 	if err := BackfillAwardMembers(DB); err != nil {
 		log.Fatalf("获奖数据兼容迁移失败: %v", err)
+	}
+	if err := BackfillAwardAdvisors(DB); err != nil {
+		log.Fatalf("指导教师关联迁移失败: %v", err)
 	}
 }
 

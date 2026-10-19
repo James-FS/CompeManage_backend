@@ -42,6 +42,11 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 	dsn.Passwd = cfg.Password
 	dsn.Net = "tcp"
 	dsn.Addr = fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	// Allow an isolated local server when the application's MySQL service is stopped.
+	if override := os.Getenv("COMPE_AWARD_MYSQL_DSN"); override != "" {
+		dsn, err = driver.ParseDSN(override)
+		require.NoError(t, err)
+	}
 	dsn.ParseTime = true
 	dsn.Loc = time.Local
 	admin, err := gorm.Open(mysql.Open(dsn.FormatDSN()), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
@@ -62,7 +67,7 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 	require.NoError(t, err)
 	sqlConn.SetMaxOpenConns(1)
 	require.NoError(t, db.Exec("SET FOREIGN_KEY_CHECKS=0").Error)
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.College{}, &models.CompDirectory{}, &models.CompDetail{}, &models.Register{}, &models.RegMember{}, &models.Award{}, &models.AwardMember{}, &models.AwardImportSetting{}))
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.College{}, &models.CompDirectory{}, &models.CompDetail{}, &models.Register{}, &models.RegMember{}, &models.Award{}, &models.AwardMember{}, &models.AwardAdvisor{}, &models.AwardChange{}, &models.AwardImportSetting{}, &models.FileRecord{}))
 	require.NoError(t, db.Exec("SET FOREIGN_KEY_CHECKS=1").Error)
 	// Verify upgrading the old required-registration column, not only creating fresh tables.
 	require.NoError(t, db.Exec("ALTER TABLE awards MODIFY COLUMN reg_id BIGINT UNSIGNED NOT NULL").Error)
@@ -75,6 +80,10 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 	studentB := models.User{Username: "00456", Realname: "学生乙", College: cb.Name, Major: "专业乙", IdentityType: "student"}
 	require.NoError(t, db.Create(&studentA).Error)
 	require.NoError(t, db.Create(&studentB).Error)
+	teacherA := models.User{Username: "T001", Realname: "教师甲", IdentityType: "staff", College: ca.Name}
+	teacherB := models.User{Username: "T002", Realname: "教师乙", IdentityType: "staff", College: cb.Name}
+	require.NoError(t, db.Create(&teacherA).Error)
+	require.NoError(t, db.Create(&teacherB).Error)
 	school := models.CompDirectory{CompCode: "XTEST", CompName: "校赛", CompLevel: "校级", ManagerID: studentA.ID, CollegeID: &ca.ID}
 	own := models.CompDirectory{CompCode: "ATEST", CompName: "甲院省赛", CompLevel: "省级", ManagerID: studentA.ID, CollegeID: &ca.ID}
 	other := models.CompDirectory{CompCode: "BTEST", CompName: "乙院省赛", CompLevel: "省级", ManagerID: studentB.ID, CollegeID: &cb.ID}
@@ -239,7 +248,10 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 		require.Contains(t, w.Body.String(), school.CompName)
 	})
 	t.Run("student supplement materializes members and rejects duplicate imported project", func(t *testing.T) {
-		body := map[string]interface{}{"comp_id": school.ID, "team_name": a.ProjectName, "award_level": "国家级一等奖", "award_name": "一等奖", "proof_url": "/proof.pdf", "members": []map[string]interface{}{{"name": studentB.Realname, "student_id": studentB.Username, "college": studentB.College, "phone": "13800000000", "is_leader": true}}}
+		studentProof := models.FileRecord{BizType: "award_cert", FileHash: "11234567890123456789012345678901", OriginalName: "student.pdf", UploaderID: studentB.ID, StoragePath: "/static/temp/student.pdf"}
+		require.NoError(t, db.Create(&studentProof).Error)
+		body := map[string]interface{}{"comp_id": school.ID, "team_name": a.ProjectName, "award_level": "国家级一等奖", "award_name": "一等奖", "proof_url": buildDownloadURL(studentProof.BizType, studentProof.FileHash, studentProof.OriginalName), "members": []map[string]interface{}{{"name": studentB.Realname, "student_id": studentB.Username, "college": studentB.College, "phone": "13800000000", "is_leader": true}}}
+		body["advisors"] = []map[string]string{{"username": teacherA.Username, "name": teacherA.Realname}}
 		w := invoke("POST", "/supplement", "student", nil, studentB.ID, body, SubmitStudentAwardSupplement)
 		require.Equal(t, 400, w.Code, w.Body.String())
 		body["comp_id"] = other.ID
@@ -256,7 +268,7 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 		body["award_category"] = "省级"
 		body["award_name"] = "二等奖"
 		body["award_date"] = "2026-10-12"
-		body["advisors"] = []map[string]string{{"name": "教师甲", "college": ca.Name}, {"name": "教师乙", "college": cb.Name}}
+		body["advisors"] = []map[string]string{{"username": teacherA.Username, "name": "教师甲", "college": ca.Name}, {"username": teacherB.Username, "name": "教师乙", "college": cb.Name}}
 		body["remark"] = "团队项目说明"
 		body["members"] = []map[string]interface{}{
 			{"name": studentA.Realname, "student_id": studentA.Username, "college": studentA.College, "phone": "13800000001", "email": "a@example.com", "is_leader": true},
@@ -271,6 +283,52 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 		require.Equal(t, "团队项目说明", supplement.Remark)
 		require.Contains(t, supplement.AdvisorInfo, "教师乙")
 		require.Len(t, supplement.Members, 2)
+		var advisors []models.AwardAdvisor
+		require.NoError(t, db.Where("award_id = ?", supplement.ID).Find(&advisors).Error)
+		require.Len(t, advisors, 2)
+		teacherDetail := invoke("GET", "/advisor", "teacher", nil, teacherA.ID, nil, func(c *gin.Context) {
+			c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(supplement.ID)}}
+			GetAdvisorAwardDetail(c)
+		})
+		require.Equal(t, 200, teacherDetail.Code, teacherDetail.Body.String())
+		teacherBody := map[string]interface{}{"project_name": supplement.ProjectName, "award_category": "省级", "award_name": "二等奖", "award_date": "2026-10-12", "proof_url": "/api/file/download/award_proof/01234567890123456789012345678901_certificate.pdf", "remark": "教师更正", "update_time": supplement.UpdatedAt}
+		require.NoError(t, db.AutoMigrate(&models.FileRecord{}))
+		proofRecord := models.FileRecord{BizType: "award_proof", FileHash: "01234567890123456789012345678901", OriginalName: "certificate.pdf", UploaderID: teacherA.ID, StoragePath: "/static/award_proofs/test/certificate.pdf"}
+		require.NoError(t, db.Create(&proofRecord).Error)
+		teacherUpdate := invoke("PUT", "/advisor", "teacher", nil, teacherA.ID, teacherBody, func(c *gin.Context) {
+			c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(supplement.ID)}}
+			UpdateAdvisorAward(c)
+		})
+		require.Equal(t, 200, teacherUpdate.Code, teacherUpdate.Body.String())
+		var changes []models.AwardChange
+		require.NoError(t, db.Where("award_id = ?", supplement.ID).Find(&changes).Error)
+		require.Len(t, changes, 1)
+		require.Equal(t, teacherA.ID, changes[0].OperatorID)
+		staleAudit := invoke("PUT", "/pass", "competition_manager", nil, studentB.ID, map[string]interface{}{"update_time": teacherBody["update_time"]}, func(c *gin.Context) {
+			c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(supplement.ID)}}
+			PassAwardAudit(c)
+		})
+		require.Equal(t, 409, staleAudit.Code, staleAudit.Body.String())
+		staleBatch := invoke("PUT", "/batch", "competition_manager", nil, studentB.ID, map[string]interface{}{"ids": []uint{supplement.ID}, "versions": map[uint]interface{}{supplement.ID: teacherBody["update_time"]}}, BatchPassAwardAudit)
+		require.Equal(t, 409, staleBatch.Code, staleBatch.Body.String())
+		// A stale student form cannot overwrite the advisor's new draft.
+		body["update_time"] = teacherBody["update_time"]
+		staleStudent := invoke("POST", "/supplement", "student", nil, studentB.ID, body, SubmitStudentAwardSupplement)
+		require.NotEqual(t, 200, staleStudent.Code, staleStudent.Body.String())
+		var latest models.Award
+		require.NoError(t, db.First(&latest, supplement.ID).Error)
+		require.Equal(t, "教师更正", latest.Remark)
+		proof := models.FileRecord{BizType: "award_proof", FileHash: "01234567890123456789012345678901", OriginalName: "certificate.pdf"}
+		require.True(t, canAccessAwardProof(t.Context(), teacherB.ID, &UserAccessScope{UserID: teacherB.ID, RoleCode: "teacher"}, proof))
+		require.True(t, canAccessAwardProof(t.Context(), studentB.ID, &UserAccessScope{UserID: studentB.ID, RoleCode: "student"}, proof))
+		teacherBody["remark"] = "团队项目说明"
+		require.NoError(t, db.First(&supplement, supplement.ID).Error)
+		teacherBody["update_time"] = supplement.UpdatedAt
+		teacherUpdate = invoke("PUT", "/advisor", "competition_manager", nil, teacherB.ID, teacherBody, func(c *gin.Context) {
+			c.Params = gin.Params{{Key: "id", Value: fmt.Sprint(supplement.ID)}}
+			UpdateAdvisorAward(c)
+		})
+		require.Equal(t, 200, teacherUpdate.Code, teacherUpdate.Body.String())
 		w = invoke("GET", fmt.Sprintf("/comp-awards?comp_id=%d", other.ID), "school_admin", nil, studentA.ID, nil, GetCompAwards)
 		require.Equal(t, 200, w.Code, w.Body.String())
 		require.NotContains(t, w.Body.String(), supplement.ProjectName)

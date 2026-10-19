@@ -138,6 +138,11 @@ func ensureAwardStudentPermissions() {
 	// 存量库中 school_admin 的权限是初始化时一次性写入的，新增权限不会自动追加。
 	ensurePerm("award:audit", "获奖审核", "审核学生获奖申报")
 	ensurePerm("award:import", "导入获奖信息", "导入获奖名单和编辑获奖信息")
+	ensurePerm("award:advisor:list", "查看指导获奖", "查看本人指导的获奖项目")
+	ensurePerm("award:advisor:update", "修改指导获奖", "修改本人指导的待审核或退回填报")
+	for _, role := range []string{"teacher", "competition_manager"} {
+		grantRolePermissionsByCode(role, []string{"award:advisor:list", "award:advisor:update"})
+	}
 
 	grantRolePermissionsByCode("student", []string{"award:student:my-list", "award:student:supplement"})
 	grantRolePermissionsByCode("school_admin", []string{"award:audit"})

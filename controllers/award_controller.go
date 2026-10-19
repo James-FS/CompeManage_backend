@@ -44,38 +44,40 @@ func (d *DateOnly) UnmarshalJSON(data []byte) error {
 }
 
 type AwardAuditListItem struct {
-	ID          uint   `json:"id"`
-	StudentName string `json:"student_name"`
-	StudentID   string `json:"student_id"`
-	CompName    string `json:"comp_name"`
-	AwardLevel  string `json:"award_level"`
-	AwardDate   string `json:"award_date"`
-	Phone       string `json:"phone"`
-	SubmitTime  string `json:"submit_time"`
-	Status      int    `json:"status"`
+	UpdatedAt   time.Time `json:"update_time"`
+	ID          uint      `json:"id"`
+	StudentName string    `json:"student_name"`
+	StudentID   string    `json:"student_id"`
+	CompName    string    `json:"comp_name"`
+	AwardLevel  string    `json:"award_level"`
+	AwardDate   string    `json:"award_date"`
+	Phone       string    `json:"phone"`
+	SubmitTime  string    `json:"submit_time"`
+	Status      int       `json:"status"`
 }
 
 type AwardAuditDetailResp struct {
-	ID                uint    `json:"id"`
-	StudentName       string  `json:"student_name"`
-	StudentID         string  `json:"student_id"`
-	College           string  `json:"college"`
-	Phone             string  `json:"phone"`
-	Email             string  `json:"email"`
-	CompName          string  `json:"comp_name"`
-	AwardLevel        string  `json:"award_level"`
-	AwardSpecific     string  `json:"award_specific"`
-	AwardDate         string  `json:"award_date"`
-	AwardCategory     string  `json:"award_category"`
-	ParticipationType string  `json:"participation_type"`
-	AdvisorInfo       string  `json:"advisor_info"`
-	Remark            string  `json:"remark"`
-	TeamName          string  `json:"team_name"`
-	Teammates         []gin.H `json:"teammates"`
-	CertImage         string  `json:"cert_image"`
-	SubmitTime        string  `json:"submit_time"`
-	Status            int     `json:"status"`
-	RejectReason      string  `json:"reject_reason"`
+	UpdatedAt         time.Time `json:"update_time"`
+	ID                uint      `json:"id"`
+	StudentName       string    `json:"student_name"`
+	StudentID         string    `json:"student_id"`
+	College           string    `json:"college"`
+	Phone             string    `json:"phone"`
+	Email             string    `json:"email"`
+	CompName          string    `json:"comp_name"`
+	AwardLevel        string    `json:"award_level"`
+	AwardSpecific     string    `json:"award_specific"`
+	AwardDate         string    `json:"award_date"`
+	AwardCategory     string    `json:"award_category"`
+	ParticipationType string    `json:"participation_type"`
+	AdvisorInfo       string    `json:"advisor_info"`
+	Remark            string    `json:"remark"`
+	TeamName          string    `json:"team_name"`
+	Teammates         []gin.H   `json:"teammates"`
+	CertImage         string    `json:"cert_image"`
+	SubmitTime        string    `json:"submit_time"`
+	Status            int       `json:"status"`
+	RejectReason      string    `json:"reject_reason"`
 }
 
 type CompSearchResp struct {
@@ -449,6 +451,7 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 		AwardName         string                 `json:"award_name" binding:"required"`
 		AwardDate         DateOnly               `json:"award_date"`
 		ProofURL          string                 `json:"proof_url" binding:"required"`
+		UpdatedAt         *time.Time             `json:"update_time"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "参数错误")
@@ -528,6 +531,13 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 	}
 
 	var authenticatedUser models.User
+	// Validate work IDs server-side and store authoritative teacher snapshots.
+	resolvedAdvisors, advisorErr := resolveStudentAwardAdvisors(tx, req.Advisors)
+	if advisorErr != nil {
+		utils.BadRequest(c, advisorErr.Error())
+		return
+	}
+	advisorJSON, _ = json.Marshal(resolvedAdvisors)
 	if err := tx.Select("id", "username").First(&authenticatedUser, leaderID).Error; err != nil {
 		utils.InternalServerError(c, "查询当前登录学生失败", err)
 		return
@@ -676,6 +686,11 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 		}
 	}
 
+	// Linking a file must not grant access to another student's private proof.
+	if err := validateStudentAwardProof(tx, leaderID, req.ProofURL); err != nil {
+		utils.BadRequest(c, "请使用本人上传或本人获奖项目已有的证明文件")
+		return
+	}
 	if !existingRegFound {
 		now := time.Now()
 		existingReg = models.Register{
@@ -714,8 +729,21 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 			"award_name": req.AwardName, "status": "draft",
 			"proof_url": req.ProofURL, "reject_reason": "",
 		}
-		if err := tx.Model(&models.Award{}).Where("id = ?", resubmitAwardID).Updates(updates).Error; err != nil {
-			utils.InternalServerError(c, "重新提交失败", err)
+		update := tx.Model(&models.Award{}).Where("id = ? AND status = ?", resubmitAwardID, "rejected")
+		if req.UpdatedAt != nil {
+			update = update.Where("update_time = ?", *req.UpdatedAt)
+		}
+		result := update.Updates(updates)
+		if result.Error != nil {
+			utils.InternalServerError(c, "重新提交失败", result.Error)
+			return
+		}
+		if result.RowsAffected == 0 {
+			awardEditConflict(c)
+			return
+		}
+		if err := saveStudentAwardAdvisors(tx, resubmitAwardID, resolvedAdvisors); err != nil {
+			utils.InternalServerError(c, "保存指导教师失败", err)
 			return
 		}
 		if err := saveStudentAwardMembers(tx, resubmitAwardID, regID, submittedMembers); err != nil {
@@ -746,6 +774,10 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 	}
 	if err := tx.Create(&award).Error; err != nil {
 		utils.InternalServerError(c, "创建补录奖项失败", err)
+		return
+	}
+	if err := saveStudentAwardAdvisors(tx, award.ID, resolvedAdvisors); err != nil {
+		utils.InternalServerError(c, "保存指导教师失败", err)
 		return
 	}
 	if err := saveStudentAwardMembers(tx, award.ID, regID, submittedMembers); err != nil {
@@ -841,6 +873,7 @@ func GetAwardAuditList(c *gin.Context) {
 		}
 
 		list = append(list, AwardAuditListItem{
+			UpdatedAt:   a.UpdatedAt,
 			ID:          a.ID,
 			StudentName: leaderName,
 			StudentID:   leaderID,
@@ -934,6 +967,7 @@ func GetAwardAuditDetail(c *gin.Context) {
 	}
 
 	resp := AwardAuditDetailResp{
+		UpdatedAt:         award.UpdatedAt,
 		ID:                award.ID,
 		StudentName:       leaderName,
 		StudentID:         leaderID,
@@ -986,6 +1020,15 @@ func PassAwardAudit(c *gin.Context) {
 	userIDVal, _ := c.Get("user_id")
 	auditorID := userIDVal.(uint)
 
+	var reqVersion struct {
+		UpdatedAt *time.Time `json:"update_time"`
+	}
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&reqVersion); err != nil {
+			utils.BadRequest(c, "参数错误")
+			return
+		}
+	}
 	var award models.Award
 	if err := database.DB.WithContext(c.Request.Context()).Preload("Register").First(&award, id).Error; err != nil {
 		utils.NotFound(c, "记录不存在")
@@ -1000,17 +1043,31 @@ func PassAwardAudit(c *gin.Context) {
 	if !requireAwardAuditAccess(c, []uint{award.ID}) {
 		return
 	}
+	if reqVersion.UpdatedAt != nil && !award.UpdatedAt.Equal(*reqVersion.UpdatedAt) {
+		awardEditConflict(c)
+		return
+	}
 
 	now := time.Now()
 	tx := database.DB.WithContext(c.Request.Context()).Begin()
-	if err := tx.Model(&award).Updates(map[string]interface{}{
+	if tx.Error != nil {
+		utils.InternalServerError(c, "开启审核事务失败", tx.Error)
+		return
+	}
+	result := tx.Model(&award).Where("status = ? AND update_time = ?", "draft", award.UpdatedAt).Updates(map[string]interface{}{
 		"status":        "approved",
 		"auditor_id":    auditorID,
 		"audit_time":    &now,
 		"reject_reason": "",
-	}).Error; err != nil {
+	})
+	if result.Error != nil {
 		tx.Rollback()
-		utils.InternalServerError(c, "审核更新失败", err)
+		utils.InternalServerError(c, "审核更新失败", result.Error)
+		return
+	}
+	if result.RowsAffected == 0 {
+		tx.Rollback()
+		awardEditConflict(c)
 		return
 	}
 
@@ -1040,7 +1097,8 @@ func RejectAwardAudit(c *gin.Context) {
 	auditorID := userIDVal.(uint)
 
 	var req struct {
-		Reason string `json:"reason" binding:"required"`
+		Reason    string     `json:"reason" binding:"required"`
+		UpdatedAt *time.Time `json:"update_time"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "驳回原因必填")
@@ -1061,17 +1119,31 @@ func RejectAwardAudit(c *gin.Context) {
 	if !requireAwardAuditAccess(c, []uint{award.ID}) {
 		return
 	}
+	if req.UpdatedAt != nil && !award.UpdatedAt.Equal(*req.UpdatedAt) {
+		awardEditConflict(c)
+		return
+	}
 
 	now := time.Now()
 	tx := database.DB.WithContext(c.Request.Context()).Begin()
-	if err := tx.Model(&award).Updates(map[string]interface{}{
+	if tx.Error != nil {
+		utils.InternalServerError(c, "开启审核事务失败", tx.Error)
+		return
+	}
+	result := tx.Model(&award).Where("status = ? AND update_time = ?", "draft", award.UpdatedAt).Updates(map[string]interface{}{
 		"status":        "rejected",
 		"auditor_id":    auditorID,
 		"audit_time":    &now,
 		"reject_reason": req.Reason,
-	}).Error; err != nil {
+	})
+	if result.Error != nil {
 		tx.Rollback()
-		utils.InternalServerError(c, "审核更新失败", err)
+		utils.InternalServerError(c, "审核更新失败", result.Error)
+		return
+	}
+	if result.RowsAffected == 0 {
+		tx.Rollback()
+		awardEditConflict(c)
 		return
 	}
 
@@ -1097,7 +1169,8 @@ func RejectAwardAudit(c *gin.Context) {
 
 func BatchPassAwardAudit(c *gin.Context) {
 	var req struct {
-		IDs []uint `json:"ids" binding:"required"`
+		Versions map[uint]time.Time `json:"versions"`
+		IDs      []uint             `json:"ids" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || len(req.IDs) == 0 {
 		utils.BadRequest(c, "ids 必填")
@@ -1112,6 +1185,13 @@ func BatchPassAwardAudit(c *gin.Context) {
 
 	now := time.Now()
 	tx := database.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		utils.InternalServerError(c, "开启审核事务失败", tx.Error)
+		return
+	}
+	if !requireAwardAuditVersions(c, tx, req.IDs, req.Versions) {
+		return
+	}
 	result := tx.Model(&models.Award{}).Where("id IN ? AND status = ?", req.IDs, "draft").Updates(map[string]interface{}{
 		"status":        "approved",
 		"auditor_id":    auditorID,
@@ -1162,8 +1242,9 @@ func BatchPassAwardAudit(c *gin.Context) {
 
 func BatchRejectAwardAudit(c *gin.Context) {
 	var req struct {
-		IDs    []uint `json:"ids" binding:"required"`
-		Reason string `json:"reason" binding:"required"`
+		Versions map[uint]time.Time `json:"versions"`
+		IDs      []uint             `json:"ids" binding:"required"`
+		Reason   string             `json:"reason" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || len(req.IDs) == 0 {
 		utils.BadRequest(c, "ids 和 reason 必填")
@@ -1178,6 +1259,13 @@ func BatchRejectAwardAudit(c *gin.Context) {
 
 	now := time.Now()
 	tx := database.DB.WithContext(c.Request.Context()).Begin()
+	if tx.Error != nil {
+		utils.InternalServerError(c, "开启审核事务失败", tx.Error)
+		return
+	}
+	if !requireAwardAuditVersions(c, tx, req.IDs, req.Versions) {
+		return
+	}
 	result := tx.Model(&models.Award{}).Where("id IN ? AND status = ?", req.IDs, "draft").Updates(map[string]interface{}{
 		"status":        "rejected",
 		"auditor_id":    auditorID,
