@@ -1,0 +1,38 @@
+# Local development configuration template.
+# Copy this file to config-dev.yaml and fill in any institution-specific values.
+logger:
+  level: debug
+  filename: logger/app.logger
+  max_size: 100
+  max_backups: 5
+  max_age: 30
+  compress: false
+  show_line: true
+
+redis:
+  host: localhost
+  port: 6379
+  password: ""
+  db: 0
+  max_retries: 3
+  pool_size: 10
+
+datahall:
+  key: ""
+  secret: ""
+  base_url: https://datahall.example
+  min_grade: "2022"
+
+cas:
+  server_url: https://cas.example
+  client_id: ""
+  client_secret: ""
+  redirect_uri: http://localhost:8080/api/cas/callback
+  frontend_url: http://localhost:5219
+
+database:
+  host: localhost
+  port: 3306
+  user: root
+  password: "change-me"
+  dbname: CompeManage
