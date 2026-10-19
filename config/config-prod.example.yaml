@@ -1,0 +1,36 @@
+database:
+  host: mysql-db
+  port: 3306
+  user: root
+  password: "REPLACE_WITH_STRONG_DB_PASSWORD"
+  dbname: CompeManage
+
+redis:
+  host: redis
+  port: 6379
+  password: ""
+  db: 0
+  max_retries: 3
+  pool_size: 10
+
+logger:
+  level: info
+  filename: logs/prod.log
+  max_size: 100
+  max_backups: 30
+  max_age: 30
+  compress: true
+  show_line: false
+
+datahall:
+  key: "REPLACE_WITH_DATAHALL_KEY"
+  secret: "REPLACE_WITH_DATAHALL_SECRET"
+  base_url: https://datahall.example
+  min_grade: "2022"
+
+cas:
+  server_url: https://cas.example
+  client_id: REPLACE_WITH_CAS_CLIENT_ID
+  client_secret: REPLACE_WITH_CAS_CLIENT_SECRET
+  redirect_uri: https://your-domain.example/api/cas/callback
+  frontend_url: https://your-domain.example
