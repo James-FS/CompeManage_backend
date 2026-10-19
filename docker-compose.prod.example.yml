@@ -1,0 +1,53 @@
+services:
+  app:
+    image: ywxx252324/compemanage:latest
+    container_name: compemanage_app
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      TZ: Asia/Shanghai
+      APP_ENV: production
+      DB_HOST: mysql-db
+      DB_PORT: "3306"
+      DB_USER: root
+      DB_PASSWORD: REPLACE_WITH_STRONG_DB_PASSWORD
+      DB_NAME: CompeManage
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      JWT_SECRET: REPLACE_WITH_RANDOM_SECRET_AT_LEAST_32_CHARACTERS
+      CAS_CLIENT_ID: REPLACE_WITH_CAS_CLIENT_ID
+      CAS_CLIENT_SECRET: REPLACE_WITH_CAS_CLIENT_SECRET
+      CAS_REDIRECT_URI: https://your-domain.example/api/cas/callback
+      CAS_FRONTEND_URL: https://your-domain.example
+    volumes:
+      - ./config/config-prod.yaml:/app/config/config-prod.yaml:ro
+    depends_on:
+      - mysql-db
+      - redis
+
+  mysql-db:
+    image: mysql:8.0
+    container_name: compemanage_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: REPLACE_WITH_STRONG_DB_PASSWORD
+      MYSQL_DATABASE: CompeManage
+      TZ: Asia/Shanghai
+    volumes:
+      - ./mysql_data:/var/lib/mysql
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+
+  redis:
+    image: redis:7-alpine
+    container_name: compemanage_redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+volumes:
+  redis_data:

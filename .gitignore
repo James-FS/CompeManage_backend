@@ -26,11 +26,16 @@ coverage
 vendor/
 
 # Go workspace file
-go. work
+go.work
 
 # Environment variables
 .env
-.env. local
+.env.*
+!.env.example
+
+# Production deployment files contain private environment settings
+/docker-compose.prod.yml
+/config/config-prod.yaml
 
 # IDE
 .vscode/
@@ -45,17 +50,19 @@ Thumbs.db
 
 # Project specific
 dist/
+static/
 public/upload/*
 !public/upload/.gitkeep
 
 logs/
 *.log
+*.log.*
 *.logger
+*.logger.*
 coverage.txt
 # Docker MySQL data
 mysql_data/
 app.logger
 /benchmark-results/
-server
-logger/app.logger
-logger/app.logger
+/server
+/FETCH_HEAD
