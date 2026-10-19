@@ -23,9 +23,14 @@ import (
 
 func clearCompListCache(ctx context.Context) {
 	rdb := middleware.GetRedisClient()
-	iter := rdb.Scan(ctx, 0, "cache:comp_list:*", 0).Iterator()
-	for iter.Next(ctx) {
-		rdb.Del(ctx, iter.Val())
+	if rdb == nil {
+		return
+	}
+	for _, pattern := range []string{"cache:comp_list:*", "cache:stats:dashboard:*"} {
+		iter := rdb.Scan(ctx, 0, pattern, 0).Iterator()
+		for iter.Next(ctx) {
+			rdb.Del(ctx, iter.Val())
+		}
 	}
 }
 
@@ -124,14 +129,28 @@ func GetCompetitionList(c *gin.Context) {
 		return
 	}
 	reqBytes, _ := json.Marshal(req)
-	cacheKey := fmt.Sprintf("cache:comp_list:%x", md5.Sum(reqBytes))
+	cacheKey := fmt.Sprintf("cache:comp_list:duty_v3:%s:%x", competitionCacheIdentity(c), md5.Sum(reqBytes))
 	rdb := middleware.GetRedisClient()
 	ctx := c.Request.Context()
 
-	cacheData, err := rdb.Get(ctx, cacheKey).Result()
-	if err == nil {
-		var resp gin.H
+	role, _ := c.Get("role_code")
+	// Management responses must reflect reassignment immediately; cache browsing data only.
+	useCache := rdb != nil && role != "school_admin" && role != "college_admin" && role != "competition_manager"
+	cacheData := ""
+	if useCache {
+		cacheData, _ = rdb.Get(ctx, cacheKey).Result()
+	}
+	if cacheData != "" {
+		var resp struct {
+			List  []models.CompDirectory `json:"list"`
+			Total int64                  `json:"total"`
+			Page  int                    `json:"page"`
+			Size  int                    `json:"size"`
+		}
 		if json.Unmarshal([]byte(cacheData), &resp) == nil {
+			if !attachCompetitionCapabilities(c, resp.List) {
+				return
+			}
 			logger.Info("赛事列表缓存命中", "cache_key", cacheKey)
 			utils.Success(c, resp)
 			return
@@ -168,7 +187,7 @@ func GetCompetitionList(c *gin.Context) {
 	}
 
 	if req.Year != "" {
-		query = query.Where("YEAR(create_time) = ?", req.Year)
+		query = query.Where("comp_directories.year = ?", req.Year)
 	}
 
 	if req.IsMy {
@@ -216,18 +235,20 @@ func GetCompetitionList(c *gin.Context) {
 		"page":  req.Page,
 		"size":  req.PageSize,
 	}
-	go func() {
-		asyncCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		data, err := json.Marshal(responseData)
-		if err != nil {
-			logger.Error("异步缓存JSON序列化失败", "cache_key", cacheKey, "error", err)
-			return
-		}
-		if err := rdb.Set(asyncCtx, cacheKey, data, 5*time.Minute).Err(); err != nil {
-			logger.Error("异步缓存写入失败", "cache_key", cacheKey, "error", err)
-		}
-	}()
+	data, marshalErr := json.Marshal(responseData)
+	if useCache && marshalErr == nil {
+		go func() {
+			asyncCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if err := rdb.Set(asyncCtx, cacheKey, data, 5*time.Minute).Err(); err != nil {
+				logger.Error("异步缓存写入失败", "cache_key", cacheKey, "error", err)
+			}
+		}()
+	}
+	if !attachCompetitionCapabilities(c, list) {
+		return
+	}
+
 	utils.Success(c, responseData)
 
 }
@@ -276,6 +297,9 @@ func CreateCompetition(c *gin.Context) {
 			return collegeErr
 		}
 
+		if err := validateCompetitionManager(c, tx, req.ManagerID, collegeID); err != nil {
+			return err
+		}
 		compCode, codeErr := nextCompetitionCode(tx, req.CompLevel, year)
 		if codeErr != nil {
 			return codeErr
@@ -318,7 +342,7 @@ func CreateCompetition(c *gin.Context) {
 	})
 
 	if err != nil {
-		utils.InternalServerError(c, "创建失败", err)
+		respondCompetitionMutationError(c, "创建失败", err)
 		return
 	}
 	clearCompListCache(c.Request.Context())
@@ -352,13 +376,27 @@ func BatchImportCompetition(c *gin.Context) {
 	var compDirs []models.CompDirectory
 	var promotions []RolePromotion
 	err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
-		promotedSet := make(map[uint]bool)
+		collegeIDByName := make(map[string]*uint)
+		collegeResolved := make(map[string]bool)
+		processedManagers := make(map[uint]bool)
 		for i, item := range req.Items {
-			collegeID, collegeErr := resolveCollegeIDByName(tx, item.College)
-			if collegeErr != nil {
-				return fmt.Errorf("第%d项(%s): %w", i+1, item.CompName, collegeErr)
+			collegeName := strings.TrimSpace(item.College)
+			var collegeID *uint
+			if collegeName != "" {
+				if !collegeResolved[collegeName] {
+					resolvedID, collegeErr := resolveCollegeIDByName(tx, collegeName)
+					if collegeErr != nil {
+						return fmt.Errorf("第%d项(%s): %w", i+1, item.CompName, collegeErr)
+					}
+					collegeIDByName[collegeName] = resolvedID
+					collegeResolved[collegeName] = true
+				}
+				collegeID = collegeIDByName[collegeName]
 			}
 
+			if err := validateCompetitionManager(c, tx, item.ManagerID, collegeID); err != nil {
+				return fmt.Errorf("第%d项: %w", i+1, err)
+			}
 			year := resolveCompetitionYear(item.Year)
 			compCode, codeErr := nextCompetitionCode(tx, item.CompLevel, year)
 			if codeErr != nil {
@@ -386,13 +424,13 @@ func BatchImportCompetition(c *gin.Context) {
 			compDirs = append(compDirs, compDir)
 
 			// 同一批导入中同一负责人只提升一次；教师自动提升为赛事负责人。
-			if !promotedSet[item.ManagerID] {
+			if !processedManagers[item.ManagerID] {
+				processedManagers[item.ManagerID] = true
 				oldRoleID, newRoleID, promoteErr := promoteCompetitionManagerIfTeacher(tx, item.ManagerID)
 				if promoteErr != nil {
 					return promoteErr
 				}
 				if oldRoleID != 0 {
-					promotedSet[item.ManagerID] = true
 					promotions = append(promotions, RolePromotion{
 						UserID:    item.ManagerID,
 						OldRoleID: oldRoleID,
@@ -405,7 +443,7 @@ func BatchImportCompetition(c *gin.Context) {
 	})
 
 	if err != nil {
-		utils.InternalServerError(c, "导入失败", err)
+		respondCompetitionMutationError(c, "导入失败", err)
 		return
 	}
 
@@ -430,7 +468,80 @@ type ManagerResp struct {
 	Name     string `json:"name"`
 	WorkID   string `json:"work_id"`
 	College  string `json:"college"`
-	RoleCode string `json:"role_code"` // 当前角色：teacher / competition_manager，供前端展示提权预判
+	RoleCode string `json:"role_code"` // 当前角色：teacher / competition_manager / college_admin，供前端展示角色
+}
+
+type ManagerLookupReq struct {
+	WorkIDs []string `json:"work_ids" binding:"required,min=1,max=5000,dive,required"`
+}
+
+// LookupManagersByWorkIDs 批量按工号查询负责人，供赛事 Excel 导入使用，避免逐条请求。
+func LookupManagersByWorkIDs(c *gin.Context) {
+	var req ManagerLookupReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "工号列表参数错误")
+		return
+	}
+
+	workIDs := make([]string, 0, len(req.WorkIDs))
+	seen := make(map[string]struct{}, len(req.WorkIDs))
+	for _, workID := range req.WorkIDs {
+		workID = strings.TrimSpace(workID)
+		if workID == "" {
+			continue
+		}
+		if _, exists := seen[workID]; exists {
+			continue
+		}
+		seen[workID] = struct{}{}
+		workIDs = append(workIDs, workID)
+	}
+	if len(workIDs) == 0 {
+		utils.Success(c, gin.H{"list": []ManagerResp{}})
+		return
+	}
+
+	query := competitionManagerCandidates(database.DB.WithContext(c.Request.Context())).Where("users.username IN ?", workIDs)
+
+	var users []models.User
+	if err := query.Select("users.id", "users.realname", "users.username", "users.college").
+		Order("users.id").Find(&users).Error; err != nil {
+		utils.InternalServerError(c, "批量查询负责人失败", err)
+		return
+	}
+
+	roleByUser := make(map[uint]string, len(users))
+	if len(users) > 0 {
+		ids := make([]uint, 0, len(users))
+		for _, user := range users {
+			ids = append(ids, user.ID)
+		}
+		var roleRows []struct {
+			UserID   uint
+			RoleCode string
+		}
+		if err := database.DB.WithContext(c.Request.Context()).
+			Table("user_roles").
+			Select("user_roles.user_id AS user_id, roles.role_code AS role_code").
+			Joins("JOIN roles ON roles.id = user_roles.role_id AND roles.delete_time IS NULL").
+			Where("user_roles.user_id IN ?", ids).
+			Scan(&roleRows).Error; err != nil {
+			utils.InternalServerError(c, "批量查询负责人角色失败", err)
+			return
+		}
+		for _, row := range roleRows {
+			roleByUser[row.UserID] = row.RoleCode
+		}
+	}
+
+	managers := make([]ManagerResp, 0, len(users))
+	for _, user := range users {
+		managers = append(managers, ManagerResp{
+			ID: user.ID, Name: user.Realname, WorkID: user.Username,
+			College: user.College, RoleCode: roleByUser[user.ID],
+		})
+	}
+	utils.Success(c, gin.H{"list": managers})
 }
 
 func GetManagerList(c *gin.Context) {
@@ -440,37 +551,13 @@ func GetManagerList(c *gin.Context) {
 		return
 	}
 
-	// 负责人池 = 教职工身份，或已持有 competition_manager 角色；
-	// 排除管理员（school_admin / college_admin）与专家（expert）、访客（guest）。
-	query := database.DB.WithContext(c.Request.Context()).Model(&models.User{}).
-		Where("users.delete_time IS NULL").
-		Where(`(
-			users.identity_type = 'staff'
-			OR EXISTS (
-				SELECT 1 FROM user_roles ur
-				JOIN roles r ON r.id = ur.role_id AND r.delete_time IS NULL
-				WHERE ur.user_id = users.id AND r.role_code = 'competition_manager'
-			)
-		)`).
-		Where(`NOT EXISTS (
-			SELECT 1 FROM user_roles ur2
-			JOIN roles r2 ON r2.id = ur2.role_id AND r2.delete_time IS NULL
-			WHERE ur2.user_id = users.id
-				AND r2.role_code IN ('school_admin', 'college_admin')
-		)`).
-		Where(`NOT EXISTS (
-			SELECT 1 FROM user_roles ur3
-			JOIN roles r3 ON r3.id = ur3.role_id AND r3.delete_time IS NULL
-			WHERE ur3.user_id = users.id
-				AND r3.role_code IN ('expert', 'guest')
-		)`)
+	// 教师、赛事负责人、院管理员共用候选规则。
+	query := competitionManagerCandidates(database.DB.WithContext(c.Request.Context()))
 
 	if req.ManagerOnly {
-		query = query.Where(`EXISTS (
-			SELECT 1 FROM user_roles ur4
-			JOIN roles r4 ON r4.id = ur4.role_id AND r4.delete_time IS NULL
-			WHERE ur4.user_id = users.id AND r4.role_code = 'competition_manager'
-		)`)
+		query = query.Where(`EXISTS (SELECT 1 FROM comp_directories cd WHERE cd.manager_id = users.id AND cd.delete_time IS NULL)
+			OR EXISTS (SELECT 1 FROM comp_declarations d WHERE d.manager_id = users.id AND d.delete_time IS NULL)
+			OR EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id AND r.delete_time IS NULL WHERE ur.user_id = users.id AND r.role_code = 'competition_manager')`)
 	}
 
 	if req.Name != "" {
@@ -550,13 +637,13 @@ func GetManagerList(c *gin.Context) {
 }
 
 func GetCompetitionYears(c *gin.Context) {
-	var years []int
-	if err := database.DB.WithContext(c.Request.Context()).
-		Model(&models.CompDirectory{}).
-		Where("year > ?", 0).
-		Distinct("year").
-		Order("year DESC").
-		Pluck("year", &years).Error; err != nil {
+	years := make([]int, 0)
+	// 合并赛事年份，使新增、导入、申报审核及编辑产生的年份立即可见。
+	// 不过滤软删除赛事，保留其恢复时需要的年度目录。
+	if err := database.DB.WithContext(c.Request.Context()).Raw(`
+		SELECT year FROM competition_years
+		UNION SELECT year FROM comp_directories WHERE year > 0
+		ORDER BY year DESC`).Scan(&years).Error; err != nil {
 		utils.InternalServerError(c, "查询年份失败", err)
 		return
 	}
@@ -710,6 +797,11 @@ func GetCompetitionDetail(c *gin.Context) {
 		return
 	}
 
+	caps, ok := competitionCapabilities(c, comp)
+	if !ok {
+		return
+	}
+	comp.Capabilities = caps
 	utils.Success(c, comp)
 }
 
@@ -744,17 +836,20 @@ func UpdateCompetition(c *gin.Context) {
 		return
 	}
 
-	// 改派约束（已决策）：仅 school_admin / college_admin 可变更负责人；
-	// competition_manager 等其他角色提交不同负责人时拒绝（防 API 直调提权）。
+	// 正式赛事仅校级管理员可以改派负责人；院管理员兼任仍只可编辑基础信息。
+	// 院管理员在申报阶段沿用原有负责人修改流程。
 	// 本次不做自动降级：改派只提升新负责人，原负责人角色保留。
 	scope, ok := requireUserAccessScope(c)
 	if !ok {
 		return
 	}
-	canReassign := scope.IsSchoolAdmin() || scope.IsCollegeAdmin()
+	if !requireCompetitionWrite(c, scope, comp, "comp:update") {
+		return
+	}
+	canReassign := scope.IsSchoolAdmin()
 	managerChanged := req.ManagerID != comp.ManagerID
 	if managerChanged && !canReassign {
-		utils.Forbidden(c, "仅管理员可以变更赛事负责人")
+		utils.Forbidden(c, "仅校级管理员可以变更赛事负责人")
 		return
 	}
 
@@ -764,6 +859,10 @@ func UpdateCompetition(c *gin.Context) {
 		return
 	}
 
+	if !scope.IsSchoolAdmin() && !equalUintPointers(comp.CollegeID, collegeID) {
+		utils.Forbidden(c, "仅校级管理员可以修改赛事所属学院")
+		return
+	}
 	year := 0
 	if req.Year != "" {
 		fmt.Sscanf(req.Year, "%d", &year)
@@ -771,6 +870,9 @@ func UpdateCompetition(c *gin.Context) {
 
 	var promotions []RolePromotion
 	err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		if err := validateCompetitionManager(c, tx, req.ManagerID, collegeID); err != nil {
+			return err
+		}
 		updates := map[string]interface{}{
 			"comp_name":  req.CompName,
 			"comp_level": req.CompLevel,
@@ -808,7 +910,7 @@ func UpdateCompetition(c *gin.Context) {
 	})
 
 	if err != nil {
-		utils.InternalServerError(c, "更新失败", err)
+		respondCompetitionMutationError(c, "更新失败", err)
 		return
 	}
 	clearCompListCache(c.Request.Context())

@@ -26,6 +26,7 @@ var uploadDirs = map[string]string{
 	"reg_attachment":   "static/reg_attachments",
 	"competition_work": "static/reg_attachments",
 	"award_proof":      "static/award_proofs",
+	"award_cert":       "static/temp", // Legacy student uploads retained this business type.
 	"temp":             "static/temp",
 }
 
@@ -268,13 +269,28 @@ func canAccessFile(ctx context.Context, c *gin.Context, fileType string, record 
 			return true
 		}
 		return isExpertForFile(ctx, uid, record.StoragePath)
-	case "award_proof":
-		return isCompManagerForFile(ctx, uid, record.StoragePath)
+	case "award_proof", "award_cert":
+		return canAccessAwardProof(ctx, uid, scope, record)
 	case "temp":
-		return false
+		// Only temporary files already attached to an accessible award can be shared.
+		return canAccessAwardProof(ctx, uid, scope, record)
 	}
 
 	return false
+}
+
+func canAccessAwardProof(ctx context.Context, uid uint, scope *UserAccessScope, record models.FileRecord) bool {
+	q := database.DB.WithContext(ctx).Model(&models.Award{}).
+		Joins("JOIN comp_directories cd ON cd.id = awards.comp_id AND cd.delete_time IS NULL").
+		Where("awards.proof_url IN ?", []string{buildDownloadURL(record.BizType, record.FileHash, record.OriginalName), record.StoragePath})
+	if scope != nil && scope.IsCollegeAdmin() && scope.ManagedCollegeID != nil {
+		q = q.Where("cd.college_id = ? OR cd.college_id IS NULL OR cd.college_id = 0 OR cd.comp_level IN ?", *scope.ManagedCollegeID, []string{"校级", "校赛"})
+	} else {
+		advisorRole := scope != nil && (scope.RoleCode == "teacher" || scope.RoleCode == "competition_manager")
+		q = q.Where(`cd.manager_id = ? OR EXISTS (SELECT 1 FROM award_members am WHERE am.award_id = awards.id AND am.student_id = ? AND am.delete_time IS NULL) OR EXISTS (SELECT 1 FROM registers r WHERE r.id = awards.reg_id AND r.leader_id = ? AND r.delete_time IS NULL) OR (? AND EXISTS (SELECT 1 FROM award_advisors aa JOIN users u ON u.username = aa.username AND u.delete_time IS NULL AND u.identity_type = 'staff' WHERE aa.award_id = awards.id AND aa.delete_time IS NULL AND u.id = ?))`, uid, uid, uid, advisorRole, uid)
+	}
+	var count int64
+	return q.Count(&count).Error == nil && count > 0
 }
 
 // findCompIDByStoragePath 根据文件物理路径找到关联赛事的 comp_id

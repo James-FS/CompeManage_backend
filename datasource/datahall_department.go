@@ -14,9 +14,10 @@ import (
 )
 
 type deptItem struct {
-	OrgCode  *string `json:"D_STATIC_ORG_CODE"`
-	OrgName  *string `json:"D_STATIC_ORG_NAME"`
-	OrgEname *string `json:"D_STATIC_ORG_ENAME"`
+	OrgCode    *string `json:"D_STATIC_ORG_CODE"`
+	OrgName    *string `json:"D_STATIC_ORG_NAME"`
+	OrgEname   *string `json:"D_STATIC_ORG_ENAME"`
+	OrgIsValid *string `json:"D_STATIC_ORG_IS_VALID"`
 }
 
 type deptDataResult struct {
@@ -130,6 +131,22 @@ func SyncDepartments() {
 			continue
 		}
 		ename := derefStr(item.OrgEname)
+		if derefStr(item.OrgIsValid) != "1" {
+			// 保留无效部门的历史记录；按名称回退仅匹配尚无机构代码的记录。
+			// 空代码不能匹配其他部门，同名但不同代码的有效机构也不能被禁用。
+			result := database.DB.Model(&models.Department{}).
+				Where("(code = ? AND code <> '') OR (name = ? AND (code = '' OR code IS NULL))", code, name).
+				Where("is_valid = ?", true).
+				Update("is_valid", false)
+			if result.Error != nil {
+				log.Printf("[DataHall-Dept] 禁用部门 %s 失败: %v", name, result.Error)
+				failed++
+			} else {
+				updated += int(result.RowsAffected)
+				skipped++
+			}
+			continue
+		}
 
 		var dept models.Department
 		found := false
@@ -151,14 +168,15 @@ func SyncDepartments() {
 		}
 
 		if found {
-			if dept.Name == name && dept.Code == code && dept.Ename == ename {
+			if dept.Name == name && dept.Code == code && dept.Ename == ename && dept.IsValid {
 				skipped++
 				continue
 			}
 			if err := database.DB.Model(&dept).Updates(map[string]interface{}{
-				"name":  name,
-				"code":  code,
-				"ename": ename,
+				"name":     name,
+				"code":     code,
+				"ename":    ename,
+				"is_valid": true,
 			}).Error; err != nil {
 				log.Printf("[DataHall-Dept] 更新部门 %s 失败: %v", name, err)
 				failed++
@@ -167,9 +185,10 @@ func SyncDepartments() {
 			updated++
 		} else {
 			if err := database.DB.Create(&models.Department{
-				Name:  name,
-				Code:  code,
-				Ename: ename,
+				Name:    name,
+				Code:    code,
+				Ename:   ename,
+				IsValid: true,
 			}).Error; err != nil {
 				log.Printf("[DataHall-Dept] 创建部门 %s 失败: %v", name, err)
 				failed++

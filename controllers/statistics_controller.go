@@ -20,13 +20,14 @@ import (
 )
 
 type competitionStatItem struct {
-	ID            uint   `json:"id"`
-	CompName      string `json:"comp_name"`
-	CompLevel     string `json:"comp_level"`
-	CollegeName   string `json:"college_name"`
-	RegCount      int64  `json:"reg_count"`      // 报名人数
-	AwardCount    int64  `json:"award_count"`    // 获奖人数
-	SummaryStatus int8   `json:"summary_status"` // 总结状态：0未归档 1已归档
+	ID             uint   `json:"id"`
+	CompName       string `json:"comp_name"`
+	CompLevel      string `json:"comp_level"`
+	CollegeName    string `json:"college_name"`
+	RegCount       int64  `json:"reg_count"`   // 报名人数
+	AwardCount     int64  `json:"award_count"` // 获奖人数
+	AwardTeamCount int64  `json:"award_team_count"`
+	SummaryStatus  int8   `json:"summary_status"` // 总结状态：0未归档 1已归档
 }
 
 type levelDistributionItem struct {
@@ -67,7 +68,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 	if scope.ManagedCollegeID != nil {
 		managedCollegeID = *scope.ManagedCollegeID
 	}
-	cacheKey := fmt.Sprintf("cache:stats:dashboard:%d:%s:%d", scope.UserID, scope.RoleCode, managedCollegeID)
+	cacheKey := fmt.Sprintf("cache:stats:dashboard:v2:%d:%s:%d", scope.UserID, scope.RoleCode, managedCollegeID)
 	rdb := middleware.GetRedisClient()
 	ctx := c.Request.Context()
 
@@ -98,8 +99,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 
 	newAwardBase := func() *gorm.DB {
 		q := database.DB.WithContext(ctx).Model(&models.Award{}).
-			Joins("JOIN registers ON registers.id = awards.reg_id").
-			Joins("JOIN comp_directories ON comp_directories.id = registers.comp_id")
+			Joins("JOIN comp_directories ON comp_directories.id = awards.comp_id")
 		return applyCompetitionScope(q, scope, "comp_directories")
 	}
 
@@ -147,6 +147,8 @@ func GetStatisticsDashboard(c *gin.Context) {
 	_ = newAwardBase().Where("awards.status IN ?", []string{"draft", "pending", "0"}).Count(&awardPending).Error
 	var awardApproved int64
 	_ = newAwardBase().Where("awards.status IN ?", []string{"approved", "1"}).Count(&awardApproved).Error
+	var awardStudents int64
+	_ = newAwardBase().Joins("JOIN award_members ON award_members.award_id = awards.id AND award_members.delete_time IS NULL").Where("awards.status IN ?", []string{"approved", "1"}).Count(&awardStudents).Error
 
 	var summaryArchived int64
 	_ = newSummaryBase().Where("summaries.status = ?", 1).Count(&summaryArchived).Error
@@ -241,7 +243,8 @@ func GetStatisticsDashboard(c *gin.Context) {
 		Joins("LEFT JOIN colleges ON colleges.id = comp_directories.college_id").
 		Select("comp_directories.id, comp_directories.comp_name, comp_directories.comp_level, COALESCE(colleges.name, '未知学院') as college_name, " +
 			"(SELECT COUNT(*) FROM registers WHERE registers.comp_id = comp_directories.id) as reg_count, " +
-			"(SELECT COUNT(*) FROM awards JOIN registers ON awards.reg_id = registers.id WHERE registers.comp_id = comp_directories.id AND (awards.status = '1' OR awards.status = 'approved')) as award_count, " +
+			"(SELECT COUNT(*) FROM award_members JOIN awards ON awards.id = award_members.award_id WHERE awards.comp_id = comp_directories.id AND award_members.delete_time IS NULL AND awards.delete_time IS NULL AND (awards.status = '1' OR awards.status = 'approved')) as award_count, " +
+			"(SELECT COUNT(*) FROM awards WHERE awards.comp_id = comp_directories.id AND awards.delete_time IS NULL AND awards.status IN ('approved','1')) as award_team_count, " +
 			"COALESCE((SELECT status FROM summaries WHERE summaries.comp_id = comp_directories.id LIMIT 1), 0) as summary_status").
 		Scan(&compStats).Error
 
@@ -259,6 +262,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 				"total_registrations":    totalRegistrations,
 				"pending_audits":         pendingAudits,
 				"total_awards":           awardApproved,
+				"total_award_students":   awardStudents,
 				"registration_pass_rate": calcPercent(regPassed, totalRegistrations),
 				"summary_archive_rate":   calcPercent(summaryArchived, totalCompetitions),
 			},

@@ -33,7 +33,7 @@ func setupPermDBMock(t *testing.T) sqlmock.Sqlmock {
 
 func TestGetAllPermissions_Success(t *testing.T) {
 	mock := setupPermDBMock(t)
-	defer mock.ExpectationsWereMet()
+	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
 
 	mock.ExpectQuery("SELECT .* FROM `permissions`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "code", "type"}).
@@ -51,7 +51,7 @@ func TestGetAllPermissions_Success(t *testing.T) {
 
 func TestGetAllPermissions_EmptyList(t *testing.T) {
 	mock := setupPermDBMock(t)
-	defer mock.ExpectationsWereMet()
+	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
 
 	mock.ExpectQuery("SELECT .* FROM `permissions`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "code", "type"}))
@@ -65,7 +65,7 @@ func TestGetAllPermissions_EmptyList(t *testing.T) {
 
 func TestGetAllPermissions_DBError(t *testing.T) {
 	mock := setupPermDBMock(t)
-	defer mock.ExpectationsWereMet()
+	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
 
 	mock.ExpectQuery("SELECT .* FROM `permissions`").
 		WillReturnError(fmt.Errorf("db error"))
@@ -80,7 +80,7 @@ func TestGetAllPermissions_DBError(t *testing.T) {
 
 func TestGetAllRoles_Success(t *testing.T) {
 	mock := setupPermDBMock(t)
-	defer mock.ExpectationsWereMet()
+	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
 
 	mock.ExpectQuery("SELECT .* FROM `roles`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "role_name", "role_code"}).
@@ -107,7 +107,7 @@ func TestGetAllRoles_Success(t *testing.T) {
 
 func TestGetAllRoles_EmptyList(t *testing.T) {
 	mock := setupPermDBMock(t)
-	defer mock.ExpectationsWereMet()
+	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
 
 	mock.ExpectQuery("SELECT .* FROM `roles`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "role_name", "role_code"}))
@@ -123,7 +123,7 @@ func TestGetAllRoles_EmptyList(t *testing.T) {
 
 func TestAssignPermissions_BadRequest(t *testing.T) {
 	mock := setupPermDBMock(t)
-	defer mock.ExpectationsWereMet()
+	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
 
 	// 缺少 role_id
 	body := map[string]interface{}{"perm_ids": []uint{1, 2}}
@@ -136,7 +136,7 @@ func TestAssignPermissions_BadRequest(t *testing.T) {
 
 func TestAssignPermissions_BadRequest_EmptyBody(t *testing.T) {
 	mock := setupPermDBMock(t)
-	defer mock.ExpectationsWereMet()
+	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
 
 	body := map[string]interface{}{}
 	_, w, c := buildAuthPOSTJSON(body)
@@ -147,7 +147,7 @@ func TestAssignPermissions_BadRequest_EmptyBody(t *testing.T) {
 
 func TestAssignPermissions_RoleNotFound(t *testing.T) {
 	mock := setupPermDBMock(t)
-	defer mock.ExpectationsWereMet()
+	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
 
 	mock.ExpectQuery("SELECT .* FROM `roles`").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
@@ -162,7 +162,7 @@ func TestAssignPermissions_RoleNotFound(t *testing.T) {
 
 func TestAssignPermissions_Success_WithPerms(t *testing.T) {
 	mock := setupPermDBMock(t)
-	defer mock.ExpectationsWereMet()
+	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
 
 	// 查找角色
 	mock.ExpectQuery("SELECT .* FROM `roles`").
@@ -174,7 +174,7 @@ func TestAssignPermissions_Success_WithPerms(t *testing.T) {
 			AddRow(2, "用户创建", "user:create"))
 	// Association Replace: 更新角色时间戳 + 删除旧关联 + 插入新关联
 	mock.ExpectBegin()
-	mock.ExpectExec("UPDATE `roles`").
+	mock.ExpectExec("UPDATE `roles` SET .*`permission_version`=permission_version [\\+] 1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("DELETE FROM `role_permissions`").
 		WillReturnResult(sqlmock.NewResult(0, 2))
@@ -192,7 +192,7 @@ func TestAssignPermissions_Success_WithPerms(t *testing.T) {
 
 func TestAssignPermissions_Success_EmptyPerms(t *testing.T) {
 	mock := setupPermDBMock(t)
-	defer mock.ExpectationsWereMet()
+	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
 
 	// 查找角色
 	mock.ExpectQuery("SELECT .* FROM `roles`").
@@ -200,7 +200,7 @@ func TestAssignPermissions_Success_EmptyPerms(t *testing.T) {
 	// perm_ids 为空，不查询权限
 	// Association Replace: 更新角色时间戳 + 删除旧关联
 	mock.ExpectBegin()
-	mock.ExpectExec("UPDATE `roles`").
+	mock.ExpectExec("UPDATE `roles` SET .*`permission_version`=permission_version [\\+] 1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("DELETE FROM `role_permissions`").
 		WillReturnResult(sqlmock.NewResult(0, 0))
@@ -214,7 +214,7 @@ func TestAssignPermissions_Success_EmptyPerms(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "权限分配成功")
 }
 
-func TestAssignPermissions_CacheAndRetryQueueFailureReturnsTruthfulResponse(t *testing.T) {
+func TestAssignPermissions_RedisUnavailableDoesNotScanUsersOrQueueTasks(t *testing.T) {
 	mock := setupPermDBMock(t)
 	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
 
@@ -237,31 +237,21 @@ func TestAssignPermissions_CacheAndRetryQueueFailureReturnsTruthfulResponse(t *t
 	mock.ExpectQuery("SELECT .* FROM `roles`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "role_name", "role_code"}).AddRow(1, "管理员", "admin"))
 	mock.ExpectBegin()
-	mock.ExpectExec("UPDATE `roles`").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("UPDATE `roles` SET .*`permission_version`=permission_version [\\+] 1").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("DELETE FROM `role_permissions`").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
-	mock.ExpectQuery("SELECT `user_id` FROM `user_roles` WHERE role_id = .*").
-		WithArgs(uint(1)).
-		WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow(7))
-	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO `permission_cache_invalidation_tasks`").
-		WillReturnError(fmt.Errorf("queue db unavailable"))
-	mock.ExpectRollback()
-
 	body := AssignPermReq{RoleID: 1, PermIDs: []uint{}}
 	_, w, c := buildAuthPOSTJSON(body)
 	AssignPermissions(c)
 
-	assert.Equal(t, http.StatusAccepted, w.Code)
-	assert.Contains(t, w.Body.String(), "未能创建重试任务")
-	assert.Contains(t, w.Body.String(), `"retry_queue_failed_users":[7]`)
-	assert.Contains(t, w.Body.String(), `"manual_follow_up_required":true`)
-	assert.Contains(t, w.Body.String(), `"cache_ttl_seconds":300`)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "权限分配成功")
+
 }
 
 func TestAssignPermissions_RoleDBError(t *testing.T) {
 	mock := setupPermDBMock(t)
-	defer mock.ExpectationsWereMet()
+	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
 
 	mock.ExpectQuery("SELECT .* FROM `roles`").
 		WillReturnError(fmt.Errorf("db error"))
@@ -272,4 +262,18 @@ func TestAssignPermissions_RoleDBError(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assert.Contains(t, w.Body.String(), "服务器内部错误")
+}
+
+// 权限关联更新失败时，版本递增必须随事务一起回滚。
+func TestAssignPermissions_RollsBackVersionWhenReplacingPermissionsFails(t *testing.T) {
+	mock := setupPermDBMock(t)
+	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
+	mock.ExpectQuery("SELECT .* FROM `roles`").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `roles` SET .*`permission_version`=permission_version [\\+] 1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM `role_permissions`").WillReturnError(fmt.Errorf("delete failed"))
+	mock.ExpectRollback()
+	_, w, c := buildAuthPOSTJSON(AssignPermReq{RoleID: 1, PermIDs: []uint{}})
+	AssignPermissions(c)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }

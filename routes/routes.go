@@ -111,14 +111,20 @@ func SetupRoutes(r *gin.Engine) {
 		comp.GET("/manager/list",
 			middleware.RequirePermission("manager:list"),
 			controllers.GetManagerList)
+		comp.POST("/manager/lookup-by-work-ids",
+			middleware.RequirePermission("manager:list"),
+			controllers.LookupManagersByWorkIDs)
 		comp.GET("/years",
 			middleware.RequirePermission("comp:years:list"),
 			controllers.GetCompetitionYears)
+		comp.POST("/years", middleware.RequireRole("school_admin"), controllers.CreateCompetitionYear)
+		comp.PUT("/years/:year", middleware.RequireRole("school_admin"), controllers.UpdateCompetitionYear)
+		comp.DELETE("/years/:year", middleware.RequireRole("school_admin"), controllers.DeleteCompetitionYear)
 		comp.GET("/:id",
 			middleware.RequirePermission("comp:detail"),
 			controllers.GetCompetitionDetail)
 		comp.PUT("/:id",
-			middleware.RequirePermission("comp:update"),
+			middleware.RequireAnyPermission("comp:update", "comp:update:own"),
 			controllers.UpdateCompetition)
 	}
 
@@ -172,7 +178,7 @@ func SetupRoutes(r *gin.Engine) {
 	reg := r.Group("/api/reg", middleware.AuthRequired())
 	{
 		reg.POST("/config",
-			middleware.RequirePermission("reg:config:edit"),
+			middleware.RequireAnyPermission("reg:config:edit", "reg:config:edit:own"),
 			controllers.SaveRegConfig)
 		reg.GET("/config/get",
 			middleware.RequirePermission("reg:config:view"),
@@ -214,6 +220,10 @@ func SetupRoutes(r *gin.Engine) {
 
 	award := r.Group("/api/award", middleware.AuthRequired())
 	{
+		award.GET("/advisor/list", middleware.RequirePermission("award:advisor:list"), controllers.GetAdvisorAwards)
+		award.GET("/:id/changes", controllers.GetAwardChanges)
+		award.GET("/advisor/:id", middleware.RequirePermission("award:advisor:list"), controllers.GetAdvisorAwardDetail)
+		award.PUT("/advisor/:id", middleware.RequirePermission("award:advisor:update"), controllers.UpdateAdvisorAward)
 		award.GET("/list",
 			middleware.RequirePermission("award:list"),
 			controllers.GetAwardCompList)
@@ -223,8 +233,22 @@ func SetupRoutes(r *gin.Engine) {
 		award.POST("/import",
 			middleware.RequirePermission("award:import"),
 			controllers.ImportAward)
+		award.POST("/import/preview", middleware.RequirePermission("award:import"), controllers.PreviewAwardImport)
+		award.GET("/import/settings", controllers.GetAwardImportSetting)
+		award.PUT("/import/settings", controllers.UpdateAwardImportSetting)
+		award.PUT("/members/:id", middleware.RequirePermission("award:import"), controllers.UpdateAwardMember)
+		award.PUT("/teams/:id", middleware.RequirePermission("award:import"), controllers.UpdateAwardTeam)
 		award.GET("/export-template",
 			controllers.ExportAwardTemplate)
+		award.GET("/export/projects",
+			middleware.RequirePermission("award:list"),
+			controllers.ExportAwardProjects)
+		award.GET("/export/students",
+			middleware.RequirePermission("award:list"),
+			controllers.ExportAwardStudents)
+		award.GET("/export/report",
+			middleware.RequirePermission("award:list"),
+			controllers.ExportAwardReport)
 		award.GET("/comp/list",
 			controllers.SearchCompetition)
 		award.GET("/student/my-awards",
@@ -262,7 +286,7 @@ func SetupRoutes(r *gin.Engine) {
 			controllers.GetSummaryDetail,
 		)
 		summary.POST("/:id",
-			middleware.RequirePermission("summary:edit"),
+			middleware.RequireAnyPermission("summary:edit", "summary:edit:own"),
 			controllers.SaveSummary,
 		)
 	}

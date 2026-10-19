@@ -8,6 +8,9 @@
 *.png
 *.pdf
 *.xlsx
+# 内置导出模板需要随代码发布
+!controllers/templates/award_projects.xlsx
+!controllers/templates/award_students.xlsx
 *.doc
 *.docx
 *.jpg
@@ -23,11 +26,16 @@ coverage
 vendor/
 
 # Go workspace file
-go. work
+go.work
 
 # Environment variables
 .env
-.env. local
+.env.*
+!.env.example
+
+# Production deployment files contain private environment settings
+/docker-compose.prod.yml
+/config/config-prod.yaml
 
 # IDE
 .vscode/
@@ -42,16 +50,19 @@ Thumbs.db
 
 # Project specific
 dist/
+static/
 public/upload/*
 !public/upload/.gitkeep
 
 logs/
 *.log
+*.log.*
 *.logger
+*.logger.*
 coverage.txt
 # Docker MySQL data
 mysql_data/
 app.logger
-server
-logger/app.logger
-logger/app.logger
+/benchmark-results/
+/server
+/FETCH_HEAD

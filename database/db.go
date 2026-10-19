@@ -77,12 +77,17 @@ func autoMigrate() {
 		&models.College{},
 		&models.Department{},
 		&models.CompDirectory{},
+		&models.CompetitionYear{},
 		&models.CompDetail{},
 		&models.Register{},
 		&models.RegMember{},
 		&models.Notice{},
 		&models.CompDeclaration{},
 		&models.Award{},
+		&models.AwardMember{},
+		&models.AwardAdvisor{},
+		&models.AwardChange{},
+		&models.AwardImportSetting{},
 		&models.Summary{},
 		&models.FileRecord{},
 		&models.ReviewTask{},
@@ -98,6 +103,17 @@ func autoMigrate() {
 		log.Fatalf("数据库自动迁移失败：%v", err)
 	}
 	log.Println("数据库自动迁移成功")
+	// 包括可恢复的软删除赛事；重复启动不会重复创建目录。
+	if err := DB.Exec(`INSERT IGNORE INTO competition_years (year)
+		SELECT DISTINCT year FROM comp_directories WHERE year > 0`).Error; err != nil {
+		log.Fatalf("年度目录兼容迁移失败: %v", err)
+	}
+	if err := BackfillAwardMembers(DB); err != nil {
+		log.Fatalf("获奖数据兼容迁移失败: %v", err)
+	}
+	if err := BackfillAwardAdvisors(DB); err != nil {
+		log.Fatalf("指导教师关联迁移失败: %v", err)
+	}
 }
 
 // GetDB 获取DB实例（方便其他模块调用）
