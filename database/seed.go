@@ -3,7 +3,6 @@ package database
 import (
 	"CompeManage_backend/models"
 	"log"
-	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -379,44 +378,7 @@ func ensureTestUsers() {
 	}
 }
 
-// ensureExpertUsers 确保种子专家用户存在（增量更新时不会丢失新增的专家账号）
-func ensureExpertUsers() {
-	var expertRole models.Role
-	if err := DB.Where("role_code = ?", "expert").First(&expertRole).Error; err != nil {
-		return
-	}
-
-	experts := []models.User{
-		{Username: "E2023001", Realname: "周杰", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子工程", IdentityType: "external"},
-		{Username: "E2023002", Realname: "李专家", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "计算机科学与技术", IdentityType: "external"},
-	}
-
-	for _, u := range experts {
-		var existing models.User
-		if DB.Where("username = ?", u.Username).First(&existing).Error == nil {
-			continue
-		}
-		if err := DB.Transaction(func(tx *gorm.DB) error {
-			if err := tx.Create(&u).Error; err != nil {
-				return err
-			}
-			return SetUserRole(tx, u.ID, expertRole.ID)
-		}); err != nil {
-			log.Printf("创建专家用户 %s 失败: %v", u.Username, err)
-			continue
-		}
-		log.Printf("已补创建专家用户: %s", u.Username)
-	}
-}
-
-// ensureCompetitionRegConfigForAll 为已有赛事补齐报名设置的关键字段：
-// 报名开始/结束时间 + 个人赛/团队赛(ParticipantType)。
-// InitData 扩展版测试数据初始化
-// 功能：
-// 1. 扩充竞赛数据（新增更多竞赛信息）
-// 2. 每个角色至少对应一个账号
-// 3. 自动注入 routes 中 RequirePermission 中间件配置的权限
-// 4. 竞赛负责人自动获取对应路由权限
+// InitData 初始化角色、权限、学院及保留的人工测试账号。
 func InitData() {
 	// 1. 先检查是否已经有数据了，防止重复插入
 	var count int64
@@ -432,12 +394,11 @@ func InitData() {
 		ensureUserPickerPermissions()
 		ensureReviewPermissions()
 		ensureUserManagePermissions()
-		ensureExpertUsers()
 		ensureTestUsers()
 		return
 	}
 
-	log.Println("正在初始化扩展版模拟数据...")
+	log.Println("正在初始化角色、权限和学院基础数据...")
 
 	// ==========================================
 	// 1. 初始化权限 (Permission) - 按SQL结构构建树形
@@ -728,65 +689,8 @@ func InitData() {
 	// 不分配任何权限
 
 	// ==========================================
-	// 4. 初始化用户 (User) - 保持不变
+	// 4. 初始化学院数据
 	// ==========================================
-	users := []models.User{
-		{Username: "T2023001", Realname: "李老师", Password: hashPassword("123"), College: "教务处", Grade: "教职员工", Major: "管理"},
-		{Username: "T2023002", Realname: "王老师", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "管理"},
-		{Username: "T2023003", Realname: "张伟", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "计算机科学"},
-		{Username: "T2023004", Realname: "李华", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子信息"},
-		{Username: "T2023010", Realname: "陈老师", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "软件工程"},
-		{Username: "T2023011", Realname: "刘老师", Password: hashPassword("123"), College: "数学学院", Grade: "教职员工", Major: "数学与应用数学"},
-		{Username: "T2023012", Realname: "何老师", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子科学与技术"},
-		{Username: "S2024001", Realname: "林晓明", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "2024级", Major: "计算机科学与技术"},
-		{Username: "S2024002", Realname: "陈思思", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "2024级", Major: "软件工程"},
-		{Username: "E2023001", Realname: "周杰", Password: hashPassword("123"), College: "电子信息工程学院", Grade: "教职员工", Major: "电子工程"},
-		{Username: "E2023002", Realname: "李专家", Password: hashPassword("123"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "计算机科学与技术"},
-		// 新增：无权限测试用户
-		{Username: "guest", Realname: "访客用户", Password: hashPassword("123"), College: "其他", Grade: "访客", Major: ""},
-	}
-
-	// 用户-角色映射
-	userRoleMap := map[string]*models.Role{
-		"T2023001": &schoolAdminRole,        // 李校长 - 校级管理员
-		"T2023002": &collegeAdminRole,       // 王院长 - 院级管理员
-		"T2023003": &competitionManagerRole, // 张伟 - 赛事负责人
-		"T2023004": &competitionManagerRole, // 李华 - 赛事负责人
-		"T2023010": &teacherRole,            // 陈老师 - 老师
-		"T2023011": &teacherRole,            // 刘老师 - 老师
-		"T2023012": &teacherRole,            // 何老师 - 老师
-		"S2024001": &studentRole,            // 林晓明 - 学生
-		"S2024002": &studentRole,            // 陈思思 - 学生
-		"E2023001": &expertRole,             // 周杰 - 专家
-		"E2023002": &expertRole,             // 李专家 - 专家
-		"guest":    &guestRole,              // 访客账号使用 guest 角色
-	}
-
-	for _, u := range users {
-		switch {
-		case strings.HasPrefix(u.Username, "S"):
-			u.IdentityType = "student"
-		case strings.HasPrefix(u.Username, "E") || u.Username == "guest":
-			u.IdentityType = "external"
-		default:
-			u.IdentityType = "staff"
-		}
-		role, ok := userRoleMap[u.Username]
-		if !ok {
-			log.Printf("用户 %s 未配置默认角色，跳过创建", u.Username)
-			continue
-		}
-		if err := DB.Transaction(func(tx *gorm.DB) error {
-			if err := tx.Create(&u).Error; err != nil {
-				return err
-			}
-			return SetUserRole(tx, u.ID, role.ID)
-		}); err != nil {
-			log.Printf("创建用户 %s 失败: %v", u.Username, err)
-			continue
-		}
-	}
-
 	// 初始化学院数据
 	colleges := []models.College{
 		{ID: 1, Name: "计算机科学与网络工程学院"},
@@ -807,21 +711,9 @@ func InitData() {
 			log.Printf("初始化学院数据失败: %v", err)
 		}
 	}
-	// 示例院管理员绑定管理学院。
-	DB.Model(&models.User{}).Where("username = ?", "T2023002").
-		Update("managed_college_id", uint(1))
 	log.Println("学院数据初始化完成")
 
-	log.Println("🎉 基础数据初始化完成（未写入任何比赛相关种子）！")
-	log.Println("================================")
-	log.Println("📋 用户账号信息：")
-	log.Println("  校级管理员: T2023001    密码: 123 (拥有所有权限)")
-	log.Println("  院级管理员: T2023002     密码: 123 (本学院竞赛/申报查看+报名审核+报名配置查看)")
-	log.Println("  赛事负责人: T2023003/T2023004  密码: 123 (竞赛管理+申报管理+报名配置编辑+报名审核)")
-	log.Println("  老师:       T2023010/T2023011/T2023012  密码: 123 (用于指导教师选择)")
-	log.Println("  学生:       S2024001  密码: 123 (报名提交+通知查看)")
-	log.Println("  专家:       E2023001/E2023002   密码: 123 (竞赛查看+申报查看+获奖查看+通知查看)")
-	log.Println("  访客:       guest    密码: 123 (无任何权限-测试用)")
+	log.Println("基础数据初始化完成（不创建历史示例账号或比赛相关种子）")
 	log.Println("================================")
 	log.Println("🔐 新权限结构说明：")
 	log.Println("  第1层: 竞赛管理(competition)、报名管理(registration)、通知管理(notice)、系统管理(system)")
