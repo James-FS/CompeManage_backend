@@ -157,13 +157,14 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 		require.NoError(t, db.Where("student_id = ?", studentB.ID).First(&m).Error)
 		require.Equal(t, ca.ID, *m.SubmittedCollegeID)
 	})
-	t.Run("conflict is atomic", func(t *testing.T) {
+	t.Run("conflicting rows are skipped", func(t *testing.T) {
 		fresh := rowA
 		fresh.ProjectName = "应回滚的新项目"
 		conflict := rowB
 		conflict.AwardName = "二等奖"
 		w := importRows([]AwardImportRow{fresh, conflict})
-		require.Equal(t, 400, w.Code, w.Body.String())
+		require.Equal(t, 200, w.Code, w.Body.String())
+		require.Contains(t, w.Body.String(), `"fail_count":2`)
 		var n int64
 		require.NoError(t, db.Model(&models.Award{}).Count(&n).Error)
 		require.EqualValues(t, 1, n)
@@ -212,10 +213,12 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 		w = invoke("PUT", "/settings", "school_admin", nil, studentA.ID, map[string]interface{}{"require_registration": true}, UpdateAwardImportSetting)
 		require.Equal(t, 200, w.Code)
 		w = importRows([]AwardImportRow{rowA})
-		require.Equal(t, 400, w.Code)
+		require.Equal(t, 200, w.Code)
+		require.Contains(t, w.Body.String(), `"fail_count":1`)
 		require.Contains(t, w.Body.String(), "报名")
 		w = invoke("POST", fmt.Sprintf("/api/award/import?comp_id=%d", own.ID), "college_admin", &ca.ID, studentA.ID, map[string]interface{}{"rows": []AwardImportRow{rowA}}, ImportAward)
-		require.Equal(t, 400, w.Code)
+		require.Equal(t, 200, w.Code)
+		require.Contains(t, w.Body.String(), `"fail_count":1`)
 		reg := models.Register{CompID: school.ID, LeaderID: studentA.ID, TeamName: "原报名名称", Status: 1, AdvisorInfo: "{}"}
 		require.NoError(t, db.Create(&reg).Error)
 		require.NoError(t, db.Create(&models.RegMember{RegID: reg.ID, StudentID: studentB.Username, Name: studentB.Realname}).Error)

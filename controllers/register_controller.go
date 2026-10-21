@@ -107,6 +107,7 @@ type UserListResp struct {
 	Username string `json:"username"`
 	College  string `json:"college"`
 	Grade    string `json:"grade"`
+	RoleCode string `json:"role_code,omitempty"`
 }
 
 type WorkAuditCompListReq struct {
@@ -1650,6 +1651,8 @@ func GetUserList(c *gin.Context) {
 				WHERE ur.user_id = users.id
 					AND r.role_code IN ('school_admin', 'college_admin', 'expert', 'guest')
 			)`)
+	} else if req.Role == "award_advisor" {
+		query = awardAdvisorCandidates(database.DB.WithContext(ctx).Model(&models.User{}))
 	} else {
 		query = database.DB.WithContext(ctx).Model(&models.User{}).
 			Joins("LEFT JOIN user_roles ON user_roles.user_id = users.id").
@@ -1685,15 +1688,46 @@ func GetUserList(c *gin.Context) {
 		return
 	}
 
+	roleByUser := make(map[uint]string)
+	if req.Role == "award_advisor" && len(users) > 0 {
+		ids := make([]uint, 0, len(users))
+		for _, user := range users {
+			ids = append(ids, user.ID)
+		}
+		var roleRows []struct {
+			UserID   uint
+			RoleCode string
+		}
+		if err := database.DB.WithContext(ctx).
+			Table("user_roles").
+			Select("user_roles.user_id AS user_id, roles.role_code AS role_code").
+			Joins("JOIN roles ON roles.id = user_roles.role_id AND roles.delete_time IS NULL").
+			Where("user_roles.user_id IN ?", ids).
+			Scan(&roleRows).Error; err != nil {
+			utils.InternalServerError(c, "查询指导老师角色失败", err)
+			return
+		}
+		for _, row := range roleRows {
+			roleByUser[row.UserID] = row.RoleCode
+		}
+	}
+
 	var respList []UserListResp
 	for _, user := range users {
-		respList = append(respList, UserListResp{
+		item := UserListResp{
 			ID:       user.ID,
 			Name:     user.Realname,
 			Username: user.Username,
 			College:  user.College,
 			Grade:    user.Grade,
-		})
+		}
+		if req.Role == "award_advisor" {
+			item.RoleCode = roleByUser[user.ID]
+			if item.RoleCode == "" {
+				item.RoleCode = "teacher"
+			}
+		}
+		respList = append(respList, item)
 	}
 
 	respData := gin.H{

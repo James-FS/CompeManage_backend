@@ -113,10 +113,9 @@ func clearAwardCache(ctx context.Context, compID interface{}) {
 	cacheKey := fmt.Sprintf("cache:awards:%v", compID)
 	if rdb != nil {
 		rdb.Del(ctx, cacheKey)
-		keys, err := rdb.Keys(ctx, "cache:stats:dashboard:*").Result()
-		if err == nil && len(keys) > 0 {
-			rdb.Del(ctx, keys...)
-		}
+		// Dashboard cache keys include this generation. Advancing it invalidates
+		// every scope without synchronously scanning Redis with KEYS.
+		rdb.Incr(ctx, "cache:stats:dashboard:generation")
 	}
 }
 func getLeaderMember(members []models.RegMember, fallback models.User) (string, string, string, string) {

@@ -3,15 +3,118 @@ package controllers
 import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/models"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 const awardImportBatchSize = 500
+
+// Validate shared team fields before looking at individual students, so a
+// conflicting row cannot silently leave the first member's team imported.
+func validateAwardImportTeams(data *awardImportLookup, rows []AwardImportRow) map[string]string {
+	errorsByTeam := map[string]string{}
+	firstRows := map[string]AwardImportRow{}
+	advisorCache := map[string][]models.AdvisorInfo{}
+	for _, row := range rows {
+		row.ProjectName = strings.TrimSpace(row.ProjectName)
+		if row.ProjectName == "" {
+			continue
+		}
+		key := database.AwardProjectKey(row.ProjectName)
+		if errorsByTeam[key] != "" {
+			continue
+		}
+		fail := func(message string) { errorsByTeam[key] = "该团队未导入：" + message }
+		if utf8.RuneCountInString(row.ProjectName) > 255 || utf8.RuneCountInString(row.AwardName) > 100 {
+			fail("项目或奖项超出长度限制")
+			continue
+		}
+		var err error
+		row.Category, err = normalizeAwardCategory(row.Category)
+		if err != nil {
+			fail(err.Error())
+			continue
+		}
+		row.AwardName, err = normalizeAwardName(row.AwardName)
+		if err != nil {
+			fail(err.Error())
+			continue
+		}
+		month, err := parseAwardImportDate(row.AwardMonth)
+		if err != nil {
+			fail(err.Error())
+			continue
+		}
+		row.AwardMonth = month.Format("2006-01")
+		row.AdvisorUsernames = normalizeAdvisorList(row.AdvisorUsernames)
+		row.AdvisorColleges = normalizeAdvisorList(row.AdvisorColleges)
+		if row.AdvisorUsernames != "" {
+			cacheKey := row.AdvisorUsernames + "\x00" + row.AdvisorColleges
+			if _, ok := advisorCache[cacheKey]; !ok {
+				pairs, err := resolveAwardAdvisorsWithLookup(row.AdvisorUsernames, row.AdvisorColleges, data.teacher)
+				if err != nil {
+					fail(err.Error())
+					continue
+				}
+				advisorCache[cacheKey] = pairs
+			}
+		}
+		if first, ok := firstRows[key]; ok && (first.Category != row.Category || first.AwardName != row.AwardName || first.AwardMonth != row.AwardMonth || first.AdvisorUsernames != row.AdvisorUsernames) {
+			fail("同一团队的获奖类别、等级、时间或指导教师不一致")
+			continue
+		}
+		firstRows[key] = row
+		awards := append([]models.Award(nil), data.awards[key]...)
+		awards = append(awards, data.legacyAwards[row.ProjectName]...)
+		if len(awards) > 1 {
+			fail("历史同名奖项冲突，请校级管理员先更正项目名称")
+			continue
+		}
+		if len(awards) == 0 {
+			continue
+		}
+		award := awards[0]
+		if award.Status != "approved" {
+			fail("该团队已有待审核或驳回奖项，不能通过导入覆盖")
+			continue
+		}
+		name, err := normalizeAwardName(award.AwardName)
+		if err != nil {
+			name = award.AwardName
+		}
+		storedMonth := ""
+		if award.AwardTime != nil {
+			storedMonth = award.AwardTime.Format("2006-01")
+		}
+		if award.AwardCategory != row.Category || name != row.AwardName || storedMonth != row.AwardMonth {
+			fail("与已有团队的类别、等级或时间冲突，请先更正团队奖项")
+			continue
+		}
+		if row.AdvisorUsernames != "" {
+			var stored []models.AdvisorInfo
+			_ = json.Unmarshal([]byte(award.AdvisorInfo), &stored)
+			storedKeys := []string{}
+			allKeyed := len(stored) > 0
+			for _, advisor := range stored {
+				username := strings.TrimSpace(advisor.Username)
+				if username == "" {
+					allKeyed = false
+				}
+				storedKeys = append(storedKeys, username)
+			}
+			if allKeyed && strings.Join(storedKeys, " ") != row.AdvisorUsernames {
+				fail("与已有团队的指导教师不一致，请先更正团队奖项")
+			}
+		}
+	}
+	return errorsByTeam
+}
 
 type awardImportLookup struct {
 	users         map[string]models.User
@@ -41,7 +144,7 @@ func loadAwardImportUsers(tx *gorm.DB, names []string, teachers bool) (map[strin
 			Select("users.id, users.username, users.realname, users.college, users.major, requested.lookup_username").
 			Joins("JOIN ("+strings.Join(selects, " UNION ALL ")+") AS requested ON users.username = requested.lookup_username", args...)
 		if teachers {
-			query = awardTeacherCandidates(query)
+			query = awardAdvisorCandidates(query)
 		}
 		if err := query.Find(&rows).Error; err != nil {
 			return nil, err
@@ -245,7 +348,7 @@ func writeAwardImportRows(tx *gorm.DB, scope *UserAccessScope, compID uint, rows
 	members := []models.AwardMember{}
 	regIDs, seenRegs := []uint{}, map[uint]bool{}
 	for _, row := range rows {
-		if row.Existing {
+		if row.Existing || row.Duplicate {
 			existing++
 			continue
 		}
@@ -274,5 +377,5 @@ func (data *awardImportLookup) teacher(username string) (models.User, error) {
 	if user, ok := data.teachers[username]; ok {
 		return user, nil
 	}
-	return models.User{}, fmt.Errorf("指导教师工号 %s 不存在或不是可选教师", username)
+	return models.User{}, fmt.Errorf("指导教师工号 %s 不存在或不是可选指导老师", username)
 }

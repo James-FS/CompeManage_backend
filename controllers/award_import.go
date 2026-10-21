@@ -11,7 +11,7 @@ import (
 	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"net/http"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -26,7 +26,7 @@ var awardTemplateNotes = []string{
 	"3. 一行只能填写1个学生。学生须为我校全日制本科生（不含继续教育、二级学院），学号务必准确（否则影响奖励发放）。",
 	"4. 获奖时间填写 YYYY-MM 或 YYYY.MM；日期版模板中的 YYYY-MM-DD 也可导入并按月份保存。同一赛事内项目名称相同视为同一团队，类别、等级、时间必须一致。",
 	"5. 所属学院和专业需填写完整名称。",
-	"6. 指导教师只需填写教师工号；多人可用逗号、空格、顿号或分号分隔，系统按工号自动获取姓名和学院，无需填写教师所在学院；工号须为系统在职教师，不填表示无指导教师。",
+	"6. 指导教师只需填写教职工工号；教师、赛事负责人、专家、院负责人和校负责人均可担任指导教师。多人可用逗号、空格、顿号或分号分隔，系统按工号自动获取姓名和学院，无需填写教师所在学院；不填表示无指导教师。",
 	"7. 同个团队的参赛项目名称一定要一样：同一赛事内项目名称相同才会归为同一团队，名称不同会被拆成不同团队。",
 }
 
@@ -46,10 +46,86 @@ type AwardImportRow struct {
 	RowNumber        int                  `json:"row_number"`
 	Error            string               `json:"error,omitempty"`
 	Existing         bool                 `json:"existing"`
+	Duplicate        bool                 `json:"duplicate,omitempty"`
+	ImportStatus     string               `json:"import_status,omitempty"`
 	UserID           uint                 `json:"-"`
 	RegID            *uint                `json:"-"`
 	AwardID          uint                 `json:"-"`
 	NeedsProjectKey  bool                 `json:"-"`
+}
+
+type AwardAdvisorLookupReq struct {
+	Usernames []string `json:"usernames" binding:"required,min=1,max=5000,dive,required"`
+}
+
+// LookupAwardAdvisors resolves teacher names for the IDs already present in an import spreadsheet.
+func LookupAwardAdvisors(c *gin.Context) {
+	var req AwardAdvisorLookupReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "指导老师工号列表参数错误")
+		return
+	}
+
+	usernames := make([]string, 0, len(req.Usernames))
+	seen := make(map[string]struct{}, len(req.Usernames))
+	for _, username := range req.Usernames {
+		username = strings.TrimSpace(username)
+		if username == "" {
+			continue
+		}
+		if _, exists := seen[username]; exists {
+			continue
+		}
+		seen[username] = struct{}{}
+		usernames = append(usernames, username)
+	}
+	if len(usernames) == 0 {
+		utils.Success(c, gin.H{"list": []UserListResp{}})
+		return
+	}
+
+	var users []models.User
+	if err := awardAdvisorCandidates(database.DB.WithContext(c.Request.Context()).Model(&models.User{})).
+		Where("users.username IN ?", usernames).
+		Select("users.id, users.realname, users.username, users.college, users.grade").
+		Order("users.id").Find(&users).Error; err != nil {
+		utils.InternalServerError(c, "查询指导老师资料失败", err)
+		return
+	}
+
+	ids := make([]uint, 0, len(users))
+	for _, user := range users {
+		ids = append(ids, user.ID)
+	}
+	roleByUser := make(map[uint]string, len(users))
+	if len(ids) > 0 {
+		var roleRows []struct {
+			UserID   uint
+			RoleCode string
+		}
+		if err := database.DB.WithContext(c.Request.Context()).
+			Table("user_roles").
+			Select("user_roles.user_id AS user_id, roles.role_code AS role_code").
+			Joins("JOIN roles ON roles.id = user_roles.role_id AND roles.delete_time IS NULL").
+			Where("user_roles.user_id IN ?", ids).
+			Scan(&roleRows).Error; err != nil {
+			utils.InternalServerError(c, "查询指导老师角色失败", err)
+			return
+		}
+		for _, row := range roleRows {
+			roleByUser[row.UserID] = row.RoleCode
+		}
+	}
+
+	list := make([]UserListResp, 0, len(users))
+	for _, user := range users {
+		roleCode := roleByUser[user.ID]
+		if roleCode == "" {
+			roleCode = "teacher"
+		}
+		list = append(list, UserListResp{ID: user.ID, Name: user.Realname, Username: user.Username, College: user.College, Grade: user.Grade, RoleCode: roleCode})
+	}
+	utils.Success(c, gin.H{"list": list})
 }
 
 // normalizeAdvisorList 把常见中英文标点和空白分隔的教师工号规范化为单空格连接。
@@ -60,23 +136,35 @@ func normalizeAdvisorList(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-// findAwardTeacher 按工号查系统教师，口径与指导教师候选接口（role=teacher）一致：
-// identity_type=staff 且非校管/院管/专家/访客角色。查不到即视为非法工号。
+// findAwardTeacher 按工号查询可担任指导老师的在职教职工。
 func findAwardTeacher(tx *gorm.DB, username string) (models.User, error) {
 	var user models.User
-	err := awardTeacherCandidates(tx.Model(&models.User{})).Where("username = ?", username).First(&user).Error
+	err := awardAdvisorCandidates(tx.Model(&models.User{})).Where("username = ?", username).First(&user).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return models.User{}, fmt.Errorf("指导教师工号 %s 不存在或不是可选教师", username)
+		return models.User{}, fmt.Errorf("指导教师工号 %s 不存在或不是可选指导老师", username)
 	}
 	return user, err
 }
 
-func awardTeacherCandidates(tx *gorm.DB) *gorm.DB {
-	return tx.Where("users.delete_time IS NULL AND identity_type = 'staff'").
-		Where(`NOT EXISTS (
+func awardAdvisorCandidates(tx *gorm.DB) *gorm.DB {
+	return tx.Where("users.delete_time IS NULL").
+		Where(`(
+			EXISTS (
+				SELECT 1 FROM user_roles ur
+				JOIN roles r ON r.id = ur.role_id AND r.delete_time IS NULL
+				WHERE ur.user_id = users.id AND r.role_code IN ('teacher', 'competition_manager', 'expert', 'college_admin', 'school_admin')
+			)
+			OR NOT EXISTS (
+				SELECT 1 FROM user_roles ur
+				JOIN roles r ON r.id = ur.role_id AND r.delete_time IS NULL
+				WHERE ur.user_id = users.id
+			)
+		)`).
+		Where(`(users.identity_type = 'staff' OR EXISTS (
 			SELECT 1 FROM user_roles ur
 			JOIN roles r ON r.id = ur.role_id AND r.delete_time IS NULL
-		WHERE ur.user_id = users.id AND r.role_code IN ('school_admin', 'college_admin', 'expert', 'guest'))`)
+			WHERE ur.user_id = users.id AND r.role_code IN ('teacher', 'competition_manager', 'expert', 'college_admin', 'school_admin')
+		))`)
 }
 
 // resolveAwardAdvisors 按工号解析指导教师（任务6/8）：
@@ -457,20 +545,24 @@ func readAwardImport(c *gin.Context) (uint, []AwardImportRow, error) {
 }
 
 func validateAwardRows(tx *gorm.DB, compID uint, input []AwardImportRow, requireReg bool) ([]AwardImportRow, int, error) {
+	lookupStarted := time.Now()
 	lookup, err := loadAwardImportLookup(tx, compID, input)
+	lookupDuration := time.Since(lookupStarted)
 	if err != nil {
 		return nil, 0, err
 	}
+	validationStarted := time.Now()
 	result := append([]AwardImportRow(nil), input...)
 	bad := 0
 	groups := map[string]AwardImportRow{}
-	seen := map[string]bool{}
 	advisorResolveCache := map[string][]models.AdvisorInfo{}
-	seenStudents := map[uint]bool{}
+	teamErrors := validateAwardImportTeams(lookup, input)
 	for i := range result {
 		r := &result[i]
 		r.Error = ""
 		r.Existing = false
+		r.Duplicate = false
+		r.ImportStatus = ""
 		r.UserID = 0
 		r.RegID = nil
 		r.AwardID = 0
@@ -489,6 +581,10 @@ func validateAwardRows(tx *gorm.DB, compID uint, input []AwardImportRow, require
 			r.RowNumber = i + 1
 		}
 		fail := func(msg string) { r.Error = msg; bad++ }
+		if teamError := teamErrors[database.AwardProjectKey(r.ProjectName)]; teamError != "" {
+			fail(teamError)
+			continue
+		}
 		if r.StudentNumber == "" || r.Name == "" || r.College == "" || r.ProjectName == "" || r.AwardMonth == "" || r.AwardName == "" {
 			fail("学号、姓名、学院、项目、获奖时间和等级不能为空")
 			continue
@@ -535,12 +631,6 @@ func validateAwardRows(tx *gorm.DB, compID uint, input []AwardImportRow, require
 			continue
 		}
 		groups[key] = *r
-		duplicateKey := key + "/" + r.StudentNumber
-		if seen[duplicateKey] {
-			fail("文件内同一团队的学生重复")
-			continue
-		}
-		seen[duplicateKey] = true
 		user, found := lookup.users[r.StudentNumber]
 		if !found {
 			fail("学号不存在")
@@ -562,11 +652,6 @@ func validateAwardRows(tx *gorm.DB, compID uint, input []AwardImportRow, require
 		}
 		r.UserID = user.ID
 		r.Major = user.Major
-		if seenStudents[user.ID] {
-			fail("同一赛事中，每名学生只能申报一条获奖记录")
-			continue
-		}
-		seenStudents[user.ID] = true
 		ids := lookup.registrations[user.ID]
 		if requireReg && len(ids) == 0 {
 			fail("未找到目标赛事审核通过的报名")
@@ -645,6 +730,35 @@ func validateAwardRows(tx *gorm.DB, compID uint, input []AwardImportRow, require
 			continue
 		}
 	}
+	// Resolve file duplicates only after student validation. A bad copy must not
+	// prevent a corrected copy from being imported, and cross-team claims must
+	// not depend on whichever row happened to appear first.
+	studentRows := map[uint][]int{}
+	for i, row := range result {
+		if row.Error == "" {
+			studentRows[row.UserID] = append(studentRows[row.UserID], i)
+		}
+	}
+	for _, indices := range studentRows {
+		first := result[indices[0]]
+		conflict := false
+		for _, i := range indices[1:] {
+			if database.AwardProjectKey(result[i].ProjectName) != database.AwardProjectKey(first.ProjectName) {
+				conflict = true
+			}
+		}
+		if conflict {
+			for _, i := range indices {
+				result[i].Error = "同一赛事中，每名学生只能申报一条获奖记录；文件内该学生出现在多个团队"
+				bad++
+			}
+		} else {
+			for _, i := range indices[1:] {
+				result[i].Duplicate = true
+			}
+		}
+	}
+	log.Printf("[award-import] validation rows=%d lookup=%s rules=%s invalid=%d", len(input), lookupDuration, time.Since(validationStarted), bad)
 	return result, bad, nil
 }
 
@@ -670,7 +784,9 @@ func getAwardSetting(tx *gorm.DB, lock bool) (models.AwardImportSetting, error) 
 	var setting models.AwardImportSetting
 	q := tx
 	if lock {
-		q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+		// A shared lock lets imports in different competitions read the same
+		// global requirement concurrently. Settings updates take an exclusive lock.
+		q = q.Clauses(clause.Locking{Strength: "SHARE"})
 	}
 	err := q.First(&setting, 1).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -703,6 +819,7 @@ func PreviewAwardImport(c *gin.Context) {
 }
 
 func ImportAward(c *gin.Context) {
+	requestStarted := time.Now()
 	compID, input, err := readAwardImport(c)
 	if err != nil {
 		utils.BadRequest(c, err.Error())
@@ -714,39 +831,66 @@ func ImportAward(c *gin.Context) {
 	}
 	var rows []AwardImportRow
 	bad, created, existing, teams := 0, 0, 0, 0
+	var settingLockWait, competitionLockWait, validationDuration, writeDuration time.Duration
+	var transactionCallbackDuration time.Duration
+	transactionStarted := time.Now()
 	err = database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		callbackStarted := time.Now()
+		defer func() { transactionCallbackDuration = time.Since(callbackStarted) }()
+		stageStarted := time.Now()
 		setting, err := getAwardSetting(tx, true)
+		settingLockWait = time.Since(stageStarted)
 		if err != nil {
 			return err
 		}
 		var comp models.CompDirectory
+		stageStarted = time.Now()
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&comp, compID).Error; err != nil {
 			return err
 		}
+		competitionLockWait = time.Since(stageStarted)
 		// 提交时再次检查，不能使用预览阶段的权限或报名结果。
 		if !scope.IsSchoolAdmin() && !(scope.IsCollegeAdmin() && scope.ManagedCollegeID != nil && (comp.CollegeID == nil || *comp.CollegeID == 0 || *comp.CollegeID == *scope.ManagedCollegeID || comp.CompLevel == "校级" || comp.CompLevel == "校赛")) && !(scope.RoleCode == "competition_manager" && comp.ManagerID == scope.UserID) {
 			return errors.New("赛事权限已变化")
 		}
+		stageStarted = time.Now()
 		rows, bad, err = validateAwardRows(tx, compID, input, setting.RequireRegistration)
+		validationDuration = time.Since(stageStarted)
 		if err != nil {
 			return err
 		}
-		if bad > 0 {
-			return errors.New("数据校验未通过")
+		valid := make([]AwardImportRow, 0, len(rows)-bad)
+		for _, row := range rows {
+			if row.Error == "" {
+				valid = append(valid, row)
+			}
 		}
-		created, existing, teams, err = writeAwardImportRows(tx, scope, compID, rows)
+		stageStarted = time.Now()
+		created, existing, teams, err = writeAwardImportRows(tx, scope, compID, valid)
+		writeDuration = time.Since(stageStarted)
 		return err
 	})
+	transactionDuration := time.Since(transactionStarted)
+	commitDuration := transactionDuration - transactionCallbackDuration
 	if err != nil {
-		if bad > 0 {
-			c.JSON(http.StatusBadRequest, utils.Response{Code: 400, Message: "数据校验未通过", Data: gin.H{"rows": rows, "error_count": bad}, Timestamp: time.Now().Unix()})
-		} else {
-			utils.InternalServerError(c, "导入失败，整批已回滚", err)
-		}
+		log.Printf("[award-import] failed comp_id=%d rows=%d setting_lock_wait=%s competition_lock_wait=%s validate=%s write=%s commit=%s transaction=%s total=%s", compID, len(input), settingLockWait, competitionLockWait, validationDuration, writeDuration, commitDuration, transactionDuration, time.Since(requestStarted))
+		utils.InternalServerError(c, "导入失败，本次写入已全部回滚，请重新提交", err)
 		return
 	}
+	cacheStarted := time.Now()
 	clearAwardCache(c.Request.Context(), compID)
-	utils.SuccessWithMessage(c, fmt.Sprintf("处理%d名学生、%d个团队，新增%d人，已存在%d人", len(rows), teams, created, existing), gin.H{"success_count": created, "existing_count": existing, "student_count": len(rows), "team_count": teams, "fail_count": 0})
+	log.Printf("[award-import] completed comp_id=%d rows=%d invalid=%d imported=%d existing=%d setting_lock_wait=%s competition_lock_wait=%s validate=%s write=%s commit=%s transaction=%s cache_invalidation=%s total=%s", compID, len(rows), bad, created, existing, settingLockWait, competitionLockWait, validationDuration, writeDuration, commitDuration, transactionDuration, time.Since(cacheStarted), time.Since(requestStarted))
+	for i := range rows {
+		switch {
+		case rows[i].Error != "":
+			rows[i].ImportStatus = "failed"
+		case rows[i].Existing || rows[i].Duplicate:
+			rows[i].ImportStatus = "existing"
+		default:
+			rows[i].ImportStatus = "imported"
+		}
+	}
+	utils.SuccessWithMessage(c, fmt.Sprintf("本次导入 %d 行，其中 %d 行校验失败，%d 行成功导入，%d 行已存在或重复，已跳过", len(rows), bad, created, existing), gin.H{"rows": rows, "success_count": created, "existing_count": existing, "student_count": len(rows), "team_count": teams, "fail_count": bad, "error_count": bad})
 }
 
 func GetAwardImportSetting(c *gin.Context) {
@@ -782,7 +926,15 @@ func UpdateAwardImportSetting(c *gin.Context) {
 		return
 	}
 	setting := models.AwardImportSetting{ID: 1, RequireRegistration: *req.RequireRegistration}
-	if err := database.DB.WithContext(c.Request.Context()).Save(&setting).Error; err != nil {
+	err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		var current models.AwardImportSetting
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, 1).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		return tx.Save(&setting).Error
+	})
+	if err != nil {
 		utils.InternalServerError(c, "保存设置失败", err)
 		return
 	}
