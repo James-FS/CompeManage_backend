@@ -23,7 +23,8 @@ import (
 )
 
 // Explicit opt-in: creates and drops its own isolated MySQL database, never touches the application database.
-func TestAwardWorkflowMySQL(t *testing.T) {
+func newAwardMySQLTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
 	if os.Getenv("COMPE_AWARD_MYSQL_TEST") != "1" {
 		t.Skip("set COMPE_AWARD_MYSQL_TEST=1 for isolated MySQL integration")
 	}
@@ -73,6 +74,11 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 	require.NoError(t, db.Exec("ALTER TABLE awards MODIFY COLUMN reg_id BIGINT UNSIGNED NOT NULL").Error)
 	require.NoError(t, db.AutoMigrate(&models.Award{}))
 	require.NoError(t, database.BackfillAwardMembers(db))
+	return db
+}
+
+func TestAwardWorkflowMySQL(t *testing.T) {
+	db := newAwardMySQLTestDB(t)
 	ca, cb := models.College{Name: "学院甲", IsValid: true}, models.College{Name: "学院乙", IsValid: true}
 	require.NoError(t, db.Create(&ca).Error)
 	require.NoError(t, db.Create(&cb).Error)
@@ -115,7 +121,7 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 		defer f.Close()
 		rows, err := f.GetRows("Sheet1")
 		require.NoError(t, err)
-		require.Equal(t, awardImportHeaders, rows[0])
+		require.Equal(t, awardTemplateHeaders, rows[0])
 		require.NotContains(t, rows[0], "承办单位")
 		for i, note := range awardTemplateNotes {
 			value, err := f.GetCellValue("Sheet1", fmt.Sprintf("A%d", 16+i))
@@ -132,7 +138,7 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 		require.NoError(t, db.Find(&awards).Error)
 		require.Len(t, awards, 1)
 		require.Equal(t, "国家级", awards[0].AwardCategory)
-		require.Equal(t, "金奖", awards[0].AwardName)
+		require.Equal(t, "一等奖", awards[0].AwardName)
 		var regNull int64
 		require.NoError(t, db.Model(&models.Award{}).Where("reg_id IS NULL").Count(&regNull).Error)
 		require.EqualValues(t, 1, regNull)
