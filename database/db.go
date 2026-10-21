@@ -45,8 +45,13 @@ func initDatabase(runAutoMigrate bool) {
 
 	// 连接数据库
 	var err error
+	logMode := logger.Info
+	if config.GetEnvironment() == "prod" {
+		// Production keeps errors and slow queries while suppressing normal SQL.
+		logMode = logger.Warn
+	}
 	DB, err = gorm.Open(mysql.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info), // 开发环境打印SQL
+		Logger: logger.Default.LogMode(logMode),
 	})
 	if err != nil {
 		log.Fatalf("数据库连接失败：%v", err)
