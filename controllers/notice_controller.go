@@ -19,6 +19,9 @@ import (
 // clearNoticeListCache 删除通知列表相关的所有缓存
 func clearNoticeListCache(ctx context.Context) {
 	rdb := middleware.GetRedisClient()
+	if rdb == nil {
+		return
+	}
 	iter := rdb.Scan(ctx, 0, "cache:notice_list:*", 0).Iterator()
 	for iter.Next(ctx) {
 		rdb.Del(ctx, iter.Val())
