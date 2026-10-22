@@ -68,9 +68,10 @@ func GetStatisticsDashboard(c *gin.Context) {
 	if scope.ManagedCollegeID != nil {
 		managedCollegeID = *scope.ManagedCollegeID
 	}
-	cacheKey := fmt.Sprintf("cache:stats:dashboard:v2:%d:%s:%d", scope.UserID, scope.RoleCode, managedCollegeID)
 	rdb := middleware.GetRedisClient()
 	ctx := c.Request.Context()
+	generation, _ := rdb.Get(ctx, "cache:stats:dashboard:generation").Result()
+	cacheKey := fmt.Sprintf("cache:stats:dashboard:v3:%s:%d:%s:%d", generation, scope.UserID, scope.RoleCode, managedCollegeID)
 
 	cacheData, err := rdb.Get(ctx, cacheKey).Result()
 	if err == nil {
