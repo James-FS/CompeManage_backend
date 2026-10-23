@@ -55,8 +55,12 @@ func GetNoticeList(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	// 先查 Redis 缓存
-	cacheData, err := rdb.Get(ctx, cacheKey).Result()
-	if err == nil && cacheData != "" {
+	// 先查 Redis 缓存（Redis 未配置时直接走数据库，避免空指针）
+	cacheData := ""
+	if rdb != nil {
+		cacheData, _ = rdb.Get(ctx, cacheKey).Result()
+	}
+	if cacheData != "" {
 		var resp gin.H
 		if json.Unmarshal([]byte(cacheData), &resp) == nil {
 			utils.Success(c, resp)
@@ -118,7 +122,9 @@ func GetNoticeList(c *gin.Context) {
 		if err != nil {
 			return
 		}
-		rdb.Set(asyncCtx, cacheKey, data, 5*time.Minute)
+		if rdb != nil {
+			rdb.Set(asyncCtx, cacheKey, data, 5*time.Minute)
+		}
 	}()
 
 	utils.Success(c, respData)

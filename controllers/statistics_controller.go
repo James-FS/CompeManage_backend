@@ -70,11 +70,17 @@ func GetStatisticsDashboard(c *gin.Context) {
 	}
 	rdb := middleware.GetRedisClient()
 	ctx := c.Request.Context()
-	generation, _ := rdb.Get(ctx, "cache:stats:dashboard:generation").Result()
+	generation := ""
+	if rdb != nil {
+		generation, _ = rdb.Get(ctx, "cache:stats:dashboard:generation").Result()
+	}
 	cacheKey := fmt.Sprintf("cache:stats:dashboard:v3:%s:%d:%s:%d", generation, scope.UserID, scope.RoleCode, managedCollegeID)
 
-	cacheData, err := rdb.Get(ctx, cacheKey).Result()
-	if err == nil {
+	cacheData := ""
+	if rdb != nil {
+		cacheData, _ = rdb.Get(ctx, cacheKey).Result()
+	}
+	if cacheData != "" {
 		var cachedResp gin.H
 		if json.Unmarshal([]byte(cacheData), &cachedResp) == nil {
 			logger.Info("统计看板缓存命中", "cache_key", cacheKey)
@@ -240,7 +246,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 
 	var compStats []competitionStatItem
 	// 这里通过子查询或 Join 来获取每个赛事的报名数和获奖数
-	err = newCompBase().
+	err := newCompBase().
 		Joins("LEFT JOIN colleges ON colleges.id = comp_directories.college_id").
 		Select("comp_directories.id, comp_directories.comp_name, comp_directories.comp_level, COALESCE(colleges.name, '未知学院') as college_name, " +
 			"(SELECT COUNT(*) FROM registers WHERE registers.comp_id = comp_directories.id) as reg_count, " +
@@ -289,6 +295,9 @@ func GetStatisticsDashboard(c *gin.Context) {
 		data, err := json.Marshal(responseData)
 		if err != nil {
 			logger.Error("异步缓存JSON序列化失败", "cache_key", cacheKey, "error", err)
+			return
+		}
+		if rdb == nil {
 			return
 		}
 		if err := rdb.Set(asyncCtx, cacheKey, data, 10*time.Minute).Err(); err != nil {
