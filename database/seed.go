@@ -342,6 +342,47 @@ func ensureUserManagePermissions() {
 	grantRolePermissionsByCode("school_admin", []string{"user:list", "user:assign_role"})
 }
 
+// ensureCoreRoles 对存量库补齐缺失的系统角色。
+// 历史库可能缺少 teacher 等后加角色，导致测试账号创建被跳过、
+// 用户角色迁移的默认角色解析失败（"默认角色不存在: teacher"）。
+func ensureCoreRoles() {
+	roles := []models.Role{
+		{RoleName: "校级管理员", RoleCode: "school_admin", Description: "校级系统管理员，拥有所有权限"},
+		{RoleName: "院级管理员", RoleCode: "college_admin", Description: "学院管理员，负责用户和审核"},
+		{RoleName: "赛事负责人", RoleCode: "competition_manager", Description: "负责发布和审核竞赛，拥有报名配置权限"},
+		{RoleName: "老师", RoleCode: "teacher", Description: "教师角色，用于指导学生报名和担任指导老师"},
+		{RoleName: "学生", RoleCode: "student", Description: "参与竞赛"},
+		{RoleName: "专家", RoleCode: "expert", Description: "评审竞赛"},
+		{RoleName: "访客", RoleCode: "guest", Description: "访客角色，仅可浏览"},
+	}
+	for _, role := range roles {
+		var count int64
+		if err := DB.Model(&models.Role{}).Where("role_code = ?", role.RoleCode).Count(&count).Error; err != nil {
+			log.Printf("检查角色 %s 失败: %v", role.RoleCode, err)
+			continue
+		}
+		if count > 0 {
+			continue
+		}
+		created := role
+		if err := DB.Create(&created).Error; err != nil {
+			log.Printf("补齐角色 %s 失败: %v", role.RoleCode, err)
+			continue
+		}
+		log.Printf("已补齐缺失角色: %s", role.RoleCode)
+	}
+
+	// teacher 角色历史上没有 ensure* 覆盖授权，补齐其权限（幂等）
+	grantRolePermissionsByCode("teacher", []string{
+		"competition", "registration", "notice",
+		"comp", "declare", "reg:submit",
+		"comp:list", "comp:detail", "comp:years:list", "manager:list",
+		"declare:get", "declare:list",
+		"notice:list", "notice:detail",
+		"college:list", "upload:file",
+	})
+}
+
 // ensureTestUsers 确保测试账号存在（用于人工登录测试）
 func ensureTestUsers() {
 	type testUser struct {
@@ -385,6 +426,7 @@ func InitData() {
 	DB.Model(&models.User{}).Count(&count)
 	if count > 0 {
 		log.Println("数据库已有数据，跳过初始化...")
+		ensureCoreRoles()
 		ensureNoticeManagePermissions()
 		ensureCompetitionCorePermissions()
 		ensureCollegeManagerPermissions()

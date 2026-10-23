@@ -1601,7 +1601,8 @@ func SubmitWork(c *gin.Context) {
 	}
 
 	// 自动创建评审记录，无需管理员手动初始化
-	go AutoCreateReviewRecordsForWork(reg.CompID, reg.ID)
+	asyncDB := database.DB // 先捕获再进协程，避免后台读全局指针产生数据竞争
+	go AutoCreateReviewRecordsForWork(asyncDB, reg.CompID, reg.ID)
 
 	utils.SuccessWithMessage(c, "作品已成功保存", nil)
 }

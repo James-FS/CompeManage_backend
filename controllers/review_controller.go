@@ -394,24 +394,26 @@ func syncReviewTasks(c *gin.Context, compID uint, expertIDs []uint, userID uint,
 }
 
 // AutoCreateReviewRecordsForWork 学生提交作品后自动创建评审记录
-func AutoCreateReviewRecordsForWork(compID, regID uint) {
+// db 由调用方显式传入：异步调用方（SubmitWork）在起协程前捕获连接，
+// 避免后台协程读取全局 database.DB 造成数据竞争。
+func AutoCreateReviewRecordsForWork(db *gorm.DB, compID, regID uint) {
 	var detail models.CompDetail
-	if err := database.DB.Where("comp_id = ? AND need_review = 1", compID).First(&detail).Error; err != nil {
+	if err := db.Where("comp_id = ? AND need_review = 1", compID).First(&detail).Error; err != nil {
 		return
 	}
 
 	var tasks []models.ReviewTask
-	database.DB.Where("comp_id = ?", compID).Find(&tasks)
+	db.Where("comp_id = ?", compID).Find(&tasks)
 	if len(tasks) == 0 {
 		return
 	}
 
 	var reg models.Register
-	if err := database.DB.Where("id = ? AND work_attachment_url IS NOT NULL AND work_attachment_url != ''", regID).First(&reg).Error; err != nil {
+	if err := db.Where("id = ? AND work_attachment_url IS NOT NULL AND work_attachment_url != ''", regID).First(&reg).Error; err != nil {
 		return
 	}
 
-	tx := database.DB.Begin()
+	tx := db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
