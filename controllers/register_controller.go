@@ -227,12 +227,14 @@ func SaveRegConfig(c *gin.Context) {
 	}
 	if req.ReviewStartTime != nil {
 		detail.ReviewStartTime = *req.ReviewStartTime
-	} else if req.NeedReview != nil && *req.NeedReview == 0 {
+	} else {
+		// 未提供评审时间必须落哨兵值：time.Time 零值会被写成 '0000-00-00'，
+		// 被 MySQL 严格模式拒绝（Error 1292），导致未填评审时间的配置保存 500。
 		detail.ReviewStartTime = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 	}
 	if req.ReviewEndTime != nil {
 		detail.ReviewEndTime = *req.ReviewEndTime
-	} else if req.NeedReview != nil && *req.NeedReview == 0 {
+	} else {
 		detail.ReviewEndTime = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 	}
 
