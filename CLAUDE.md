@@ -601,14 +601,12 @@ go tool cover -func=coverage.out
 |------|------|----------|
 | `award_controller.go` | `clearAwardCache` | Mock Redis |
 | `middleware/auth.go` | `RequirePermission` | Mock Redis + DB |
-| `datasource/datahall.go` | `derefStr` | 纯函数 |
-| `datasource/datahall.go` | `lastNChars` | 纯函数 |
-| `datasource/datahall.go` | `hashPassword` | 纯函数 |
 
 ### 不建议单元测试的函数
 
-- `SyncStudents`、`updateExpiredComps`（依赖外部 API）
 - `file.Open()` 系统级错误分支
+- `logger.Fatal`、`InitRedis` 失败分支（会 `os.Exit`，只能测成功路径并做可达性跳过）
+- ~~`SyncStudents`、`updateExpiredComps`~~（已用 httptest + sqlmock 覆盖，见 `datasource/datahall_sync_test.go`、`utils/scheduler_test.go`）
 
 ### CI
 
@@ -633,3 +631,33 @@ mock.ExpectExec("UPDATE `review_tasks` SET `delete_time`")
 // 期望：
 mock.ExpectExec("UPDATE `review_records` SET `delete_time`")
 ```
+
+#### 15. 后台协程测试的全局 DB 泄漏（utils/scheduler、middleware/permission_cache_tasks）
+
+`StartCompStatusScheduler` 等函数启动的 goroutine 在测试结束后仍会轮询 `database.DB`。
+若测试的 `t.Cleanup` 把 `database.DB` 还原为 nil，残留协程会在后台 panic，表现为
+「单跑通过、全量偶发 FAIL」。解法：该测试不还原 DB，只替换为容错的 sink mock，
+并用 LIFO 清理顺序保证最终 `database.DB` 永远非 nil：
+
+```go
+t.Cleanup(func() { database.DB = sinkGorm }) // 先注册、最后执行
+mock := setupXxxDBMock(t)                    // 后注册的恢复逻辑先执行
+```
+
+#### 16. 非事务句柄的每条写语句各自隐式事务
+
+`database.SetUserRole` 直接用根 `DB` 执行 `Delete` + `Create`，两条语句是
+**两个独立隐式事务**（Begin/Exec/Commit × 2）；而包在 `db.Transaction(fn)` 里、
+用 `tx` 执行时才是单一事务。Mock 期望必须区分这两种情况。
+
+#### 17. lumberjack 持有日志文件句柄
+
+`logger.SetupLogger` 创建的 `lumberjack.Logger` 永不关闭句柄，若日志路径放在
+`t.TempDir()` 里，测试结束时 `TempDir` 清理会报 "being used by another process"。
+日志文件应写到 `os.TempDir()` 下的独立文件。
+
+#### 18. CloseRedis 需要置空全局客户端（已修复）
+
+原实现只 `Close()` 不置 nil，残留的"已关闭客户端"能通过 `rdb != nil` 防护，
+后续所有缓存调用都会报 "client is closed"。现已在关闭后置 `RedisClient = nil`，
+与"未初始化"语义一致。同类 bug 模式：全局资源句柄关闭后必须置空。
