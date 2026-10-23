@@ -123,7 +123,7 @@ func TestGetAccessToken_RedisCacheHit(t *testing.T) {
 	defer server.Close()
 	withDataHall(t, server.URL)
 
-	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: 9})
 	if rdb.Ping(t.Context()).Err() != nil {
 		t.Skip("本地 Redis 不可用")
 	}

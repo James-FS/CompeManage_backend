@@ -18,7 +18,8 @@ func withRedisClient(t *testing.T, c *redis.Client) {
 
 func localRedis(t *testing.T) *redis.Client {
 	t.Helper()
-	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+	t.Cleanup(func() { redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: 9}).FlushDB(t.Context()) })
+	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379", DB: 9})
 	if rdb.Ping(t.Context()).Err() != nil {
 		t.Skip("本地 Redis 不可用")
 	}
