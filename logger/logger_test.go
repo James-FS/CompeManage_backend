@@ -1,7 +1,7 @@
 package logger
 
 import (
-	"bytes"
+	"strings"
 	"context"
 	"fmt"
 	"log/slog"
@@ -51,13 +51,14 @@ func TestSlogWrappers_UseCorrectLevels(t *testing.T) {
 }
 
 func TestAsyncWriter_Consume(t *testing.T) {
-	var buf bytes.Buffer
-	aw := NewAsyncWriter(&buf, 2)
+	gw := &gatedWriter{gate: make(chan struct{})}
+	close(gw.gate) // 写入不阻塞
+	aw := NewAsyncWriter(gw, 2)
 	aw.Write([]byte("hello "))
 	aw.Write([]byte("world"))
-	// 异步落盘
+	// 异步落盘（gatedWriter 内部加锁，读写无竞争）
 	assert.Eventually(t, func() bool {
-		return bytes.Contains(buf.Bytes(), []byte("hello world"))
+		return strings.Contains(gw.String(), "hello world")
 	}, time.Second, 5*time.Millisecond)
 }
 

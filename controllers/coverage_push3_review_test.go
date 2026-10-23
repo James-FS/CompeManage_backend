@@ -85,7 +85,7 @@ func TestAutoCreateReviewRecords_ReviewNotEnabled(t *testing.T) {
 	mock.ExpectQuery("SELECT \\* FROM `comp_details`").
 		WillReturnError(fmt.Errorf("record not found"))
 
-	AutoCreateReviewRecordsForWork(1, 1)
+	AutoCreateReviewRecordsForWork(database.DB, 1, 1)
 }
 
 // 赛事开启评审但未分配任务：无任务直接返回
@@ -98,7 +98,7 @@ func TestAutoCreateReviewRecords_NoTasks(t *testing.T) {
 	mock.ExpectQuery("SELECT \\* FROM `review_tasks`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_id", "expert_id", "status"}))
 
-	AutoCreateReviewRecordsForWork(1, 1)
+	AutoCreateReviewRecordsForWork(database.DB, 1, 1)
 }
 
 // 报名记录缺少作品附件：在任务查询后返回
@@ -112,7 +112,7 @@ func TestAutoCreateReviewRecords_NoWorkAttachment(t *testing.T) {
 	mock.ExpectQuery("SELECT \\* FROM `registers`").
 		WillReturnError(fmt.Errorf("record not found"))
 
-	AutoCreateReviewRecordsForWork(1, 100)
+	AutoCreateReviewRecordsForWork(database.DB, 1, 100)
 }
 
 // 璁板綍宸插瓨鍦細璺宠繃鍒涘缓锛屼笉浜х敓鍐欏叆
@@ -133,7 +133,7 @@ func TestAutoCreateReviewRecords_SkipsExistingRecord(t *testing.T) {
 			AddRow(1, 1, 100, 0))
 	mock.ExpectCommit()
 
-	AutoCreateReviewRecordsForWork(1, 100)
+	AutoCreateReviewRecordsForWork(database.DB, 1, 100)
 }
 
 // 璁板綍涓嶅瓨鍦細鍒涘缓骞舵妸 task.Status 0 鈫?1锛堟柊璁板綍瑙﹀彂鐘舵€佹祦杞級
@@ -160,7 +160,7 @@ func TestAutoCreateReviewRecords_CreatesRecordAndActivatesTask(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	AutoCreateReviewRecordsForWork(1, 100)
+	AutoCreateReviewRecordsForWork(database.DB, 1, 100)
 }
 
 // 宸插畬鎴?status=3)鐨勪换鍔″湪鏂板璁板綍鍚庡洖閫€鍒?status=2
@@ -186,7 +186,7 @@ func TestAutoCreateReviewRecords_CompletedTaskReopensToReviewing(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	AutoCreateReviewRecordsForWork(1, 100)
+	AutoCreateReviewRecordsForWork(database.DB, 1, 100)
 }
 
 // 鍒涘缓璁板綍澶辫触锛氬洖婊氬苟杩斿洖
@@ -208,7 +208,7 @@ func TestAutoCreateReviewRecords_CreateRecordFailsRollsBack(t *testing.T) {
 		WillReturnError(fmt.Errorf("insert failed"))
 	mock.ExpectRollback()
 
-	AutoCreateReviewRecordsForWork(1, 100)
+	AutoCreateReviewRecordsForWork(database.DB, 1, 100)
 }
 
 // 任务已在评审中(status=1)：创建记录但不改任务状态
@@ -230,7 +230,7 @@ func TestAutoCreateReviewRecords_TaskAlreadyReviewingKeepsStatus(t *testing.T) {
 	// status=1 鏃舵棤闇€ UPDATE
 	mock.ExpectCommit()
 
-	AutoCreateReviewRecordsForWork(1, 100)
+	AutoCreateReviewRecordsForWork(database.DB, 1, 100)
 }
 
 // ===================== InitReviewTasks 鏉冮檺涓庢垚鍔熻矾寰?=====================

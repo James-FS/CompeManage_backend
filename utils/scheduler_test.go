@@ -127,6 +127,7 @@ func TestStartCompStatusScheduler(t *testing.T) {
 	mock.ExpectQuery("SELECT `comp_id` FROM `comp_details`").
 		WillReturnRows(sqlmock.NewRows([]string{"comp_id"}))
 
-	StartCompStatusScheduler(10 * time.Millisecond)
+	stop := StartCompStatusScheduler(10 * time.Millisecond)
+	defer stop() // 在 cleanup 写 database.DB 之前等待协程退出，避免数据竞争
 	time.Sleep(60 * time.Millisecond) // 覆盖 ticker 循环若干轮（后续轮次查询走默认空匹配容忍）
 }

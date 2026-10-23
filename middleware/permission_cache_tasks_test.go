@@ -135,7 +135,8 @@ func TestStartPermTaskScheduler_DefaultInterval(t *testing.T) {
 	mock.ExpectQuery("SELECT \\* FROM `permission_cache_invalidation_tasks`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "status", "attempts"}))
 
-	StartPermissionCacheInvalidationScheduler(0)
+	stop := StartPermissionCacheInvalidationScheduler(0)
+	defer stop() // 等协程退出后再进入 cleanup，避免与全局 DB 写竞争
 	time.Sleep(50 * time.Millisecond)
 	_ = sinkMock
 }
