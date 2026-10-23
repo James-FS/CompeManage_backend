@@ -383,6 +383,44 @@ func ensureCoreRoles() {
 	})
 }
 
+// ensureSummaryPermissions 对存量库补齐赛事总结权限。
+// 总结模块是后加功能：历史库既缺 summary 权限目录也缺 summary:* 权限，
+// 导致所有人访问 /api/summary/* 都会 403（权限不足）。
+func ensureSummaryPermissions() {
+	var competitionDir models.Permission
+	if err := DB.Where("code = ?", "competition").First(&competitionDir).Error; err != nil {
+		log.Printf("未找到权限目录 competition，跳过总结权限补齐: %v", err)
+		return
+	}
+	var summaryDir models.Permission
+	if err := DB.Where("code = ?", "summary").First(&summaryDir).Error; err != nil {
+		summaryDir = models.Permission{Name: "赛事总结", Code: "summary", Type: 1, ParentID: competitionDir.ID, Description: "赛事总结填写与归档"}
+		if err := DB.Create(&summaryDir).Error; err != nil {
+			log.Printf("补齐权限目录 summary 失败: %v", err)
+			return
+		}
+		log.Printf("已补齐缺失权限目录: summary")
+	}
+	for _, def := range []struct{ code, name string }{
+		{"summary:list", "查看总结列表"},
+		{"summary:detail", "查看总结详情"},
+		{"summary:edit", "编辑赛事总结"},
+	} {
+		var existed models.Permission
+		if DB.Where("code = ?", def.code).First(&existed).Error != nil {
+			if err := DB.Create(&models.Permission{
+				Name: def.name, Code: def.code, Type: 3,
+				ParentID: summaryDir.ID, Description: def.name,
+			}).Error; err != nil {
+				log.Printf("补齐权限失败(%s): %v", def.code, err)
+			}
+		}
+	}
+	grantRolePermissionsByCode("school_admin", []string{"summary:list", "summary:detail", "summary:edit"})
+	grantRolePermissionsByCode("college_admin", []string{"summary:list", "summary:detail"})
+	grantRolePermissionsByCode("competition_manager", []string{"summary:list", "summary:detail", "summary:edit"})
+}
+
 // ensureTestUsers 确保测试账号存在（用于人工登录测试）
 func ensureTestUsers() {
 	type testUser struct {
@@ -427,6 +465,7 @@ func InitData() {
 	if count > 0 {
 		log.Println("数据库已有数据，跳过初始化...")
 		ensureCoreRoles()
+		ensureSummaryPermissions()
 		ensureNoticeManagePermissions()
 		ensureCompetitionCorePermissions()
 		ensureCollegeManagerPermissions()
