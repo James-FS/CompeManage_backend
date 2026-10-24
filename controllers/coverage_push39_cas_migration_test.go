@@ -45,7 +45,7 @@ func newCasStubServer(t *testing.T, profileHandler http.HandlerFunc) *httptest.S
 	return server
 }
 
-func P39TestCasCallback_NoCode(t *testing.T) {
+func TestP39CasCallback_NoCode(t *testing.T) {
 	withCasConfig(t, "http://cas.invalid")
 	_, w, c := buildGET("/api/cas/callback?error=access_denied")
 	CasCallback(c)
@@ -53,7 +53,7 @@ func P39TestCasCallback_NoCode(t *testing.T) {
 	require.Contains(t, w.Header().Get("Location"), "cas_error=")
 }
 
-func P39TestCasCallback_ExchangeFail(t *testing.T) {
+func TestP39CasCallback_ExchangeFail(t *testing.T) {
 	withCasConfig(t, "http://127.0.0.1:1") // 不可达地址
 	_, w, c := buildGET("/api/cas/callback?code=x")
 	CasCallback(c)
@@ -61,7 +61,7 @@ func P39TestCasCallback_ExchangeFail(t *testing.T) {
 	require.Contains(t, w.Header().Get("Location"), "cas_error=%E8%8E%B7%E5%8F%96access_token%E5%A4%B1%E8%B4%A5")
 }
 
-func P39TestCasCallback_ProfileFail(t *testing.T) {
+func TestP39CasCallback_ProfileFail(t *testing.T) {
 	server := newCasStubServer(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	})
@@ -72,14 +72,14 @@ func P39TestCasCallback_ProfileFail(t *testing.T) {
 	require.Contains(t, w.Header().Get("Location"), "cas_error=%E8%8E%B7%E5%8F%96%E7%94%A8%E6%88%B7%E4%BF%A1%E6%81%AF%E5%A4%B1%E8%B4%A5")
 }
 
-func P39TestCasCallback_NewUserButNoGuestRole(t *testing.T) {
+func TestP39CasCallback_NewUserButNoGuestRole(t *testing.T) {
 	// profile 返回空属性 → 用户名空 → 本地查无此用户 → 访客角色缺失 → 处理用户信息失败
 	server := newCasStubServer(t, func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"attributes":[]}`))
+		_, _ = w.Write([]byte(`{"attributes":[{"ID_NUMBER":"900009"}]}`))
 	})
 	withCasConfig(t, server.URL)
 	mock := setupReportScopeDBMock(t)
-	mock.ExpectQuery("SELECT .* FROM `users` WHERE username = ").WithArgs("", 1).
+	mock.ExpectQuery("SELECT .* FROM `users` WHERE username = ").WithArgs("900009", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectQuery("SELECT .* FROM `roles` WHERE role_code = ").WithArgs("guest", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
@@ -90,7 +90,7 @@ func P39TestCasCallback_NewUserButNoGuestRole(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func P39TestCasCallback_SuccessExistingSingleRole(t *testing.T) {
+func TestP39CasCallback_SuccessExistingSingleRole(t *testing.T) {
 	server := newCasStubServer(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"attributes":[{"ID_NUMBER":"900001"},{"USER_NAME":"张三"},{"UNIT_NAME":"教务处"}]}`))
 	})
@@ -99,8 +99,10 @@ func P39TestCasCallback_SuccessExistingSingleRole(t *testing.T) {
 	mock.ExpectQuery("SELECT .* FROM `users` WHERE username = ").WithArgs("900001", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "realname", "identity_type"}).
 			AddRow(7, "900001", "张三", "staff"))
-	// Preload("Roles")：已有单一角色，后续不再补角色
-	mock.ExpectQuery("SELECT .* FROM `roles` JOIN `user_roles`").WithArgs(7).
+	// Preload("Roles") 两段式：先查关联表，再按角色 id 查角色
+	mock.ExpectQuery("SELECT .* FROM `user_roles` WHERE `user_roles`.`user_id` = ").WithArgs(7).
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "role_id"}).AddRow(7, 1))
+	mock.ExpectQuery("SELECT .* FROM `roles` WHERE `roles`.`id`").WithArgs(1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "role_code", "role_name"}).
 			AddRow(1, "school_admin", "校级管理员"))
 
