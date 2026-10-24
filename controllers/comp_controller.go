@@ -73,7 +73,9 @@ func nextCompetitionCode(tx *gorm.DB, level string, year int) (string, error) {
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Select("comp_code").
 		Where("comp_code LIKE ?", base+"%").
-		Order("comp_code DESC").
+		// 序号跨位（999→1000）后纯字符串排序会把 X2026999 排在 X20261000 之后，
+		// 导致生成已存在的编号、创建赛事持续 500。按长度优先排序保证数值序。
+		Order("LENGTH(comp_code) DESC, comp_code DESC").
 		Limit(1).
 		Take(&latest).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -82,8 +84,9 @@ func nextCompetitionCode(tx *gorm.DB, level string, year int) (string, error) {
 
 	seq := 1
 	lastCode := latest.CompCode
-	if lastCode != "" && len(lastCode) >= len(base)+3 {
-		suffix := lastCode[len(lastCode)-3:]
+	if lastCode != "" && len(lastCode) > len(base) {
+		// 取 base 之后的完整序号段（旧实现取末 3 位，4 位序号会被截断成 000）
+		suffix := lastCode[len(base):]
 		if n, convErr := strconv.Atoi(suffix); convErr == nil {
 			seq = n + 1
 		}
