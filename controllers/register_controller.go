@@ -227,12 +227,14 @@ func SaveRegConfig(c *gin.Context) {
 	}
 	if req.ReviewStartTime != nil {
 		detail.ReviewStartTime = *req.ReviewStartTime
-	} else if req.NeedReview != nil && *req.NeedReview == 0 {
+	} else {
+		// 未提供评审时间必须落哨兵值：time.Time 零值会被写成 '0000-00-00'，
+		// 被 MySQL 严格模式拒绝（Error 1292），导致未填评审时间的配置保存 500。
 		detail.ReviewStartTime = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 	}
 	if req.ReviewEndTime != nil {
 		detail.ReviewEndTime = *req.ReviewEndTime
-	} else if req.NeedReview != nil && *req.NeedReview == 0 {
+	} else {
 		detail.ReviewEndTime = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 	}
 
@@ -1085,7 +1087,8 @@ func AuditRegister(c *gin.Context) {
 
 	if reg.Competition.Detail.NeedRegAudit == 0 {
 		if reg.Status == 0 {
-			_ = database.DB.WithContext(c.Request.Context()).Model(&reg).Updates(map[string]interface{}{"status": 1, "reject_reason": ""}).Error
+			// 裸模型更新，避免 GORM 将 Preload 的 Competition/Detail 关联一起 Upsert 回写
+			_ = database.DB.WithContext(c.Request.Context()).Model(&models.Register{}).Where("id = ?", reg.ID).Updates(map[string]interface{}{"status": 1, "reject_reason": ""}).Error
 		}
 		utils.BadRequest(c, "该赛事已设置为免审核，报名会自动通过")
 		return
@@ -1115,7 +1118,8 @@ func AuditRegister(c *gin.Context) {
 		updateMap["reject_reason"] = ""
 	}
 
-	if err := database.DB.WithContext(c.Request.Context()).Model(&reg).Updates(updateMap).Error; err != nil {
+	// 裸模型更新，避免 GORM 将 Preload 的 Competition/Detail 关联一起 Upsert 回写
+	if err := database.DB.WithContext(c.Request.Context()).Model(&models.Register{}).Where("id = ?", reg.ID).Updates(updateMap).Error; err != nil {
 		utils.InternalServerError(c, "数据库更新失败", err)
 		return
 	}
@@ -1565,7 +1569,8 @@ func SubmitWork(c *gin.Context) {
 
 	if reg.Status == 0 && reg.Competition.Detail.NeedRegAudit == 0 {
 		reg.Status = 1
-		_ = database.DB.WithContext(c.Request.Context()).Model(&reg).Update("status", 1).Error
+		// 裸模型更新，避免 GORM 将 Preload 的 Competition/Detail 关联一起 Upsert 回写
+		_ = database.DB.WithContext(c.Request.Context()).Model(&models.Register{}).Where("id = ?", reg.ID).Update("status", 1).Error
 	}
 
 	if reg.Status != 1 && reg.Status != 4 {
@@ -1591,13 +1596,15 @@ func SubmitWork(c *gin.Context) {
 		return
 	}
 
-	if err := database.DB.WithContext(c.Request.Context()).Model(&reg).Update("work_attachment_url", req.WorkUrl).Error; err != nil {
+	// 裸模型更新，避免 GORM 将 Preload 的 Competition/Detail 关联一起 Upsert 回写
+	if err := database.DB.WithContext(c.Request.Context()).Model(&models.Register{}).Where("id = ?", reg.ID).Update("work_attachment_url", req.WorkUrl).Error; err != nil {
 		utils.InternalServerError(c, "保存失败", err)
 		return
 	}
 
 	// 自动创建评审记录，无需管理员手动初始化
-	go AutoCreateReviewRecordsForWork(reg.CompID, reg.ID)
+	asyncDB := database.DB // 先捕获再进协程，避免后台读全局指针产生数据竞争
+	go AutoCreateReviewRecordsForWork(asyncDB, reg.CompID, reg.ID)
 
 	utils.SuccessWithMessage(c, "作品已成功保存", nil)
 }
@@ -1626,9 +1633,12 @@ func GetUserList(c *gin.Context) {
 	rdb := middleware.GetRedisClient()
 	ctx := c.Request.Context()
 
-	// 先查 Redis 缓存
-	cacheData, err := rdb.Get(ctx, cacheKey).Result()
-	if err == nil && cacheData != "" {
+	// 先查 Redis 缓存（Redis 未配置时直接走数据库，避免空指针）
+	cacheData := ""
+	if rdb != nil {
+		cacheData, _ = rdb.Get(ctx, cacheKey).Result()
+	}
+	if cacheData != "" {
 		var resp gin.H
 		if json.Unmarshal([]byte(cacheData), &resp) == nil {
 			utils.Success(c, resp)
@@ -1745,7 +1755,9 @@ func GetUserList(c *gin.Context) {
 		if err != nil {
 			return
 		}
-		rdb.Set(asyncCtx, cacheKey, data, 5*time.Minute)
+		if rdb != nil {
+			rdb.Set(asyncCtx, cacheKey, data, 5*time.Minute)
+		}
 	}()
 
 	utils.Success(c, respData)

@@ -1053,7 +1053,7 @@ func PassAwardAudit(c *gin.Context) {
 		utils.InternalServerError(c, "开启审核事务失败", tx.Error)
 		return
 	}
-	result := tx.Model(&award).Where("status = ? AND update_time = ?", "draft", award.UpdatedAt).Updates(map[string]interface{}{
+	result := tx.Model(&models.Award{}).Where("id = ? AND status = ? AND update_time = ?", award.ID, "draft", award.UpdatedAt).Updates(map[string]interface{}{
 		"status":        "approved",
 		"auditor_id":    auditorID,
 		"audit_time":    &now,
@@ -1129,7 +1129,7 @@ func RejectAwardAudit(c *gin.Context) {
 		utils.InternalServerError(c, "开启审核事务失败", tx.Error)
 		return
 	}
-	result := tx.Model(&award).Where("status = ? AND update_time = ?", "draft", award.UpdatedAt).Updates(map[string]interface{}{
+	result := tx.Model(&models.Award{}).Where("id = ? AND status = ? AND update_time = ?", award.ID, "draft", award.UpdatedAt).Updates(map[string]interface{}{
 		"status":        "rejected",
 		"auditor_id":    auditorID,
 		"audit_time":    &now,

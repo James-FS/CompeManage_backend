@@ -4,20 +4,37 @@ import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/models"
 	"log"
+	"sync"
 	"time"
 )
 
-func StartCompStatusScheduler(interval time.Duration) {
+func StartCompStatusScheduler(interval time.Duration) (stop func()) {
+	stopCh := make(chan struct{})
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
 		updateExpiredComps()
 
-		for range ticker.C {
-			updateExpiredComps()
+		for {
+			select {
+			case <-ticker.C:
+				updateExpiredComps()
+			case <-stopCh:
+				return
+			}
 		}
 	}()
+	var once sync.Once
+	// stop 会等待协程完全退出，保证调用方在停机/测试清理前没有残留读写
+	return func() {
+		once.Do(func() {
+			close(stopCh)
+			<-done
+		})
+	}
 }
 
 func updateExpiredComps() {
