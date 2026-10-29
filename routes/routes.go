@@ -235,6 +235,9 @@ func SetupRoutes(r *gin.Engine) {
 			middleware.RequirePermission("award:import"),
 			controllers.ImportAward)
 		award.POST("/import/preview", middleware.RequirePermission("award:import"), controllers.PreviewAwardImport)
+		award.GET("/import/unified/template", middleware.RequirePermission("award:import"), controllers.ExportUnifiedAwardTemplate)
+		award.POST("/import/unified/preview", middleware.RequirePermission("award:import"), controllers.PreviewUnifiedAwardImport)
+		award.POST("/import/unified", middleware.RequirePermission("award:import"), controllers.ImportUnifiedAward)
 		award.GET("/import/settings", controllers.GetAwardImportSetting)
 		award.PUT("/import/settings", controllers.UpdateAwardImportSetting)
 		award.PUT("/members/:id", middleware.RequirePermission("award:import"), controllers.UpdateAwardMember)
