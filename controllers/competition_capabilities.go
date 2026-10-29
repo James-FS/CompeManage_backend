@@ -74,9 +74,9 @@ func requireCompetitionWrite(c *gin.Context, scope *UserAccessScope, comp models
 func competitionManagerCandidates(tx *gorm.DB) *gorm.DB {
 	return tx.Model(&models.User{}).Where("users.delete_time IS NULL").
 		Where(`EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id AND r.delete_time IS NULL
-			WHERE ur.user_id = users.id AND r.role_code IN ('teacher', 'competition_manager', 'college_admin'))`).
+			WHERE ur.user_id = users.id AND r.role_code IN ('teacher', 'competition_manager', 'college_admin', 'school_admin'))`).
 		Where(`(users.identity_type = 'staff' OR EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id AND r.delete_time IS NULL
-			WHERE ur.user_id = users.id AND r.role_code IN ('competition_manager', 'college_admin')))`)
+			WHERE ur.user_id = users.id AND r.role_code IN ('competition_manager', 'college_admin', 'school_admin')))`)
 }
 
 var errInvalidCompetitionManager = errors.New("赛事负责人无效")
