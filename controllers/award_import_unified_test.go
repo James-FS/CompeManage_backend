@@ -430,8 +430,12 @@ func TestUnifiedAwardImportMySQL(t *testing.T) {
 		blocked.CompCode = hidden.CompCode
 		blocked.CompID = hidden.ID
 		_, result := invoke([]AwardImportRow{row(own, b), blocked, row(school, b), row(unassigned, a)}, true, "college_admin", a.ID, &ca.ID)
-		require.Equal(t, 3, result.Success)
-		require.Equal(t, 1, result.Failed)
+		require.Equal(t, 1, result.Success)
+		require.Equal(t, 3, result.Failed)
+		require.Contains(t, result.Rows[0].Error, "只能填报本院学生")
+		require.NotEmpty(t, result.Rows[1].Error)
+		require.Contains(t, result.Rows[2].Error, "只能填报本院学生")
+		require.Empty(t, result.Rows[3].Error)
 		require.Equal(t, own.ID, result.Rows[0].CompID)
 		require.Empty(t, result.Rows[1].Candidates)
 		_, manager := invoke([]AwardImportRow{row(own, a), row(school, a)}, false, "competition_manager", a.ID, nil)

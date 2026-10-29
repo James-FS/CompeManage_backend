@@ -319,14 +319,14 @@ func unifiedAwardGroupIndices(rows []AwardImportRow) (map[uint][]int, []uint) {
 	return groups, ids
 }
 
-func validateUnifiedAwardRows(tx *gorm.DB, rows []AwardImportRow, requireReg bool) error {
+func validateUnifiedAwardRows(tx *gorm.DB, rows []AwardImportRow, requireReg bool, scope *UserAccessScope) error {
 	groups, ids := unifiedAwardGroupIndices(rows)
 	for _, id := range ids {
 		input := make([]AwardImportRow, 0, len(groups[id]))
 		for _, index := range groups[id] {
 			input = append(input, rows[index])
 		}
-		validated, _, err := validateAwardRows(tx, id, input, requireReg)
+		validated, _, err := validateAwardRowsForScope(tx, id, input, requireReg, scope)
 		if err != nil {
 			return err
 		}
@@ -433,7 +433,7 @@ func handleUnifiedAwardImport(c *gin.Context, commit bool) {
 				rows[indices[i]] = row
 			}
 		}
-		if err := validateUnifiedAwardRows(tx, rows, requireRegistration); err != nil {
+		if err := validateUnifiedAwardRows(tx, rows, requireRegistration, scope); err != nil {
 			return err
 		}
 		if !commit {
