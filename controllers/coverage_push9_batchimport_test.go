@@ -171,7 +171,7 @@ func TestBatchImportCompetition_CollegeResolvedOnce(t *testing.T) {
 	// 学院仅查询一次（第二次命中缓存）
 	mock.ExpectQuery("SELECT .* FROM `colleges`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(9, "计算机学院"))
-	// 第 1 条：校验 + 编号 + 创建
+	// 两条赛事共用一次负责人校验与编号查询，再批量创建。
 	mock.ExpectQuery("SELECT \\* FROM `users`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "identity_type"}).AddRow(1, "T001", "staff"))
 	mock.ExpectQuery("SELECT \\* FROM `user_roles`").
@@ -181,23 +181,12 @@ func TestBatchImportCompetition_CollegeResolvedOnce(t *testing.T) {
 	mock.ExpectQuery("SELECT `comp_code` FROM `comp_directories`").
 		WillReturnError(gorm.ErrRecordNotFound)
 	mock.ExpectExec("INSERT INTO `comp_directories`").
-		WillReturnResult(sqlmock.NewResult(1, 1))
+		WillReturnResult(sqlmock.NewResult(1, 2))
 	// promote（仅第一次）：已是负责人 → 不提升
 	mock.ExpectQuery("SELECT \\* FROM `user_roles`").
 		WillReturnRows(sqlmock.NewRows([]string{"user_id", "role_id"}).AddRow(1, 3))
 	mock.ExpectQuery("SELECT \\* FROM `roles`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "role_code", "role_name"}).AddRow(3, "competition_manager", "赛事负责人"))
-	// 第 2 条：校验 + 编号 + 创建；promote 不再执行
-	mock.ExpectQuery("SELECT \\* FROM `users`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "identity_type"}).AddRow(1, "T001", "staff"))
-	mock.ExpectQuery("SELECT \\* FROM `user_roles`").
-		WillReturnRows(sqlmock.NewRows([]string{"user_id", "role_id"}).AddRow(1, 3))
-	mock.ExpectQuery("SELECT \\* FROM `roles`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "role_code", "role_name"}).AddRow(3, "teacher", "老师"))
-	mock.ExpectQuery("SELECT `comp_code` FROM `comp_directories`").
-		WillReturnError(gorm.ErrRecordNotFound)
-	mock.ExpectExec("INSERT INTO `comp_directories`").
-		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectCommit()
 
 	req := struct {
