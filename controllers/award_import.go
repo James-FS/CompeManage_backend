@@ -31,27 +31,34 @@ var awardTemplateNotes = []string{
 }
 
 type AwardImportRow struct {
-	StudentNumber    string               `json:"student_id"`
-	Name             string               `json:"name"`
-	College          string               `json:"college"`
-	Major            string               `json:"major"`
-	ProjectName      string               `json:"project_name"`
-	AwardMonth       string               `json:"award_month"`
-	Category         string               `json:"award_category"`
-	AwardName        string               `json:"award_name"`
-	AdvisorUsernames string               `json:"advisor_usernames"` // 空格分隔的指导教师工号
-	AdvisorColleges  string               `json:"advisor_colleges"`  // 空格分隔的指导教师所在学院（归属校验用）
-	Resolved         []models.AdvisorInfo `json:"-"`                 // 校验通过后的系统三元组快照
-	Remark           string               `json:"remark"`
-	RowNumber        int                  `json:"row_number"`
-	Error            string               `json:"error,omitempty"`
-	Existing         bool                 `json:"existing"`
-	Duplicate        bool                 `json:"duplicate,omitempty"`
-	ImportStatus     string               `json:"import_status,omitempty"`
-	UserID           uint                 `json:"-"`
-	RegID            *uint                `json:"-"`
-	AwardID          uint                 `json:"-"`
-	NeedsProjectKey  bool                 `json:"-"`
+	CompID           uint                     `json:"comp_id,omitempty"`
+	CompName         string                   `json:"comp_name,omitempty"`
+	CompYear         string                   `json:"comp_year,omitempty"`
+	CompCode         string                   `json:"comp_code,omitempty"`
+	MatchStatus      string                   `json:"match_status,omitempty"`
+	Competition      *AwardImportCompetition  `json:"competition,omitempty"`
+	Candidates       []AwardImportCompetition `json:"candidates,omitempty"`
+	StudentNumber    string                   `json:"student_id"`
+	Name             string                   `json:"name"`
+	College          string                   `json:"college"`
+	Major            string                   `json:"major"`
+	ProjectName      string                   `json:"project_name"`
+	AwardMonth       string                   `json:"award_month"`
+	Category         string                   `json:"award_category"`
+	AwardName        string                   `json:"award_name"`
+	AdvisorUsernames string                   `json:"advisor_usernames"` // 空格分隔的指导教师工号
+	AdvisorColleges  string                   `json:"advisor_colleges"`  // 空格分隔的指导教师所在学院（归属校验用）
+	Resolved         []models.AdvisorInfo     `json:"-"`                 // 校验通过后的系统三元组快照
+	Remark           string                   `json:"remark"`
+	RowNumber        int                      `json:"row_number"`
+	Error            string                   `json:"error,omitempty"`
+	Existing         bool                     `json:"existing"`
+	Duplicate        bool                     `json:"duplicate,omitempty"`
+	ImportStatus     string                   `json:"import_status,omitempty"`
+	UserID           uint                     `json:"-"`
+	RegID            *uint                    `json:"-"`
+	AwardID          uint                     `json:"-"`
+	NeedsProjectKey  bool                     `json:"-"`
 }
 
 type AwardAdvisorLookupReq struct {
@@ -445,8 +452,14 @@ func ExportAwardTemplate(c *gin.Context) {
 }
 
 func newAwardTemplate() *excelize.File {
+	return newAwardTemplateLayout(awardTemplateHeaders, awardTemplateNotes)
+}
+
+// Both import entrances share the field styles and business instructions.
+func newAwardTemplateLayout(headers, notes []string) *excelize.File {
 	f := excelize.NewFile()
 	sheet := "Sheet1"
+	lastCol, _ := excelize.ColumnNumberToName(len(headers))
 	borders := []excelize.Border{
 		{Type: "left", Color: "000000", Style: 1}, {Type: "right", Color: "000000", Style: 1},
 		{Type: "top", Color: "000000", Style: 1}, {Type: "bottom", Color: "000000", Style: 1},
@@ -459,21 +472,34 @@ func newAwardTemplate() *excelize.File {
 	text := bodyStyle
 	text.NumFmt = 49
 	textID, _ := f.NewStyle(&text)
+	// Column defaults preserve identifiers in newly added rows. SetColStyle also
+	// replaces existing cell styles, so apply it before the header/body styles.
+	textColumnID, _ := f.NewStyle(&excelize.Style{NumFmt: 49})
 	project := bodyStyle
 	project.Alignment = &excelize.Alignment{Horizontal: "left", Vertical: "center", WrapText: true}
 	projectID, _ := f.NewStyle(&project)
 	noteID, _ := f.NewStyle(&excelize.Style{Alignment: &excelize.Alignment{Horizontal: "left", WrapText: true, Vertical: "center"}, Font: &excelize.Font{Family: "宋体", Size: 12, Color: "000000"}})
-	widths := []float64{7, 15, 12, 23, 21, 38, 15, 13, 13, 24, 14}
-	for i, h := range awardTemplateHeaders {
+	widths := map[string]float64{"序号": 7, "学号": 15, "学生姓名": 12, "所属学院": 23, "所在专业": 21, "参赛项目名称": 38, "获奖时间（年/月）": 15, "获奖类别": 13, "获奖等级": 13, "指导教师工号": 24, "备注": 14, "赛事名称": 38, "赛事年份": 13, "赛事编号": 18}
+	for i, h := range headers {
 		col, _ := excelize.ColumnNumberToName(i + 1)
+		switch h {
+		case "学号", "获奖时间（年/月）", "赛事年份", "赛事编号", "指导教师工号":
+			f.SetColStyle(sheet, col, textColumnID)
+		}
 		f.SetCellValue(sheet, col+"1", h)
-		f.SetColWidth(sheet, col, col, widths[i])
+		f.SetColWidth(sheet, col, col, widths[h])
 	}
-	f.SetCellStyle(sheet, "A1", "K13", bodyID)
-	f.SetCellStyle(sheet, "A1", "K1", headerID)
-	f.SetCellStyle(sheet, "B2", "B13", textID)
-	f.SetCellStyle(sheet, "G2", "G13", textID)
-	f.SetCellStyle(sheet, "F2", "F13", projectID)
+	f.SetCellStyle(sheet, "A1", lastCol+"13", bodyID)
+	f.SetCellStyle(sheet, "A1", lastCol+"1", headerID)
+	for i, h := range headers {
+		col, _ := excelize.ColumnNumberToName(i + 1)
+		switch h {
+		case "学号", "获奖时间（年/月）", "赛事年份", "赛事编号", "指导教师工号":
+			f.SetCellStyle(sheet, col+"2", col+"13", textID)
+		case "参赛项目名称", "赛事名称":
+			f.SetCellStyle(sheet, col+"2", col+"13", projectID)
+		}
+	}
 	f.SetRowHeight(sheet, 1, 42)
 	// 单独划定填写区和说明区，解析以“说明：”为边界。
 	for row := 2; row <= 13; row++ {
@@ -482,11 +508,11 @@ func newAwardTemplate() *excelize.File {
 	f.SetRowHeight(sheet, 14, 12)
 	f.SetRowHeight(sheet, 15, 12)
 	noteHeights := []float64{32, 52, 44, 36, 32, 52, 48}
-	for i, note := range awardTemplateNotes {
+	for i, note := range notes {
 		row := 16 + i
-		f.MergeCell(sheet, fmt.Sprintf("A%d", row), fmt.Sprintf("K%d", row))
+		f.MergeCell(sheet, fmt.Sprintf("A%d", row), fmt.Sprintf("%s%d", lastCol, row))
 		f.SetCellValue(sheet, fmt.Sprintf("A%d", row), note)
-		f.SetCellStyle(sheet, fmt.Sprintf("A%d", row), fmt.Sprintf("K%d", row), noteID)
+		f.SetCellStyle(sheet, fmt.Sprintf("A%d", row), fmt.Sprintf("%s%d", lastCol, row), noteID)
 		// 仅强调说明标题，正文保持正常字重。
 		parts := strings.SplitN(note, "：", 2)
 		if len(parts) == 2 {
@@ -542,8 +568,8 @@ func parseAwardSheet(rows [][]string) ([]AwardImportRow, error) {
 		if awardDate == "" {
 			awardDate = value("获奖时间（年/月/日）")
 		}
-		r := AwardImportRow{RowNumber: index + 2, StudentNumber: value("学号"), Name: value("学生姓名"), College: value("所属学院"), Major: value("所在专业"), ProjectName: value("参赛项目名称"), AwardMonth: awardDate, Category: value("获奖类别"), AwardName: value("获奖等级"), AdvisorUsernames: normalizeAdvisorList(value("指导教师工号")), AdvisorColleges: normalizeAdvisorList(value("指导教师所在学院")), Remark: value("备注")}
-		if r.StudentNumber == "" && r.Name == "" && r.ProjectName == "" && r.Category == "" && r.AwardName == "" && r.College == "" && r.Major == "" && r.AwardMonth == "" && r.AdvisorUsernames == "" && r.AdvisorColleges == "" && r.Remark == "" {
+		r := AwardImportRow{RowNumber: index + 2, StudentNumber: value("学号"), Name: value("学生姓名"), College: value("所属学院"), Major: value("所在专业"), ProjectName: value("参赛项目名称"), AwardMonth: awardDate, Category: value("获奖类别"), AwardName: value("获奖等级"), AdvisorUsernames: normalizeAdvisorList(value("指导教师工号")), AdvisorColleges: normalizeAdvisorList(value("指导教师所在学院")), Remark: value("备注"), CompName: value("赛事名称"), CompYear: value("赛事年份"), CompCode: value("赛事编号")}
+		if r.StudentNumber == "" && r.Name == "" && r.ProjectName == "" && r.Category == "" && r.AwardName == "" && r.College == "" && r.Major == "" && r.AwardMonth == "" && r.AdvisorUsernames == "" && r.AdvisorColleges == "" && r.Remark == "" && r.CompName == "" && r.CompYear == "" && r.CompCode == "" {
 			continue
 		}
 		result = append(result, r)
