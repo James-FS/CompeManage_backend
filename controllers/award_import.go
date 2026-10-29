@@ -85,7 +85,10 @@ func LookupAwardAdvisors(c *gin.Context) {
 	}
 
 	var users []models.User
-	if err := awardAdvisorCandidates(database.DB.WithContext(c.Request.Context()).Model(&models.User{})).
+	// 2026-10-29：全校教职工口径（与弹窗/校验一致），不再限定"可选指导老师"角色
+	if err := database.DB.WithContext(c.Request.Context()).Model(&models.User{}).
+		Where("users.delete_time IS NULL").
+		Where("users.identity_type = 'staff'").
 		Where("users.username IN ?", usernames).
 		Select("users.id, users.realname, users.username, users.college, users.grade").
 		Order("users.id").Find(&users).Error; err != nil {
@@ -139,9 +142,16 @@ func normalizeAdvisorList(s string) string {
 // findAwardTeacher 按工号查询可担任指导老师的在职教职工。
 func findAwardTeacher(tx *gorm.DB, username string) (models.User, error) {
 	var user models.User
-	err := awardAdvisorCandidates(tx.Model(&models.User{})).Where("username = ?", username).First(&user).Error
+	// 需求 2026-10-29：指导老师候选口径改为「全校各部门教职工」（与教师选择弹窗一致），
+	// 仅排除非教职工身份（学生/外部账号）。历史校验口径 awardAdvisorCandidates
+	// （有角色限定+无角色兜底）已废弃：曾出现任课教师（仅 teacher 角色）被整体排除、
+	// 按工号检索不到本人的缺陷。
+	err := tx.Model(&models.User{}).
+		Where("users.delete_time IS NULL").
+		Where("users.identity_type = 'staff'").
+		Where("username = ?", username).First(&user).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return models.User{}, fmt.Errorf("指导教师工号 %s 不存在或不是可选指导老师", username)
+		return models.User{}, fmt.Errorf("指导教师工号 %s 不存在或不是教职工", username)
 	}
 	return user, err
 }

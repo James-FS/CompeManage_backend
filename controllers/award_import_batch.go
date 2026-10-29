@@ -144,7 +144,8 @@ func loadAwardImportUsers(tx *gorm.DB, names []string, teachers bool) (map[strin
 			Select("users.id, users.username, users.realname, users.college, users.major, requested.lookup_username").
 			Joins("JOIN ("+strings.Join(selects, " UNION ALL ")+") AS requested ON users.username = requested.lookup_username", args...)
 		if teachers {
-			query = awardAdvisorCandidates(query)
+			// 2026-10-29：全校教职工口径（与弹窗一致），不再用 awardAdvisorCandidates
+			query = query.Where("users.identity_type = 'staff'").Where("users.delete_time IS NULL")
 		}
 		if err := query.Find(&rows).Error; err != nil {
 			return nil, err
@@ -377,5 +378,5 @@ func (data *awardImportLookup) teacher(username string) (models.User, error) {
 	if user, ok := data.teachers[username]; ok {
 		return user, nil
 	}
-	return models.User{}, fmt.Errorf("指导教师工号 %s 不存在或不是可选指导老师", username)
+	return models.User{}, fmt.Errorf("指导教师工号 %s 不存在或不是教职工", username)
 }

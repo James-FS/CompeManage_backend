@@ -2,11 +2,9 @@ package controllers
 
 import (
 	"CompeManage_backend/database"
-	"CompeManage_backend/middleware"
 	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
 	"context"
-	"crypto/md5"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1621,46 +1619,21 @@ func GetUserList(c *gin.Context) {
 		req.PageSize = 50
 	}
 
-	// 构造缓存 key
-	// P6：teacher 一路的语义由「角色」改为「身份」，加版本后缀避免复用语义变更前的旧缓存。
-	cacheRole := req.Role
-	if req.Role == "teacher" {
-		cacheRole = "teacher:v2"
-	}
-	cacheKeyRaw := fmt.Sprintf("%s|%s|%d|%d", cacheRole, req.Search, req.Page, req.PageSize)
-	cacheKey := fmt.Sprintf("cache:reg_user_list:%x", md5.Sum([]byte(cacheKeyRaw)))
-
-	rdb := middleware.GetRedisClient()
 	ctx := c.Request.Context()
 
-	// 先查 Redis 缓存（Redis 未配置时直接走数据库，避免空指针）
-	cacheData := ""
-	if rdb != nil {
-		cacheData, _ = rdb.Get(ctx, cacheKey).Result()
-	}
-	if cacheData != "" {
-		var resp gin.H
-		if json.Unmarshal([]byte(cacheData), &resp) == nil {
-			utils.Success(c, resp)
-			return
-		}
-	}
+	// 2026-10-29：移除本接口 Redis 缓存（曾为差异点根因之一：名单快照可冻结 5 分钟，
+	// 角色/身份调整后检索不到人；列表规模小，直接查库）。
 
-	// P6：指导老师候选改为按身份取人（identity_type='staff'，排除管理员/专家/访客），
-	// 与 P2 负责人池同口径——这样老师被提升为赛事负责人后仍可被选为指导老师。
-	// 其余（student 等）保持按角色取人，行为不变（按身份取学生会遗漏 1460 名
-	// identity_type='external' 的真实学生）。
+	// 2026-10-29：teacher 候选=全校各部门教职工（身份口径），见下；其余（student 等）
+	// 保持按角色取人，行为不变。
 	var query *gorm.DB
 	if req.Role == "teacher" {
+		// 需求 2026-10-29：指导老师候选=全校各部门教职工（身份口径 identity_type='staff'），
+		// 不再排除带管理/专家角色的教职工——先任教师（仅 teacher 角色或无角色）此前被
+		// NOT EXISTS 防御性过滤整体排除，导致按工号检索不到本人。
 		query = database.DB.WithContext(ctx).Model(&models.User{}).
 			Where("users.delete_time IS NULL").
-			Where("users.identity_type = 'staff'").
-			Where(`NOT EXISTS (
-				SELECT 1 FROM user_roles ur
-				JOIN roles r ON r.id = ur.role_id AND r.delete_time IS NULL
-				WHERE ur.user_id = users.id
-					AND r.role_code IN ('school_admin', 'college_admin', 'expert', 'guest')
-			)`)
+			Where("users.identity_type = 'staff'")
 	} else if req.Role == "award_advisor" {
 		query = awardAdvisorCandidates(database.DB.WithContext(ctx).Model(&models.User{}))
 	} else {
@@ -1746,19 +1719,6 @@ func GetUserList(c *gin.Context) {
 		"page":      req.Page,
 		"page_size": req.PageSize,
 	}
-
-	// 异步写入 Redis 缓存
-	go func() {
-		asyncCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		data, err := json.Marshal(respData)
-		if err != nil {
-			return
-		}
-		if rdb != nil {
-			rdb.Set(asyncCtx, cacheKey, data, 5*time.Minute)
-		}
-	}()
 
 	utils.Success(c, respData)
 }

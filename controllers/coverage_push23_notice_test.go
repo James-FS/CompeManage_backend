@@ -65,10 +65,13 @@ func TestGetNoticeList_FindError(t *testing.T) {
 
 // ===================== GetUserList 缓存命中 =====================
 
-func TestGetUserList_CacheHit(t *testing.T) {
+// 2026-10-29：GetUserList 的 Redis 缓存已移除（需求：教师名单不得因缓存冻结查不到人）。
+// 本用例回归验证"预置旧缓存键不再被使用、请求直查库"。
+func TestGetUserList_CacheRemoved(t *testing.T) {
 	rdb := ensureRedisForUserList(t)
 	rdb.FlushDB(t.Context())
 
+	// 预置旧缓存键（若实现仍读缓存会返回 total:2 的假数据）
 	raw := fmt.Sprintf("%s|%s|%d|%d", "teacher:v2", "", 1, 10)
 	key := fmt.Sprintf("cache:reg_user_list:%x", md5.Sum([]byte(raw)))
 	rdb.Set(t.Context(), key, `{"list":[],"total":2}`, 0)
@@ -77,7 +80,7 @@ func TestGetUserList_CacheHit(t *testing.T) {
 	GetUserList(c)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "\"total\":2")
+	assert.NotContains(t, w.Body.String(), `"total":2`)
 }
 
 // ===================== GetManagerList =====================

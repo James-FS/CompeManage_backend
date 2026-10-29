@@ -131,7 +131,7 @@ func TestSubmitSupplement_TeacherNotFound(t *testing.T) {
 	SubmitStudentAwardSupplement(c)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "不存在或不是可选指导老师")
+	assert.Contains(t, w.Body.String(), "不存在或不是教职工")
 }
 
 func TestSubmitSupplement_LoginStudentQueryError(t *testing.T) {
