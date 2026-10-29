@@ -247,6 +247,10 @@ func awardSummaryBucket(compLevel, awardText string) int {
 // buildAwardSummaryRows 汇总表数据：按赛事聚合省级以上获奖等级分布。
 // 列：序号, 承办学院, 竞赛名称, 10个等级列, 合计, 备注(团体/个人)。
 func buildAwardSummaryRows(ctx context.Context, scope *UserAccessScope, year string) ([][]interface{}, error) {
+	managedCollege, err := collegeNameForAwardScope(database.DB.WithContext(ctx), scope)
+	if err != nil {
+		return nil, err
+	}
 	q := database.DB.WithContext(ctx).Table("awards a").
 		Select("cd.comp_name, cd.comp_level, cn.name AS college_name, cdp.participant_type, a.award_name, a.award_level, a.award_category").
 		Joins("JOIN comp_directories cd ON cd.id = a.comp_id AND cd.delete_time IS NULL").
@@ -259,6 +263,7 @@ func buildAwardSummaryRows(ctx context.Context, scope *UserAccessScope, year str
 		q = q.Where("cd.year = ?", year)
 	}
 	q = awardCompetitionScope(q, scope)
+	q = applyAwardStudentCollegeScope(q, scope, managedCollege, "a")
 
 	var list []struct {
 		CompName, CompLevel, CollegeName     string

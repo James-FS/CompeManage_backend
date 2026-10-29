@@ -179,8 +179,8 @@ func GetAwardCompList(c *gin.Context) {
 
 	// 年份下拉选项：全部赛事的去重举办年份，倒序
 	var years []int
-	database.DB.WithContext(c.Request.Context()).Model(&models.CompDirectory{}).
-		Distinct().Order("year desc").Pluck("year", &years)
+	yearQuery := awardCompetitionScope(database.DB.WithContext(c.Request.Context()).Model(&models.CompDirectory{}), scope)
+	yearQuery.Distinct().Order("year desc").Pluck("year", &years)
 
 	utils.Success(c, gin.H{"list": comps, "total": total, "years": years})
 }
@@ -200,7 +200,7 @@ func SearchCompetition(c *gin.Context) {
 
 	var list []models.CompDirectory
 	query := database.DB.WithContext(c.Request.Context()).Model(&models.CompDirectory{})
-	if role, _ := c.Get("role_code"); role == "college_admin" {
+	if roleCode, _ := c.Get("role_code"); roleCode == "college_admin" || roleCode == "competition_manager" {
 		scope, ok := requireUserAccessScope(c)
 		if !ok {
 			return
@@ -263,10 +263,33 @@ func GetCompAwards(c *gin.Context) {
 		return
 	}
 	db := database.DB.WithContext(c.Request.Context())
+	collegeName, err := collegeNameForAwardScope(db, scope)
+	if err != nil {
+		utils.InternalServerError(c, "查询管理学院失败", err)
+		return
+	}
 	var awards []models.Award
-	if err := db.Where("comp_id = ? AND status IN ?", id, []string{"approved", "1"}).Preload("Members").Preload("Advisors").Preload("Register.Leader").Preload("Register.Members").Order("create_time DESC").Find(&awards).Error; err != nil {
+	awardQuery := db.Where("comp_id = ? AND status IN ?", id, []string{"approved", "1"}).
+		Preload("Members.Student").Preload("Advisors").Preload("Register")
+	awardQuery = applyAwardStudentCollegeScope(awardQuery, scope, collegeName)
+	if err := awardQuery.Order("create_time DESC").Find(&awards).Error; err != nil {
 		utils.InternalServerError(c, "查询失败", err)
 		return
+	}
+	if scope.IsCollegeAdmin() {
+		for i := range awards {
+			awards[i].Members = filterAwardMembersForCollege(awards[i].Members, collegeName)
+			for j := range awards[i].Members {
+				awards[i].Members[j].College = collegeName
+			}
+			advisors := make([]models.AwardAdvisor, 0, len(awards[i].Advisors))
+			for _, advisor := range awards[i].Advisors {
+				if advisor.College == collegeName {
+					advisors = append(advisors, advisor)
+				}
+			}
+			awards[i].Advisors = advisors
+		}
 	}
 	collegeIDs := []uint{}
 	collegeNames := map[uint]string{}
@@ -297,7 +320,14 @@ func GetCompAwards(c *gin.Context) {
 			if m.SubmittedCollegeID != nil {
 				submittedCollegeName = collegeNames[*m.SubmittedCollegeID]
 			}
-			members = append(members, gin.H{"id": m.ID, "name": m.Name, "student_id": m.StudentNumber, "college": m.College, "major": m.Major, "remark": m.Remark, "submitted_college_id": m.SubmittedCollegeID, "submitted_college_name": submittedCollegeName, "submitted_by": m.SubmittedBy, "can_edit": canEditAwardMember(scope, m)})
+			submittedCollegeID := m.SubmittedCollegeID
+			submittedBy := m.SubmittedBy
+			if scope.IsCollegeAdmin() {
+				submittedCollegeID = scope.ManagedCollegeID
+				submittedCollegeName = collegeName
+				submittedBy = nil
+			}
+			members = append(members, gin.H{"id": m.ID, "name": m.Name, "student_id": m.StudentNumber, "college": m.College, "major": m.Major, "remark": m.Remark, "submitted_college_id": submittedCollegeID, "submitted_college_name": submittedCollegeName, "submitted_by": submittedBy, "can_edit": canEditAwardMember(scope, m)})
 		}
 		allowed, err := canEditAwardTeam(db, scope, a.ID)
 		if err != nil {
@@ -316,8 +346,12 @@ func GetCompAwards(c *gin.Context) {
 		for _, adv := range a.Advisors {
 			advisors = append(advisors, gin.H{"username": adv.Username, "name": adv.Name, "college": adv.College, "sort": adv.Sort})
 		}
+		advisorInfo := a.AdvisorInfo
+		if scope.IsCollegeAdmin() {
+			advisorInfo = filterAdvisorInfoForCollege(advisorInfo, collegeName)
+		}
 		studentCount += len(members)
-		list = append(list, gin.H{"id": a.ID, "project_name": project, "team_name": project, "award_category": a.AwardCategory, "award_name": a.AwardName, "award_level": a.AwardLevel, "award_month": month, "members": members, "advisors": advisors, "can_edit_team": allowed, "status": a.Status, "advisor_info": a.AdvisorInfo, "remark": a.Remark, "participation_type": a.ParticipationType})
+		list = append(list, gin.H{"id": a.ID, "project_name": project, "team_name": project, "award_category": a.AwardCategory, "award_name": a.AwardName, "award_level": a.AwardLevel, "award_month": month, "members": members, "advisors": advisors, "can_edit_team": allowed, "status": a.Status, "advisor_info": advisorInfo, "remark": a.Remark, "participation_type": a.ParticipationType})
 	}
 	var hierarchy []string
 	_ = json.Unmarshal([]byte(comp.Detail.AwardHierarchy), &hierarchy)
@@ -813,7 +847,7 @@ func GetAwardAuditList(c *gin.Context) {
 
 	db := database.DB.WithContext(c.Request.Context()).Model(&models.Award{}).
 		Joins("JOIN comp_directories ON comp_directories.id = awards.comp_id").
-		Preload("Members").Preload("Competition").Preload("Register").
+		Preload("Members.Student").Preload("Competition").Preload("Register").Preload("Register.Leader").
 		Preload("Register.Competition").
 		Preload("Register.Members")
 
@@ -835,7 +869,13 @@ func GetAwardAuditList(c *gin.Context) {
 	if !ok {
 		return
 	}
+	collegeName, err := collegeNameForAwardScope(database.DB.WithContext(c.Request.Context()), scope)
+	if err != nil {
+		utils.InternalServerError(c, "查询管理学院失败", err)
+		return
+	}
 	db = awardCompetitionScope(db, scope)
+	db = applyAwardStudentCollegeScope(db, scope, collegeName)
 
 	var awards []models.Award
 	if err := db.Order("awards.create_time DESC").Find(&awards).Error; err != nil {
@@ -845,6 +885,16 @@ func GetAwardAuditList(c *gin.Context) {
 
 	var list []AwardAuditListItem
 	for _, a := range awards {
+		if scope.IsCollegeAdmin() {
+			a.Members = filterAwardMembersForCollege(a.Members, collegeName)
+			for i := range a.Members {
+				a.Members[i].College = collegeName
+			}
+			a.Register.Members = filterRegMembersForCollege(a.Register.Members, collegeName)
+			if a.Register.Leader.College != collegeName {
+				a.Register.Leader = models.User{}
+			}
+		}
 		leaderName, leaderID, phone, _ := getLeaderMember(a.Register.Members, a.Register.Leader)
 		if len(a.Members) > 0 {
 			leaderName = a.Members[0].Name
@@ -908,7 +958,7 @@ func GetAwardAuditDetail(c *gin.Context) {
 
 	var award models.Award
 	if err := database.DB.WithContext(c.Request.Context()).
-		Preload("Members").Preload("Competition").Preload("Register").
+		Preload("Members.Student").Preload("Competition").Preload("Register").
 		Preload("Register.Competition").
 		Preload("Register.Members").
 		Preload("Register.Leader").
@@ -917,9 +967,37 @@ func GetAwardAuditDetail(c *gin.Context) {
 		return
 	}
 
+	var collegeName string
 	if _, scoped := c.Get("role_code"); scoped {
-		if _, _, ok := requireAwardCompetition(c, award.CompID); !ok {
+		scope, _, ok := requireAwardCompetition(c, award.CompID)
+		if !ok {
 			return
+		}
+		if scope.IsCollegeAdmin() {
+			var err error
+			collegeName, err = collegeNameForAwardScope(database.DB.WithContext(c.Request.Context()), scope)
+			if err != nil {
+				utils.InternalServerError(c, "查询管理学院失败", err)
+				return
+			}
+			allowed, err := awardBelongsToCollege(database.DB.WithContext(c.Request.Context()), award.ID, scope, collegeName)
+			if err != nil {
+				utils.InternalServerError(c, "查询获奖归属失败", err)
+				return
+			}
+			if !allowed {
+				utils.Forbidden(c, "无权访问其他学院的获奖记录")
+				return
+			}
+			award.Members = filterAwardMembersForCollege(award.Members, collegeName)
+			for i := range award.Members {
+				award.Members[i].College = collegeName
+			}
+			award.Register.Members = filterRegMembersForCollege(award.Register.Members, collegeName)
+			if award.Register.Leader.College != collegeName {
+				award.Register.Leader = models.User{}
+			}
+			award.AdvisorInfo = filterAdvisorInfoForCollege(award.AdvisorInfo, collegeName)
 		}
 	}
 	leaderName, leaderID, phone, email := getLeaderMember(award.Register.Members, award.Register.Leader)
@@ -996,23 +1074,49 @@ func requireAwardAuditAccess(c *gin.Context, ids []uint) bool {
 	if _, exists := c.Get("role_code"); !exists {
 		return true
 	}
+	db := database.DB.WithContext(c.Request.Context())
 	var awards []models.Award
-	if err := database.DB.WithContext(c.Request.Context()).Where("id IN ?", ids).Find(&awards).Error; err != nil {
+	if err := db.Where("id IN ?", ids).Find(&awards).Error; err != nil {
 		utils.InternalServerError(c, "查询申报记录失败", err)
 		return false
 	}
-	checked := make(map[uint]bool)
+	scopes := make(map[uint]*UserAccessScope)
+	collegeNames := make(map[uint]string)
 	for _, award := range awards {
-		if !checked[award.CompID] {
-			if _, _, ok := requireAwardCompetition(c, award.CompID); !ok {
+		scope := scopes[award.CompID]
+		if scope == nil {
+			var ok bool
+			scope, _, ok = requireAwardCompetition(c, award.CompID)
+			if !ok {
 				return false
 			}
-			checked[award.CompID] = true
+			scopes[award.CompID] = scope
+		}
+		if !scope.IsCollegeAdmin() {
+			continue
+		}
+		collegeName, cached := collegeNames[award.CompID]
+		if !cached {
+			var err error
+			collegeName, err = collegeNameForAwardScope(db, scope)
+			if err != nil {
+				utils.InternalServerError(c, "查询管理学院失败", err)
+				return false
+			}
+			collegeNames[award.CompID] = collegeName
+		}
+		allowed, err := awardBelongsToCollege(db, award.ID, scope, collegeName)
+		if err != nil {
+			utils.InternalServerError(c, "查询获奖归属失败", err)
+			return false
+		}
+		if !allowed {
+			utils.Forbidden(c, "无权操作其他学院的获奖记录")
+			return false
 		}
 	}
 	return true
 }
-
 func PassAwardAudit(c *gin.Context) {
 	idStr := c.Param("id")
 	id, _ := strconv.Atoi(idStr)

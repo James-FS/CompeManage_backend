@@ -193,7 +193,7 @@ func GetCompetitionList(c *gin.Context) {
 		query = query.Where("comp_directories.year = ?", req.Year)
 	}
 
-	if req.IsMy {
+	if req.IsMy || role == "college_admin" {
 		scope, ok := requireUserAccessScope(c)
 		if !ok {
 			return
