@@ -135,6 +135,8 @@ func ensureAwardStudentPermissions() {
 	ensurePerm("award:student:supplement", "学生补录获奖", "学生提交获奖补录")
 	// 补齐获奖审核权限，对存量库的管理员和赛事负责人均生效。
 	// 存量库中 school_admin 的权限是初始化时一次性写入的，新增权限不会自动追加。
+	ensurePerm("award:list", "查看获奖赛事列表", "查看获奖赛事列表")
+	ensurePerm("award:comp:list", "查看赛事获奖信息", "查看具体赛事的获奖信息")
 	ensurePerm("award:audit", "获奖审核", "审核学生获奖申报")
 	ensurePerm("award:import", "导入获奖信息", "导入获奖名单和编辑获奖信息")
 	ensurePerm("award:advisor:list", "查看指导获奖", "查看本人指导的获奖项目")
@@ -145,9 +147,8 @@ func ensureAwardStudentPermissions() {
 
 	grantRolePermissionsByCode("student", []string{"award:student:my-list", "award:student:supplement"})
 	grantRolePermissionsByCode("school_admin", []string{"award:audit"})
-	grantRolePermissionsByCode("college_admin", []string{"award:audit"})
-	grantRolePermissionsByCode("competition_manager", []string{"award:audit"})
-	grantRolePermissionsByCode("college_admin", []string{"award:import"})
+	grantRolePermissionsByCode("college_admin", []string{"award:list", "award:comp:list", "award:audit", "award:import"})
+	grantRolePermissionsByCode("competition_manager", []string{"award:list", "award:comp:list", "award:audit", "award:import"})
 }
 
 // ensureStudentBrowsePermissions P0-3：对学生角色补齐浏览类只读权限——

@@ -69,7 +69,7 @@ func TestGetUserList_CacheHit(t *testing.T) {
 	rdb := ensureRedisForUserList(t)
 	rdb.FlushDB(t.Context())
 
-	raw := fmt.Sprintf("%s|%s|%d|%d", "teacher:v2", "", 1, 10)
+	raw := fmt.Sprintf("%s|%s|%d|%d|college:%s", "teacher:v2", "", 1, 10, "")
 	key := fmt.Sprintf("cache:reg_user_list:%x", md5.Sum([]byte(raw)))
 	rdb.Set(t.Context(), key, `{"list":[],"total":2}`, 0)
 

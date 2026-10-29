@@ -131,9 +131,10 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 		_, err = parseAwardSheet(rows)
 		require.ErrorContains(t, err, "暂无可导入数据")
 	})
-	t.Run("registration-free and cross-college grouping", func(t *testing.T) {
+	t.Run("registration-free import rejects another college member", func(t *testing.T) {
 		w := importRows([]AwardImportRow{rowA, rowB})
 		require.Equal(t, 200, w.Code, w.Body.String())
+		require.Contains(t, w.Body.String(), `"fail_count":1`)
 		var awards []models.Award
 		require.NoError(t, db.Find(&awards).Error)
 		require.Len(t, awards, 1)
@@ -144,18 +145,19 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 		require.EqualValues(t, 1, regNull)
 		var members []models.AwardMember
 		require.NoError(t, db.Find(&members).Error)
-		require.Len(t, members, 2)
-		require.Equal(t, ca.ID, *members[1].SubmittedCollegeID)
+		require.Len(t, members, 1)
+		require.Equal(t, studentA.ID, members[0].StudentID)
+		require.Equal(t, ca.ID, *members[0].SubmittedCollegeID)
 	})
 	var a models.Award
 	require.NoError(t, db.First(&a).Error)
-	t.Run("duplicate preserves first college", func(t *testing.T) {
+	t.Run("shared competition lets each college add only its own member", func(t *testing.T) {
 		w := invoke("POST", fmt.Sprintf("/api/award/import?comp_id=%d", school.ID), "college_admin", &cb.ID, studentB.ID, map[string]interface{}{"rows": []AwardImportRow{rowB}}, ImportAward)
 		require.Equal(t, 200, w.Code, w.Body.String())
-		require.Contains(t, w.Body.String(), `"existing_count":1`)
+		require.Contains(t, w.Body.String(), `"success_count":1`)
 		var m models.AwardMember
 		require.NoError(t, db.Where("student_id = ?", studentB.ID).First(&m).Error)
-		require.Equal(t, ca.ID, *m.SubmittedCollegeID)
+		require.Equal(t, cb.ID, *m.SubmittedCollegeID)
 	})
 	t.Run("conflicting rows are skipped", func(t *testing.T) {
 		fresh := rowA

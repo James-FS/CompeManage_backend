@@ -84,9 +84,27 @@ func LookupAwardAdvisors(c *gin.Context) {
 		return
 	}
 
+	var collegeName string
+	if roleCode, _ := c.Get("role_code"); roleCode == "college_admin" {
+		scope, ok := requireUserAccessScope(c)
+		if !ok {
+			return
+		}
+		var err error
+		collegeName, err = collegeNameForAwardScope(database.DB.WithContext(c.Request.Context()), scope)
+		if err != nil {
+			utils.InternalServerError(c, "查询管理学院失败", err)
+			return
+		}
+	}
+
+	advisorQuery := awardAdvisorCandidates(database.DB.WithContext(c.Request.Context()).Model(&models.User{})).
+		Where("users.username IN ?", usernames)
+	if collegeName != "" {
+		advisorQuery = advisorQuery.Where("users.college = ?", collegeName)
+	}
 	var users []models.User
-	if err := awardAdvisorCandidates(database.DB.WithContext(c.Request.Context()).Model(&models.User{})).
-		Where("users.username IN ?", usernames).
+	if err := advisorQuery.
 		Select("users.id, users.realname, users.username, users.college, users.grade").
 		Order("users.id").Find(&users).Error; err != nil {
 		utils.InternalServerError(c, "查询指导老师资料失败", err)
@@ -238,7 +256,7 @@ func fillAwardAdvisorsIfEmpty(tx *gorm.DB, awardID uint, pairs []models.AdvisorI
 
 // replaceAwardAdvisors 整体替换项目指导教师（弹窗选择提交，任务7）：
 // 忽略客户端提交的姓名/学院，以工号回查系统资料重建三元组。
-func replaceAwardAdvisors(tx *gorm.DB, awardID uint, edits []AwardAdvisorEditReq) error {
+func replaceAwardAdvisors(tx *gorm.DB, awardID uint, edits []AwardAdvisorEditReq, managedCollege string) error {
 	pairs := make([]models.AdvisorInfo, 0, len(edits))
 	seen := map[string]bool{}
 	for _, e := range edits {
@@ -250,6 +268,9 @@ func replaceAwardAdvisors(tx *gorm.DB, awardID uint, edits []AwardAdvisorEditReq
 		user, err := findAwardTeacher(tx, username)
 		if err != nil {
 			return err
+		}
+		if managedCollege != "" && user.College != managedCollege {
+			return fmt.Errorf("指导教师工号 %s 不属于本院", username)
 		}
 		pairs = append(pairs, models.AdvisorInfo{Username: user.Username, Name: user.Realname, College: user.College})
 	}
@@ -348,13 +369,40 @@ func parseAwardImportDate(value string) (time.Time, error) {
 }
 
 func awardCompetitionScope(q *gorm.DB, scope *UserAccessScope) *gorm.DB {
+	if scope == nil {
+		return q.Where("1 = 0")
+	}
 	if scope.IsCollegeAdmin() {
 		if scope.ManagedCollegeID == nil {
-			return q.Where("1=0")
+			return q.Where("1 = 0")
 		}
-		return q.Where("(comp_directories.college_id = ? OR comp_directories.college_id IS NULL OR comp_directories.college_id = 0 OR comp_directories.comp_level IN ?)", *scope.ManagedCollegeID, []string{"校级", "校赛"})
+		// The regular competition directory is strictly college-scoped. Award
+		// filling also includes shared school competitions and competitions that
+		// have not been assigned to a college yet. Award rows and participants
+		// remain filtered to the managed college by the award scope helpers.
+		return q.Where(
+			"(comp_directories.college_id = ? OR comp_directories.college_id IS NULL OR comp_directories.college_id = 0 OR TRIM(comp_directories.comp_level) = ?)",
+			*scope.ManagedCollegeID,
+			"校级",
+		)
 	}
 	return applyCompetitionScope(q, scope, "comp_directories")
+}
+
+func canAccessAwardCompetition(scope *UserAccessScope, comp models.CompDirectory) bool {
+	if scope == nil {
+		return false
+	}
+	if !scope.IsCollegeAdmin() {
+		return canAccessCompetition(scope, comp)
+	}
+	if scope.ManagedCollegeID == nil {
+		return false
+	}
+	if comp.CollegeID == nil || *comp.CollegeID == 0 {
+		return true
+	}
+	return *scope.ManagedCollegeID == *comp.CollegeID || strings.TrimSpace(comp.CompLevel) == "校级"
 }
 
 func requireAwardCompetition(c *gin.Context, compID uint) (*UserAccessScope, *models.CompDirectory, bool) {
@@ -545,12 +593,21 @@ func readAwardImport(c *gin.Context) (uint, []AwardImportRow, error) {
 }
 
 func validateAwardRows(tx *gorm.DB, compID uint, input []AwardImportRow, requireReg bool) ([]AwardImportRow, int, error) {
+	return validateAwardRowsForScope(tx, compID, input, requireReg, nil)
+}
+
+func validateAwardRowsForScope(tx *gorm.DB, compID uint, input []AwardImportRow, requireReg bool, scope *UserAccessScope) ([]AwardImportRow, int, error) {
 	lookupStarted := time.Now()
+	managedCollege, err := collegeNameForAwardScope(tx, scope)
+	if err != nil {
+		return nil, 0, err
+	}
 	lookup, err := loadAwardImportLookup(tx, compID, input)
 	lookupDuration := time.Since(lookupStarted)
 	if err != nil {
 		return nil, 0, err
 	}
+	lookup.managedCollege = managedCollege
 	validationStarted := time.Now()
 	result := append([]AwardImportRow(nil), input...)
 	bad := 0
@@ -634,6 +691,10 @@ func validateAwardRows(tx *gorm.DB, compID uint, input []AwardImportRow, require
 		user, found := lookup.users[r.StudentNumber]
 		if !found {
 			fail("学号不存在")
+			continue
+		}
+		if lookup.managedCollege != "" && user.College != lookup.managedCollege {
+			fail("学生不属于本院，院级管理员只能填报本院学生")
 			continue
 		}
 		mismatches := []string{}
@@ -801,7 +862,8 @@ func PreviewAwardImport(c *gin.Context) {
 		utils.BadRequest(c, err.Error())
 		return
 	}
-	if _, _, ok := requireAwardCompetition(c, compID); !ok {
+	scope, _, ok := requireAwardCompetition(c, compID)
+	if !ok {
 		return
 	}
 	db := database.DB.WithContext(c.Request.Context())
@@ -810,7 +872,7 @@ func PreviewAwardImport(c *gin.Context) {
 		utils.InternalServerError(c, "读取报名要求失败", err)
 		return
 	}
-	result, bad, err := validateAwardRows(db, compID, rows, setting.RequireRegistration)
+	result, bad, err := validateAwardRowsForScope(db, compID, rows, setting.RequireRegistration, scope)
 	if err != nil {
 		utils.InternalServerError(c, "预校验失败", err)
 		return
@@ -850,11 +912,11 @@ func ImportAward(c *gin.Context) {
 		}
 		competitionLockWait = time.Since(stageStarted)
 		// 提交时再次检查，不能使用预览阶段的权限或报名结果。
-		if !scope.IsSchoolAdmin() && !(scope.IsCollegeAdmin() && scope.ManagedCollegeID != nil && (comp.CollegeID == nil || *comp.CollegeID == 0 || *comp.CollegeID == *scope.ManagedCollegeID || comp.CompLevel == "校级" || comp.CompLevel == "校赛")) && !(scope.RoleCode == "competition_manager" && comp.ManagerID == scope.UserID) {
+		if !canAccessAwardCompetition(scope, comp) {
 			return errors.New("赛事权限已变化")
 		}
 		stageStarted = time.Now()
-		rows, bad, err = validateAwardRows(tx, compID, input, setting.RequireRegistration)
+		rows, bad, err = validateAwardRowsForScope(tx, compID, input, setting.RequireRegistration, scope)
 		validationDuration = time.Since(stageStarted)
 		if err != nil {
 			return err
@@ -1004,6 +1066,20 @@ func UpdateAwardMember(c *gin.Context) {
 			denied = true
 			return errors.New("仅能修改本院填报成员")
 		}
+		if scope.IsCollegeAdmin() {
+			collegeName, err := collegeNameForAwardScope(tx, scope)
+			if err != nil {
+				return err
+			}
+			var currentStudent models.User
+			if err := tx.Select("id", "college").First(&currentStudent, m.StudentID).Error; err != nil {
+				return err
+			}
+			if currentStudent.College != collegeName {
+				denied = true
+				return errors.New("只能修改本院学生记录")
+			}
+		}
 		updates := map[string]interface{}{"remark": req.Remark}
 		if req.SubmittedCollegeID != nil {
 			if !scope.IsSchoolAdmin() {
@@ -1028,6 +1104,16 @@ func UpdateAwardMember(c *gin.Context) {
 					invalid = "学号不存在"
 				}
 				return err
+			}
+			if scope.IsCollegeAdmin() {
+				collegeName, err := collegeNameForAwardScope(tx, scope)
+				if err != nil {
+					return err
+				}
+				if user.College != collegeName {
+					invalid = "只能将成员修改为本院学生"
+					return errors.New(invalid)
+				}
 			}
 			count, err := countOtherAwardMemberships(tx, a.CompID, user.ID, m.ID, 0)
 			if err != nil {
@@ -1122,7 +1208,11 @@ func UpdateAwardTeam(c *gin.Context) {
 			return err
 		}
 		if req.Advisors != nil {
-			if err := replaceAwardAdvisors(tx, a.ID, *req.Advisors); err != nil {
+			managedCollege, err := collegeNameForAwardScope(tx, scope)
+			if err != nil {
+				return err
+			}
+			if err := replaceAwardAdvisors(tx, a.ID, *req.Advisors, managedCollege); err != nil {
 				advisorInvalid = true
 				return err
 			}
