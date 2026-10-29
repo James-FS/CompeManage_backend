@@ -190,16 +190,17 @@ func copyEmbeddedSheetInto(dst *excelize.File, embeddedPath, srcSheet, dstSheet 
 	return nil
 }
 
-// 汇总表表头（刘老师「汇总」页样式）
+// 汇总表表头（刘老师「汇总」页样式；2026-10-29 扩至四级：新增 校级一等/二等/三等）
 var awardSummaryHeaders = []string{
 	"序号", "承办学院", "竞赛名称", "国际一等奖", "国际二等奖", "国家特等奖", "国家一等", "国家二等",
-	"国家三等", "省特等奖", "省级一等", "省级二等", "省级三等", "合计", "备注",
+	"国家三等", "省特等奖", "省级一等", "省级二等", "省级三等", "校级一等", "校级二等", "校级三等", "合计", "备注",
 }
 
-// awardSummaryBucket 把一场比赛的获奖归入汇总表等级列；返回列下标（0=国际一等奖 ... 9=省级三等），
-// 无法归类返回 -1（仍计入合计）。仅国际级/国家级/省级赛事会进入汇总。
+// awardSummaryBucket 把一场比赛的获奖归入汇总表等级列；返回列下标（0=国际一等奖 ... 9=省级三等，
+// 10=校级一等 11=校级二等 12=校级三等），无法归类返回 -1（仍计入合计）。
+// 2026-10-29：口径扩至四级，校级赛事也进入汇总；"校赛"为历史值同校级。
 func awardSummaryBucket(compLevel, awardText string) int {
-	family := 0 // 0国际 1国家 2省
+	family := 0 // 0国际 1国家 2省 3校
 	switch compLevel {
 	case "国际级":
 		family = 0
@@ -207,6 +208,8 @@ func awardSummaryBucket(compLevel, awardText string) int {
 		family = 1
 	case "省级":
 		family = 2
+	case "校级", "校赛":
+		family = 3
 	default:
 		return -1
 	}
@@ -236,9 +239,13 @@ func awardSummaryBucket(compLevel, awardText string) int {
 		if grade >= 0 && grade <= 3 {
 			return 2 + grade
 		}
-	default: // 省特等/一等/二等/三等 -> 6..9
+	case 2: // 省特等/一等/二等/三等 -> 6..9
 		if grade >= 0 && grade <= 3 {
 			return 6 + grade
+		}
+	default: // 校级一等/二等/三等 -> 10..12（无特等列）
+		if grade >= 1 && grade <= 3 {
+			return 9 + grade
 		}
 	}
 	return -1
@@ -253,12 +260,25 @@ func buildAwardSummaryRows(ctx context.Context, scope *UserAccessScope, year str
 		Joins("LEFT JOIN colleges cn ON cn.id = cd.college_id").
 		Joins("LEFT JOIN comp_details cdp ON cdp.comp_id = a.comp_id AND cdp.delete_time IS NULL").
 		Where("a.delete_time IS NULL").Where("a.status IN ?", awardExportFilterStatus()).
-		Where("cd.comp_level IN ?", []string{"国际级", "国家级", "省级"}).
+		Where("cd.comp_level IN ?", []string{"国际级", "国家级", "省级", "校级", "校赛"}).
 		Order("cn.name ASC, cd.comp_name ASC, a.id ASC")
 	if year != "" {
 		q = q.Where("cd.year = ?", year)
 	}
-	q = awardCompetitionScope(q, scope)
+	// 修复 2026-10-29：本查询的赛事表别名是 cd（Join "comp_directories cd"），
+	// 而 awardCompetitionScope 固定拼 comp_directories.* 前缀——两者不一致时 WHERE
+	// 指向不存在的表名，MySQL 按零长别名处理导致恒过滤为空（汇总 sheet 无数据根因）。
+	// 此处按 cd 别名手工套用同一条可见性规则（校级全量/院级含校级/负责人本人）。
+	if scope.IsCollegeAdmin() {
+		if scope.ManagedCollegeID == nil {
+			q = q.Where("1 = 0")
+		} else {
+			q = q.Where("(cd.college_id = ? OR cd.college_id IS NULL OR cd.college_id = 0 OR cd.comp_level IN ?)",
+				*scope.ManagedCollegeID, []string{"校级", "校赛"})
+		}
+	} else if !scope.IsSchoolAdmin() {
+		q = q.Where("cd.manager_id = ?", scope.UserID)
+	}
 
 	var list []struct {
 		CompName, CompLevel, CollegeName     string
@@ -272,7 +292,7 @@ func buildAwardSummaryRows(ctx context.Context, scope *UserAccessScope, year str
 	type summaryGroup struct {
 		college, name string
 		participant   *int8
-		buckets       [10]int
+		buckets       [13]int
 		total         int
 	}
 	order := []string{}

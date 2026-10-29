@@ -451,6 +451,7 @@ func BatchImportCompetition(c *gin.Context) {
 	}
 
 	finalizeRolePromotions(c, promotions, auditReasonImport, nil)
+	InvalidateStatisticsDashboard()
 	utils.SuccessWithMessage(c, "批量导入成功", gin.H{
 		"count":          len(compDirs),
 		"promoted_users": promotedUsersResp(c, promotions),

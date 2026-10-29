@@ -288,7 +288,8 @@ func GetStatisticsDashboard(c *gin.Context) {
 		},
 	}
 
-	// 4. 异步写入 Redis，设置 10 分钟过期
+	// 4. 异步写入 Redis，设置 60 秒过期（2026-10-29：原 10 分钟在目录批量导入后
+	// 长时间显示陈旧的"赛事总数=1"，配合 InvalidateStatisticsDashboard 即时失效）
 	go func() {
 		asyncCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
@@ -300,7 +301,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 		if rdb == nil {
 			return
 		}
-		if err := rdb.Set(asyncCtx, cacheKey, data, 10*time.Minute).Err(); err != nil {
+		if err := rdb.Set(asyncCtx, cacheKey, data, 60*time.Second).Err(); err != nil {
 			logger.Error("异步缓存写入失败", "cache_key", cacheKey, "error", err)
 		}
 	}()
@@ -313,4 +314,16 @@ func maxInt64(a int64, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+// InvalidateStatisticsDashboard 批量导入/审核等数据变更后即时失效统计看板缓存。
+// 与 comp_controller 的缓存清扫保持一致（generation 代际）。
+func InvalidateStatisticsDashboard() {
+	rdb := middleware.GetRedisClient()
+	if rdb == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	rdb.Incr(ctx, "cache:stats:dashboard:generation")
 }
