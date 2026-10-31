@@ -46,7 +46,8 @@ func TestAwardReportWorkbookAssembly(t *testing.T) {
 	require.NoError(t, fillAwardExportSheet(f, "附件1", projLayout, 2025, "教务处", projRows))
 	stuRows := [][]interface{}{{1, "计算机学院", "00001", "张三", "计算机学院", "计算机", "赛事", "项目", "2025-11", "国家级", "一等奖", ""}}
 	require.NoError(t, fillAwardExportSheet(f, "附件2", stuLayout, 2025, "教务处", stuRows))
-	summaryRows := [][]interface{}{{1, "计算机学院", "赛事", 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, "团体"}}
+	// 2026-10-31 合并适配：汇总口径扩至四级后数据行=3+13 等级列+合计+备注=18 列
+	summaryRows := [][]interface{}{{1, "计算机学院", "赛事", 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, "团体"}}
 	require.NoError(t, addAwardSummarySheet(f, 2025, summaryRows))
 
 	require.Equal(t, []string{"附件1", "附件2", "汇总表"}, f.GetSheetList())

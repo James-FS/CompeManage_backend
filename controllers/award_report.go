@@ -254,6 +254,10 @@ func awardSummaryBucket(compLevel, awardText string) int {
 // buildAwardSummaryRows 汇总表数据：按赛事聚合省级以上获奖等级分布。
 // 列：序号, 承办学院, 竞赛名称, 10个等级列, 合计, 备注(团体/个人)。
 func buildAwardSummaryRows(ctx context.Context, scope *UserAccessScope, year string) ([][]interface{}, error) {
+	managedCollege, err := collegeNameForAwardScope(database.DB.WithContext(ctx), scope)
+	if err != nil {
+		return nil, err
+	}
 	q := database.DB.WithContext(ctx).Table("awards a").
 		Select("cd.comp_name, cd.comp_level, cn.name AS college_name, cdp.participant_type, a.award_name, a.award_level, a.award_category").
 		Joins("JOIN comp_directories cd ON cd.id = a.comp_id AND cd.delete_time IS NULL").
@@ -265,10 +269,10 @@ func buildAwardSummaryRows(ctx context.Context, scope *UserAccessScope, year str
 	if year != "" {
 		q = q.Where("cd.year = ?", year)
 	}
-	// 修复 2026-10-29：本查询的赛事表别名是 cd（Join "comp_directories cd"），
-	// 而 awardCompetitionScope 固定拼 comp_directories.* 前缀——两者不一致时 WHERE
+	// 2026-10-31 合并说明：本查询赛事表别名是 cd（Join "comp_directories cd"），而
+	// awardCompetitionScope 内部固定拼 comp_directories.* 前缀——别名不一致时 WHERE
 	// 指向不存在的表名，MySQL 按零长别名处理导致恒过滤为空（汇总 sheet 无数据根因）。
-	// 此处按 cd 别名手工套用同一条可见性规则（校级全量/院级含校级/负责人本人）。
+	// 因此此处不走 awardCompetitionScope，按 cd 别名手工套用同一可见性规则。
 	if scope.IsCollegeAdmin() {
 		if scope.ManagedCollegeID == nil {
 			q = q.Where("1 = 0")
@@ -279,6 +283,8 @@ func buildAwardSummaryRows(ctx context.Context, scope *UserAccessScope, year str
 	} else if !scope.IsSchoolAdmin() {
 		q = q.Where("cd.manager_id = ?", scope.UserID)
 	}
+	// develop 新增的学生学院过滤（与赛事可见性正交，别名 "a" 正确）一并保留
+	q = applyAwardStudentCollegeScope(q, scope, managedCollege, "a")
 
 	var list []struct {
 		CompName, CompLevel, CollegeName     string

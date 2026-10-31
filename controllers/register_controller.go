@@ -1619,6 +1619,25 @@ func GetUserList(c *gin.Context) {
 		req.PageSize = 50
 	}
 
+	scope, scoped := requestAccessScopeIfAvailable(c)
+	if !scoped {
+		return
+	}
+	managedCollege := ""
+	if scope != nil && scope.IsCollegeAdmin() {
+		var err error
+		managedCollege, err = collegeNameForAwardScope(database.DB.WithContext(c.Request.Context()), scope)
+		if err != nil {
+			utils.InternalServerError(c, "查询管理学院失败", err)
+			return
+		}
+	}
+
+	// 构造缓存 key
+	// P6：teacher 一路的语义由「角色」改为「身份」，加版本后缀避免复用语义变更前的旧缓存。
+	// 2026-10-31 合并说明：GetUserList 的 Redis 缓存保持移除（2026-10-29 需求：
+	// 教师名单不得因缓存冻结而查不到人，此前 college 缓存扩展版本同样存在冻结风险；
+	// 列表规模小，直接查库）。保留 develop 新增的院管 college 维度过滤（见下）。
 	ctx := c.Request.Context()
 
 	// 2026-10-29：移除本接口 Redis 缓存（曾为差异点根因之一：名单快照可冻结 5 分钟，
@@ -1644,6 +1663,9 @@ func GetUserList(c *gin.Context) {
 			Where("users.delete_time IS NULL")
 	}
 	query = query.Select("users.id, users.realname, users.username, users.college, users.grade")
+	if managedCollege != "" {
+		query = query.Where("users.college = ?", managedCollege)
+	}
 
 	if req.Search != "" {
 		query = query.Where(

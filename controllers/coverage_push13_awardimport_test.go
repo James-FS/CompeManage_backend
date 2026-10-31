@@ -194,7 +194,11 @@ func TestUpdateAwardMember_TransferDenied(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}).AddRow(1, 1, 1))
 	belong := uint(3)
 	mock.ExpectQuery("SELECT .* FROM `award_members`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "award_id", "student_number", "submitted_college_id"}).AddRow(1, 9, "S001", &belong))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "award_id", "student_number", "submitted_college_id", "student_id"}).AddRow(1, 9, "S001", &belong, uint(100)))
+	mock.ExpectQuery("SELECT .* FROM `colleges`").WithArgs(belong, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(belong, "管理学院"))
+	mock.ExpectQuery("SELECT .* FROM `users`").WithArgs(uint(100), 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "college"}).AddRow(uint(100), "管理学院"))
 	mock.ExpectRollback()
 
 	managed := uint(3)

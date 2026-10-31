@@ -71,8 +71,8 @@ func TestGetUserList_CacheRemoved(t *testing.T) {
 	rdb := ensureRedisForUserList(t)
 	rdb.FlushDB(t.Context())
 
-	// 预置旧缓存键（若实现仍读缓存会返回 total:2 的假数据）
-	raw := fmt.Sprintf("%s|%s|%d|%d", "teacher:v2", "", 1, 10)
+	// 2026-10-31 合并：缓存键形态随 develop 增加 college 维度；本用例验证旧缓存不再被读取
+	raw := fmt.Sprintf("%s|%s|%d|%d|college:%s", "teacher:v2", "", 1, 10, "")
 	key := fmt.Sprintf("cache:reg_user_list:%x", md5.Sum([]byte(raw)))
 	rdb.Set(t.Context(), key, `{"list":[],"total":2}`, 0)
 
