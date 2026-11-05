@@ -9,7 +9,7 @@ services:
       MYSQL_DATABASE: CompeManage        # 与你 config.go 中的默认 DB_NAME 保持一致
       TZ: Asia/Shanghai
     ports:
-      - "3306:3306"                      # 映射到你本地的 3306 端口
+      - "${MYSQL_PORT:-3306}:3306"      # 如遇本机端口占用，可在 .env 中调整 MYSQL_PORT
     volumes:
       - ./mysql_data:/var/lib/mysql      # 数据持久化目录
     command: 
