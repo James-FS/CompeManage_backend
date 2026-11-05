@@ -351,11 +351,154 @@ func GetCompAwards(c *gin.Context) {
 			advisorInfo = filterAdvisorInfoForCollege(advisorInfo, collegeName)
 		}
 		studentCount += len(members)
-		list = append(list, gin.H{"id": a.ID, "project_name": project, "team_name": project, "award_category": a.AwardCategory, "award_name": a.AwardName, "award_level": a.AwardLevel, "award_month": month, "members": members, "advisors": advisors, "can_edit_team": allowed, "status": a.Status, "advisor_info": advisorInfo, "remark": a.Remark, "participation_type": a.ParticipationType})
+		list = append(list, gin.H{"id": a.ID, "project_name": project, "team_name": project, "award_category": a.AwardCategory, "award_name": a.AwardName, "award_level": a.AwardLevel, "award_month": month, "members": members, "advisors": advisors, "can_edit_team": allowed, "can_delete": canDeleteImportedAward(scope, a), "status": a.Status, "advisor_info": advisorInfo, "remark": a.Remark, "participation_type": a.ParticipationType})
 	}
 	var hierarchy []string
 	_ = json.Unmarshal([]byte(comp.Detail.AwardHierarchy), &hierarchy)
 	utils.Success(c, gin.H{"list": list, "award_hierarchy": hierarchy, "student_count": studentCount, "team_count": len(list)})
+}
+
+func canDeleteImportedAward(scope *UserAccessScope, award models.Award) bool {
+	return award.Source == "import" && scope != nil && (scope.IsSchoolAdmin() || scope.RoleCode == "competition_manager")
+}
+
+func softDeleteImportedAwards(tx *gorm.DB, ids []uint) error {
+	for _, dependent := range []interface{}{&models.AwardMember{}, &models.AwardAdvisor{}, &models.AwardChange{}} {
+		if err := tx.Where("award_id IN ?", ids).Delete(dependent).Error; err != nil {
+			return err
+		}
+	}
+	if err := tx.Model(&models.Award{}).Where("id IN ?", ids).Update("project_key", nil).Error; err != nil {
+		return err
+	}
+	return tx.Where("id IN ?", ids).Delete(&models.Award{}).Error
+}
+
+// DeleteImportedAward removes an imported award project and its dependent snapshots.
+// The project key is cleared before soft deletion so a corrected import can reuse it.
+func DeleteImportedAward(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil || id == 0 {
+		utils.BadRequest(c, "获奖ID无效")
+		return
+	}
+
+	db := database.DB.WithContext(c.Request.Context())
+	var award models.Award
+	if err := db.First(&award, uint(id)).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.NotFound(c, "获奖记录不存在")
+		} else {
+			utils.InternalServerError(c, "查询获奖记录失败", err)
+		}
+		return
+	}
+
+	scope, _, ok := requireAwardCompetition(c, award.CompID)
+	if !ok {
+		return
+	}
+	if !canDeleteImportedAward(scope, award) {
+		utils.Forbidden(c, "仅校级管理员或该赛事负责人可删除导入的获奖记录")
+		return
+	}
+
+	denied := false
+	err = db.Transaction(func(tx *gorm.DB) error {
+		var current models.Award
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, uint(id)).Error; err != nil {
+			return err
+		}
+		if current.CompID != award.CompID || !canDeleteImportedAward(scope, current) {
+			denied = true
+			return errors.New("获奖记录不可删除")
+		}
+		return softDeleteImportedAwards(tx, []uint{uint(id)})
+	})
+	if denied {
+		utils.Forbidden(c, "无权删除该获奖记录")
+		return
+	}
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.NotFound(c, "获奖记录不存在")
+		} else {
+			utils.InternalServerError(c, "删除获奖记录失败", err)
+		}
+		return
+	}
+
+	clearAwardCache(c.Request.Context(), award.CompID)
+	utils.SuccessWithMessage(c, "获奖记录已删除", nil)
+}
+
+func BatchDeleteImportedAwards(c *gin.Context) {
+	var req struct {
+		CompID uint   `json:"comp_id" binding:"required"`
+		IDs    []uint `json:"ids" binding:"required,min=1,max=100"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "赛事ID或获奖记录列表无效，每次最多删除100条")
+		return
+	}
+
+	seen := make(map[uint]struct{}, len(req.IDs))
+	for _, id := range req.IDs {
+		if id == 0 {
+			utils.BadRequest(c, "获奖ID无效")
+			return
+		}
+		if _, exists := seen[id]; exists {
+			utils.BadRequest(c, "获奖ID不能重复")
+			return
+		}
+		seen[id] = struct{}{}
+	}
+
+	scope, _, ok := requireAwardCompetition(c, req.CompID)
+	if !ok {
+		return
+	}
+	if !scope.IsSchoolAdmin() && scope.RoleCode != "competition_manager" {
+		utils.Forbidden(c, "仅校级管理员或该赛事负责人可删除导入的获奖记录")
+		return
+	}
+
+	db := database.DB.WithContext(c.Request.Context())
+	missing := false
+	denied := false
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var awards []models.Award
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id IN ? AND comp_id = ?", req.IDs, req.CompID).Find(&awards).Error; err != nil {
+			return err
+		}
+		if len(awards) != len(req.IDs) {
+			missing = true
+			return errors.New("获奖记录不存在或不属于当前赛事")
+		}
+		for _, award := range awards {
+			if !canDeleteImportedAward(scope, award) {
+				denied = true
+				return errors.New("仅能删除导入的获奖记录")
+			}
+		}
+		return softDeleteImportedAwards(tx, req.IDs)
+	})
+	if missing {
+		utils.NotFound(c, "部分获奖记录不存在或不属于当前赛事")
+		return
+	}
+	if denied {
+		utils.Forbidden(c, "选中的记录中包含不可删除的获奖数据")
+		return
+	}
+	if err != nil {
+		utils.InternalServerError(c, "批量删除获奖记录失败", err)
+		return
+	}
+
+	clearAwardCache(c.Request.Context(), req.CompID)
+	utils.SuccessWithMessage(c, fmt.Sprintf("已删除 %d 条获奖记录", len(req.IDs)), nil)
 }
 
 func GetStudentMyAwardList(c *gin.Context) {

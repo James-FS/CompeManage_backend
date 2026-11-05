@@ -242,6 +242,8 @@ func SetupRoutes(r *gin.Engine) {
 		award.PUT("/import/settings", controllers.UpdateAwardImportSetting)
 		award.PUT("/members/:id", middleware.RequirePermission("award:import"), controllers.UpdateAwardMember)
 		award.PUT("/teams/:id", middleware.RequirePermission("award:import"), controllers.UpdateAwardTeam)
+		award.POST("/batch-delete", middleware.RequirePermission("award:import"), controllers.BatchDeleteImportedAwards)
+		award.DELETE("/:id", middleware.RequirePermission("award:import"), controllers.DeleteImportedAward)
 		award.GET("/export-template",
 			controllers.ExportAwardTemplate)
 		award.GET("/export/projects",
