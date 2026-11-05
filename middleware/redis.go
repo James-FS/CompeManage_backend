@@ -92,6 +92,8 @@ func CloseRedis() error {
 			logger.Error("Redis连接关闭失败", "error", err)
 			return err
 		}
+		// 关闭后置空，与"未初始化"语义一致，避免残留已关闭客户端通过 nil 防护
+		RedisClient = nil
 		logger.Info("Redis连接已关闭")
 	}
 	return nil

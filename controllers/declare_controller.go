@@ -345,7 +345,9 @@ func GetMyDeclares(c *gin.Context) {
 	if req.CompType != "" {
 		query = query.Where("comp_type = ?", req.CompType)
 	}
-	if req.DeclareStatus >= 0 {
+	// declare_status 缺省不过滤（int8 零值无法区分「未传」与「草稿」）；
+	// 显式传 0 才筛草稿。此前 `>= 0` 导致「我的申报」永远只剩草稿。
+	if c.Query("declare_status") != "" {
 		query = query.Where("declare_status = ?", req.DeclareStatus)
 	}
 

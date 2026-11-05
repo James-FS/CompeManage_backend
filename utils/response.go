@@ -31,17 +31,8 @@ type Response struct {
 
 // 初始化基础响应（自动填充时间戳）
 func newResponse(c *gin.Context, code int, message string, data interface{}) Response {
-	// 1. 记录日志逻辑
+	// 1. 记录日志逻辑（规范：code >= 400 记 Warn，其余记 Info）
 	if code >= 400 {
-		// 错误级别日志
-		slog.Warn("接口响应错误",
-			"path", c.Request.URL.Path,
-			"method", c.Request.Method,
-			"biz_code", code,
-			"msg", message,
-			"ip", c.ClientIP(),
-		)
-	} else if code >= 500 {
 		slog.Warn("接口响应错误",
 			"path", c.Request.URL.Path,
 			"method", c.Request.Method,

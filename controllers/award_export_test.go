@@ -4,7 +4,10 @@ import (
 	"CompeManage_backend/models"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
 )
 
 func TestAdvisorsMirrorAndRowsJoin(t *testing.T) {
@@ -79,4 +82,26 @@ func TestAwardJoinMembers(t *testing.T) {
 	names, colleges = awardJoinMembers([]awardExportMember{{AwardID: 1, Name: "张三"}})
 	require.Equal(t, "张三", names)
 	require.Empty(t, colleges)
+}
+
+// P0：导出赛事范围过滤（校管全量 / 院管本院+校级+未分配 / 负责人按管理学院）
+func TestApplyAwardExportCompetitionScope(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer sqlDB.Close()
+	db, err := gorm.Open(mysql.New(mysql.Config{Conn: sqlDB, SkipInitializeWithVersion: true}), &gorm.Config{})
+	require.NoError(t, err)
+
+	run := func(scope *UserAccessScope) {
+		mock.ExpectQuery("SELECT .*FROM `comp_directories`").WillReturnRows(sqlmock.NewRows([]string{"id"}))
+		q := applyAwardExportCompetitionScope(db.Table("comp_directories").Select("id"), scope)
+		require.NoError(t, q.Find(&[]models.CompDirectory{}).Error)
+	}
+	run(&UserAccessScope{RoleCode: "school_admin"})
+	collegeID := uint(9)
+	run(&UserAccessScope{RoleCode: "college_admin", ManagedCollegeID: &collegeID})
+	run(&UserAccessScope{RoleCode: "college_admin", ManagedCollegeID: nil})
+	run(&UserAccessScope{RoleCode: "competition_manager", UserID: 3})
+	run(&UserAccessScope{RoleCode: "student", UserID: 4})
+	require.NoError(t, mock.ExpectationsWereMet())
 }

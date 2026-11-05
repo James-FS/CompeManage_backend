@@ -115,3 +115,97 @@ func TestResolveAwardAdvisors(t *testing.T) {
 
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// P0 回归：获奖等级归一化（金/银/铜、特等、冠亚季军、全角空格）
+func TestNormalizeAwardName(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    string
+		wantErr string
+	}{
+		{in: "一等奖", want: "一等奖"},
+		{in: "国家级一等奖", want: "一等奖"},
+		{in: "  金  奖  ", want: "一等奖"},
+		{in: "特等奖", want: "一等奖"},
+		{in: "冠军", want: "一等奖"},
+		{in: "第一名", wantErr: "获奖等级必须"}, // 未在归一化白名单内
+		{in: "二等奖", want: "二等奖"},
+		{in: "银奖", want: "二等奖"},
+		{in: "亚军", want: "二等奖"},
+		{in: "三等奖", want: "三等奖"},
+		{in: "铜奖", want: "三等奖"},
+		{in: "季军", want: "三等奖"},
+		{in: "（一等奖）", want: "一等奖"},
+		{in: "一　等奖", want: "一等奖"}, // 全角空格
+		{in: "优胜奖", wantErr: "获奖等级必须"},
+		{in: "", wantErr: "获奖等级必须"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := normalizeAwardName(tt.in)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// P0 回归：导入获奖时间多格式
+func TestParseAwardImportDate(t *testing.T) {
+	okCases := []struct {
+		in   string
+		want string
+	}{
+		{in: "2025-11", want: "2025-11-01"},
+		{in: "2025.11", want: "2025-11-01"},
+		{in: " 2025-06 ", want: "2025-06-01"},
+		{in: "2025-11-15", want: "2025-11-01"},
+	}
+	for _, tt := range okCases {
+		got, err := parseAwardImportDate(tt.in)
+		require.NoError(t, err, tt.in)
+		require.Equal(t, tt.want, got.Format("2006-01-02"), tt.in)
+	}
+	for _, bad := range []string{"", "abc", "2025/11", "25-11", "2025-13", "202511"} {
+		_, err := parseAwardImportDate(bad)
+		require.Error(t, err, bad)
+		require.Contains(t, err.Error(), "获奖时间")
+	}
+}
+
+// P0 回归：获奖赛事范围（院管未绑学院 / 本院+校级 / 校管全量）
+func TestAwardCompetitionScopeSQL(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	require.NoError(t, err)
+	defer sqlDB.Close()
+	db, err := gorm.Open(mysql.New(mysql.Config{Conn: sqlDB, SkipInitializeWithVersion: true}), &gorm.Config{})
+	require.NoError(t, err)
+
+	// 院管未绑定管理学院 → 1=0
+	mock.ExpectQuery("SELECT .*FROM `comp_directories`").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	q := db.Model(&models.CompDirectory{})
+	q = awardCompetitionScope(q, &UserAccessScope{RoleCode: "college_admin", ManagedCollegeID: nil})
+	require.NoError(t, q.Find(&[]models.CompDirectory{}).Error)
+
+	// 院管已绑定 → 含本院/未分配/校级条件
+	collegeID := uint(9)
+	mock.ExpectQuery("SELECT .*FROM `comp_directories`").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	q = db.Model(&models.CompDirectory{})
+	q = awardCompetitionScope(q, &UserAccessScope{RoleCode: "college_admin", ManagedCollegeID: &collegeID})
+	require.NoError(t, q.Find(&[]models.CompDirectory{}).Error)
+
+	// 校管 → 不追加学院过滤（由 applyCompetitionScope 放行）
+	mock.ExpectQuery("SELECT .*FROM `comp_directories`").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	q = db.Model(&models.CompDirectory{})
+	q = awardCompetitionScope(q, &UserAccessScope{RoleCode: "school_admin"})
+	require.NoError(t, q.Find(&[]models.CompDirectory{}).Error)
+
+	require.NoError(t, mock.ExpectationsWereMet())
+}

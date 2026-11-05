@@ -308,6 +308,16 @@ func mockHTTPServer(handler http.HandlerFunc) *httptest.Server {
 
 ### 实战经验
 
+#### 统一获奖导入（2026-10-29）
+
+- GORM查询赛事候选时使用 `Model(&models.CompDirectory{})` 再投影到精简响应结构，才能同时保留软删除过滤和获奖赛事范围；仅查询响应结构会丢失模型规则。
+- 多赛事提交按ID升序锁定目录，绑定预览ID后重新检查名称、年份、编号及权限；失效预览不能退回按名称重新匹配。数据库写入异常必须让整个事务返回错误，避免其他赛事先成功。目录解析应在写事务外执行；MySQL可重复读事务中的首次普通查询必须发生在赛事锁获取之后，否则等待并发导入结束后仍可能使用旧快照，违反同赛事学生获奖唯一性。并发回归测试已复现旧行为并验证修复。
+- MySQL中报名的 `advisor_info` 是JSON字段，测试报名需显式填写 `[]`，空字符串会在准备数据阶段报3140错误。
+- 统一模板与单赛事模板共用字段样式和解析器，新增赛事列后按字段名计算文本格式及说明跨列范围，不能继续使用固定列字母。
+- Excelize的 `SetColStyle` 会覆盖该列已有单元格样式，不能在设置表头、边框后追加只有文本格式的整列样式。文本列默认格式必须先设置，再覆盖表头与数据区的完整样式。模板回归在xlsx序列化后检查所有12列表头、数据首尾行的字体/边框/对齐，并检查追加行仍保留文本格式。
+- 统一导入最新模板只需额外填写赛事名称；年份由后端按Asia/Hong_Kong时区自动确定，下载目录、匹配、锁后复核均限定当年。不能信任旧模板或JSON中的年份/编号字段。测试需用动态年份创建MySQL夹具，并覆盖UTC跨年边界、往年同名不误投以及同年重名的ID选择。`comp_year`/`comp_code`仅为返回元数据，前端不提供填写列。
+- `TestUnifiedAward*` 覆盖JSON和multipart读取、前导零、按权限的目录导出、跨年同名、同年消歧、重复归属、部分失败、失效预览、报名要求、并发等待后的快照及跨赛事事务回滚；新控制器语句覆盖率91.1%。额外的 `TestUnifiedAwardBrowserMySQL` 通过真实JWT/权限中间件和隔离MySQL，将模板下载、导入、失败导出重传、重复跳过、名单查看和成员备注编辑串成浏览器闭环；需显式设置 `COMPE_AWARD_BROWSER_TEST=1` 和MySQL开关。
+
 #### 1. GORM 事务处理
 
 GORM 的 `Create` 使用事务，需要 mock Begin/Commit/Rollback：
@@ -500,6 +510,7 @@ go tool cover -func=coverage.out
 
 | 文件 | 函数 | 覆盖率 |
 |------|------|--------|
+| `award_import_unified.go` | 模板、请求解析、目录范围、赛事匹配、分组校验和事务导入 | 91.1%（独立MySQL工作流、并发回归与单元测试） |
 | `file_controller.go` | `sanitizeFilename` | 100% |
 | `file_controller.go` | `UploadFile` | 88.9% |
 | `file_controller.go` | `calcFileMD5` | 75.0% |
@@ -601,14 +612,12 @@ go tool cover -func=coverage.out
 |------|------|----------|
 | `award_controller.go` | `clearAwardCache` | Mock Redis |
 | `middleware/auth.go` | `RequirePermission` | Mock Redis + DB |
-| `datasource/datahall.go` | `derefStr` | 纯函数 |
-| `datasource/datahall.go` | `lastNChars` | 纯函数 |
-| `datasource/datahall.go` | `hashPassword` | 纯函数 |
 
 ### 不建议单元测试的函数
 
-- `SyncStudents`、`updateExpiredComps`（依赖外部 API）
 - `file.Open()` 系统级错误分支
+- `logger.Fatal`、`InitRedis` 失败分支（会 `os.Exit`，只能测成功路径并做可达性跳过）
+- ~~`SyncStudents`、`updateExpiredComps`~~（已用 httptest + sqlmock 覆盖，见 `datasource/datahall_sync_test.go`、`utils/scheduler_test.go`）
 
 ### CI
 
@@ -633,3 +642,33 @@ mock.ExpectExec("UPDATE `review_tasks` SET `delete_time`")
 // 期望：
 mock.ExpectExec("UPDATE `review_records` SET `delete_time`")
 ```
+
+#### 15. 后台协程测试的全局 DB 泄漏（utils/scheduler、middleware/permission_cache_tasks）
+
+`StartCompStatusScheduler` 等函数启动的 goroutine 在测试结束后仍会轮询 `database.DB`。
+若测试的 `t.Cleanup` 把 `database.DB` 还原为 nil，残留协程会在后台 panic，表现为
+「单跑通过、全量偶发 FAIL」。解法：该测试不还原 DB，只替换为容错的 sink mock，
+并用 LIFO 清理顺序保证最终 `database.DB` 永远非 nil：
+
+```go
+t.Cleanup(func() { database.DB = sinkGorm }) // 先注册、最后执行
+mock := setupXxxDBMock(t)                    // 后注册的恢复逻辑先执行
+```
+
+#### 16. 非事务句柄的每条写语句各自隐式事务
+
+`database.SetUserRole` 直接用根 `DB` 执行 `Delete` + `Create`，两条语句是
+**两个独立隐式事务**（Begin/Exec/Commit × 2）；而包在 `db.Transaction(fn)` 里、
+用 `tx` 执行时才是单一事务。Mock 期望必须区分这两种情况。
+
+#### 17. lumberjack 持有日志文件句柄
+
+`logger.SetupLogger` 创建的 `lumberjack.Logger` 永不关闭句柄，若日志路径放在
+`t.TempDir()` 里，测试结束时 `TempDir` 清理会报 "being used by another process"。
+日志文件应写到 `os.TempDir()` 下的独立文件。
+
+#### 18. CloseRedis 需要置空全局客户端（已修复）
+
+原实现只 `Close()` 不置 nil，残留的"已关闭客户端"能通过 `rdb != nil` 防护，
+后续所有缓存调用都会报 "client is closed"。现已在关闭后置 `RedisClient = nil`，
+与"未初始化"语义一致。同类 bug 模式：全局资源句柄关闭后必须置空。

@@ -23,8 +23,10 @@ func TestAwardSummaryBucket(t *testing.T) {
 	require.Equal(t, 7, awardSummaryBucket("省级", "一等奖"))
 	require.Equal(t, 8, awardSummaryBucket("省级", "二等奖"))
 	require.Equal(t, 9, awardSummaryBucket("省级", "三等奖"))
-	// 校级/院级不进汇总；未知等级 -1（仍计入合计）
-	require.Equal(t, -1, awardSummaryBucket("校级", "一等奖"))
+	// 2026-10-29 口径扩至四级：校级一/二/三等 -> 10..12；未知等级 -1（仍计入合计）
+	require.Equal(t, 10, awardSummaryBucket("校级", "一等奖"))
+	require.Equal(t, 11, awardSummaryBucket("校赛", "二等奖"))
+	require.Equal(t, 12, awardSummaryBucket("校级", "三等奖"))
 	require.Equal(t, -1, awardSummaryBucket("国家级", "优胜奖"))
 }
 
@@ -44,7 +46,8 @@ func TestAwardReportWorkbookAssembly(t *testing.T) {
 	require.NoError(t, fillAwardExportSheet(f, "附件1", projLayout, 2025, "教务处", projRows))
 	stuRows := [][]interface{}{{1, "计算机学院", "00001", "张三", "计算机学院", "计算机", "赛事", "项目", "2025-11", "国家级", "一等奖", ""}}
 	require.NoError(t, fillAwardExportSheet(f, "附件2", stuLayout, 2025, "教务处", stuRows))
-	summaryRows := [][]interface{}{{1, "计算机学院", "赛事", 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, "团体"}}
+	// 2026-10-31 合并适配：汇总口径扩至四级后数据行=3+13 等级列+合计+备注=18 列
+	summaryRows := [][]interface{}{{1, "计算机学院", "赛事", 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, "团体"}}
 	require.NoError(t, addAwardSummarySheet(f, 2025, summaryRows))
 
 	require.Equal(t, []string{"附件1", "附件2", "汇总表"}, f.GetSheetList())
@@ -59,7 +62,8 @@ func TestAwardReportWorkbookAssembly(t *testing.T) {
 	// 汇总表：标题与表头
 	require.Contains(t, exportCell(t, f, "汇总表", "A1"), "2025年学校组织参加的各类竞赛获奖汇总表")
 	require.Equal(t, "国际一等奖", exportCell(t, f, "汇总表", "D2"))
-	require.Equal(t, "合计", exportCell(t, f, "汇总表", "N2"))
+	require.Equal(t, "校级一等", exportCell(t, f, "汇总表", "N2"))
+	require.Equal(t, "合计", exportCell(t, f, "汇总表", "Q2"))
 	require.Equal(t, "1", exportCell(t, f, "汇总表", "G3"))
-	require.Equal(t, "1", exportCell(t, f, "汇总表", "N3"))
+	require.Equal(t, "1", exportCell(t, f, "汇总表", "Q3"))
 }

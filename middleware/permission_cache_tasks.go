@@ -5,6 +5,7 @@ import (
 	"CompeManage_backend/logger"
 	"CompeManage_backend/models"
 	"fmt"
+	"sync"
 	"time"
 
 	"gorm.io/gorm/clause"
@@ -96,16 +97,31 @@ func ProcessPermissionCacheInvalidationTasks(limit int) {
 	}
 }
 
-func StartPermissionCacheInvalidationScheduler(interval time.Duration) {
+func StartPermissionCacheInvalidationScheduler(interval time.Duration) (stop func()) {
 	if interval <= 0 {
 		interval = time.Minute
 	}
+	stopCh := make(chan struct{})
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		ProcessPermissionCacheInvalidationTasks(50)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		for range ticker.C {
-			ProcessPermissionCacheInvalidationTasks(50)
+		for {
+			select {
+			case <-ticker.C:
+				ProcessPermissionCacheInvalidationTasks(50)
+			case <-stopCh:
+				return
+			}
 		}
 	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			close(stopCh)
+			<-done
+		})
+	}
 }

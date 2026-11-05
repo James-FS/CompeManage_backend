@@ -85,7 +85,7 @@ func Error(msg string, args ...any) {
 }
 
 func Debug(msg string, args ...any) {
-	slog.Default().Error(msg, args...)
+	slog.Default().Debug(msg, args...)
 }
 
 func Fatal(msg string, args ...any) {
