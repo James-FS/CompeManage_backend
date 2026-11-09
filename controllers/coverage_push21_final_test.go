@@ -268,7 +268,7 @@ func TestGetStatisticsDashboard_CacheHit(t *testing.T) {
 	rdb.FlushDB(t.Context())
 
 	managed := uint(3)
-	cacheKey := fmt.Sprintf("cache:stats:dashboard:v3:%s:%d:%s:%d", "", uint(5), "college_admin", uint(3))
+	cacheKey := fmt.Sprintf("cache:stats:dashboard:v4:%s:%d:%s:%d:m%d", "", uint(5), "college_admin", uint(3), 6)
 	rdb.Set(t.Context(), cacheKey, `{"total_competitions":7}`, 0)
 
 	_, w, c := buildGET("/api/statistics/dashboard")

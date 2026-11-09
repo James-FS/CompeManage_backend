@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"strconv"
 	"time"
 
@@ -68,13 +67,17 @@ func GetStatisticsDashboard(c *gin.Context) {
 	if scope.ManagedCollegeID != nil {
 		managedCollegeID = *scope.ManagedCollegeID
 	}
+	months, _ := strconv.Atoi(c.DefaultQuery("months", "6"))
+	if months <= 0 || months > 24 {
+		months = 6
+	}
 	rdb := middleware.GetRedisClient()
 	ctx := c.Request.Context()
 	generation := ""
 	if rdb != nil {
 		generation, _ = rdb.Get(ctx, "cache:stats:dashboard:generation").Result()
 	}
-	cacheKey := fmt.Sprintf("cache:stats:dashboard:v3:%s:%d:%s:%d", generation, scope.UserID, scope.RoleCode, managedCollegeID)
+	cacheKey := fmt.Sprintf("cache:stats:dashboard:v4:%s:%d:%s:%d:m%d", generation, scope.UserID, scope.RoleCode, managedCollegeID, months)
 
 	cacheData := ""
 	if rdb != nil {
@@ -88,11 +91,6 @@ func GetStatisticsDashboard(c *gin.Context) {
 			return
 		}
 	}
-	months, _ := strconv.Atoi(c.DefaultQuery("months", "6"))
-	if months <= 0 || months > 24 {
-		months = 6
-	}
-
 	newCompBase := func() *gorm.DB {
 		q := database.DB.WithContext(ctx).Model(&models.CompDirectory{})
 		return applyCompetitionScope(q, scope, "comp_directories")
@@ -233,10 +231,6 @@ func GetStatisticsDashboard(c *gin.Context) {
 		{Name: "已归档总结", Value: summaryArchived},
 	}
 
-	sort.SliceStable(funnel, func(i, j int) bool {
-		return funnel[i].Value > funnel[j].Value
-	})
-
 	todos := []todoItem{
 		{Title: "赛事申报待审核", Value: declarePending, Path: "/competition/audit"},
 		{Title: "报名待审核", Value: regPending, Path: "/register/audit"},
@@ -306,7 +300,9 @@ func GetStatisticsDashboard(c *gin.Context) {
 		}
 	}()
 
-	utils.Success(c, responseData)
+	// responseData 已经是完整响应信封。与 Redis 缓存命中时直接返回的结构保持一致，
+	// 避免缓存未命中时被 utils.Success 再包一层，导致前端读不到 data.summary。
+	c.JSON(http.StatusOK, responseData)
 }
 
 func maxInt64(a int64, b int64) int64 {
