@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"CompeManage_backend/database"
+	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
 	"context"
 	"encoding/json"
@@ -195,6 +196,51 @@ func RequireRole(roleCode string) gin.HandlerFunc {
 		}
 
 		c.Set("role_code", roleCode)
+		c.Next()
+	}
+}
+
+// RequireReviewerAccess grants review-task access to the expert role or to an
+// eligible account with at least one active task assigned in registration settings.
+func RequireReviewerAccess() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userIDValue, exists := c.Get("user_id")
+		if !exists {
+			utils.Unauthorized(c, "请先登录")
+			c.Abort()
+			return
+		}
+		userID, ok := userIDValue.(uint)
+		if !ok || userID == 0 {
+			utils.Forbidden(c, "用户信息无效，禁止访问")
+			c.Abort()
+			return
+		}
+
+		roleCode := c.GetString("role_code")
+		if roleCode == "expert" {
+			c.Next()
+			return
+		}
+		if !models.IsReviewEligibleRole(roleCode) {
+			utils.Forbidden(c, "当前角色不能承担评审任务")
+			c.Abort()
+			return
+		}
+
+		var taskCount int64
+		if err := database.DB.WithContext(c.Request.Context()).Model(&models.ReviewTask{}).
+			Where("expert_id = ?", userID).Count(&taskCount).Error; err != nil {
+			utils.InternalServerError(c, "检查评审任务权限失败", err)
+			c.Abort()
+			return
+		}
+		if taskCount == 0 {
+			utils.Forbidden(c, "尚未被分配评审任务")
+			c.Abort()
+			return
+		}
+
 		c.Next()
 	}
 }

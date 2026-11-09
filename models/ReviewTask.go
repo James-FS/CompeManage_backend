@@ -11,3 +11,8 @@ type ReviewTask struct {
 	AssignedAt  *time.Time `gorm:"comment:分配时间" json:"assigned_at"`
 	CompletedAt *time.Time `gorm:"comment:完成时间" json:"completed_at"`
 }
+
+// IsReviewEligibleRole reports whether a role may perform assigned review tasks.
+func IsReviewEligibleRole(roleCode string) bool {
+	return roleCode != "" && roleCode != "student" && roleCode != "guest"
+}

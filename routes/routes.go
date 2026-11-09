@@ -315,11 +315,12 @@ func SetupRoutes(r *gin.Engine) {
 		review.GET("/result/list", middleware.RequirePermission("review:result:list"), controllers.GetReviewResultList)
 		review.POST("/result/confirm", middleware.RequirePermission("review:result:confirm"), controllers.ConfirmReviewResult)
 
-		// 专家路由
-		review.GET("/my/tasks", middleware.RequirePermission("review:my:list"), controllers.GetMyReviewTasks)
-		review.GET("/my/works", middleware.RequirePermission("review:my:works"), controllers.GetMyReviewWorks)
-		review.GET("/my/works/:regId", middleware.RequirePermission("review:my:work:detail"), controllers.GetReviewWorkDetail)
-		review.POST("/submit", middleware.RequirePermission("review:my:submit"), controllers.SubmitReview)
-		review.PUT("/submit/:id", middleware.RequirePermission("review:my:update"), controllers.UpdateReview)
+		// Reviewer access for other roles is tied to ReviewTask assignments, not a role-wide grant.
+		review.GET("/my/access", controllers.GetMyReviewAccess)
+		review.GET("/my/tasks", middleware.RequireReviewerAccess(), controllers.GetMyReviewTasks)
+		review.GET("/my/works", middleware.RequireReviewerAccess(), controllers.GetMyReviewWorks)
+		review.GET("/my/works/:regId", middleware.RequireReviewerAccess(), controllers.GetReviewWorkDetail)
+		review.POST("/submit", middleware.RequireReviewerAccess(), controllers.SubmitReview)
+		review.PUT("/submit/:id", middleware.RequireReviewerAccess(), controllers.UpdateReview)
 	}
 }
