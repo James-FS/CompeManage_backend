@@ -175,11 +175,14 @@ func calcReviewStatus(c *gin.Context, compID uint, totalRecords, reviewedCount i
 	return "reviewing"
 }
 
-// GetExpertList 获取可选专家列表
+// GetExpertList 获取可选评审人列表（排除学生和访客角色）
 func GetExpertList(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "10"))
 	keyword := c.Query("keyword")
+	name := c.Query("name")
+	workID := c.Query("work_id")
+	college := c.Query("college")
 	collegeID := c.Query("college_id")
 
 	if page < 1 {
@@ -191,19 +194,29 @@ func GetExpertList(c *gin.Context) {
 	query := database.DB.WithContext(c.Request.Context()).Model(&models.User{}).
 		Joins("JOIN user_roles ON user_roles.user_id = users.id").
 		Joins("JOIN roles ON roles.id = user_roles.role_id").
-		Where("roles.role_code = ?", "expert")
+		Where("roles.role_code NOT IN ?", []string{"student", "guest"}).
+		Where("roles.delete_time IS NULL").
+		Where("users.delete_time IS NULL")
 	scope, ok := requestAccessScopeIfAvailable(c)
 	if !ok {
 		return
 	}
 
 	if keyword != "" {
-		query = query.Where("users.realname LIKE ? OR users.username LIKE ?", "%"+keyword+"%", "%"+keyword+"%")
+		query = query.Where("(users.realname LIKE ? OR users.username LIKE ?)", "%"+keyword+"%", "%"+keyword+"%")
+	}
+	if name != "" {
+		query = query.Where("users.realname LIKE ?", "%"+name+"%")
+	}
+	if workID != "" {
+		query = query.Where("users.username = ?", workID)
 	}
 	if scope != nil && scope.IsCollegeAdmin() {
 		query = query.Where("users.college = (SELECT name FROM colleges WHERE id = ?)", *scope.ManagedCollegeID)
 	} else if collegeID != "" {
 		query = query.Where("users.college = (SELECT name FROM colleges WHERE id = ?)", collegeID)
+	} else if college != "" {
+		query = query.Where("users.college = ?", college)
 	}
 
 	var total int64
@@ -217,12 +230,14 @@ func GetExpertList(c *gin.Context) {
 		Username string `json:"username"`
 		Name     string `json:"name"`
 		College  string `json:"college"`
+		RoleCode string `json:"role_code"`
+		RoleName string `json:"role_name"`
 	}
 
 	var list []ExpertItem
 	offset := (page - 1) * size
 	if err := query.
-		Select("users.id, users.username, users.realname AS name, COALESCE(users.college, '') AS college").
+		Select("users.id, users.username, users.realname AS name, COALESCE(users.college, '') AS college, roles.role_code, roles.role_name").
 		Order("users.create_time DESC").
 		Offset(offset).Limit(size).
 		Scan(&list).Error; err != nil {
@@ -1082,6 +1097,39 @@ func ConfirmReviewResult(c *gin.Context) {
 }
 
 // ========== 专家 API ==========
+
+// GetMyReviewAccess reports whether the current account can enter reviewer pages.
+// Non-expert roles receive this access only while a review task is assigned to them.
+func GetMyReviewAccess(c *gin.Context) {
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		utils.Unauthorized(c, "未登录")
+		return
+	}
+	userID, ok := userIDValue.(uint)
+	if !ok || userID == 0 {
+		utils.Forbidden(c, "用户信息无效")
+		return
+	}
+
+	roleCode := c.GetString("role_code")
+	if roleCode == "expert" {
+		utils.Success(c, gin.H{"can_review": true})
+		return
+	}
+	if !models.IsReviewEligibleRole(roleCode) {
+		utils.Success(c, gin.H{"can_review": false})
+		return
+	}
+
+	var taskCount int64
+	if err := database.DB.WithContext(c.Request.Context()).Model(&models.ReviewTask{}).
+		Where("expert_id = ?", userID).Count(&taskCount).Error; err != nil {
+		utils.InternalServerError(c, "查询评审任务权限失败", err)
+		return
+	}
+	utils.Success(c, gin.H{"can_review": taskCount > 0})
+}
 
 // GetMyReviewTasks 我的评审任务列表
 func GetMyReviewTasks(c *gin.Context) {

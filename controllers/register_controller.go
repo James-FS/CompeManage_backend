@@ -4,6 +4,7 @@ import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -53,16 +54,42 @@ type SubTrackReq struct {
 }
 
 type ApplicationReq struct {
-	RegID             uint                `json:"reg_id"`
-	ParticipationType string              `json:"participation_type"`
-	CompID            uint                `json:"comp_id" binding:"required"`
-	TeamName          string              `json:"team_name"`
-	Leader            MemberReq           `json:"leader"`
-	Members           []MemberReq         `json:"members"`
-	AdvisorID         *uint               `json:"advisor_id"`
-	AdvisorInfo       *models.AdvisorInfo `json:"advisor_info"`
-	AttachmentUrl     string              `json:"attachment_url"`
-	Track             string              `json:"track"`
+	RegID             uint            `json:"reg_id"`
+	ParticipationType string          `json:"participation_type"`
+	CompID            uint            `json:"comp_id" binding:"required"`
+	TeamName          string          `json:"team_name"`
+	Leader            MemberReq       `json:"leader"`
+	Members           []MemberReq     `json:"members"`
+	AdvisorID         *uint           `json:"advisor_id"`
+	AdvisorInfo       AdvisorInfoList `json:"advisor_info"`
+	AttachmentUrl     string          `json:"attachment_url"`
+	Track             string          `json:"track"`
+}
+
+// AdvisorInfoList accepts both the legacy single-object payload and the current array payload.
+type AdvisorInfoList []models.AdvisorInfo
+
+func (advisors *AdvisorInfoList) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
+		*advisors = nil
+		return nil
+	}
+	if data[0] == '[' {
+		var list []models.AdvisorInfo
+		if err := json.Unmarshal(data, &list); err != nil {
+			return err
+		}
+		*advisors = AdvisorInfoList(list)
+		return nil
+	}
+
+	var advisor models.AdvisorInfo
+	if err := json.Unmarshal(data, &advisor); err != nil {
+		return err
+	}
+	*advisors = AdvisorInfoList{advisor}
+	return nil
 }
 
 type MemberReq struct {
@@ -542,7 +569,7 @@ func SubmitRegistration(c *gin.Context) {
 		return
 	}
 
-	if comp.Detail.NeedAdvisor == 2 && req.AdvisorInfo == nil {
+	if comp.Detail.NeedAdvisor == 2 && len(req.AdvisorInfo) == 0 {
 		removeUploadedFile(req.AttachmentUrl)
 		utils.BadRequest(c, "该赛事要求必须填写指导老师")
 		return
@@ -564,7 +591,7 @@ func SubmitRegistration(c *gin.Context) {
 		CompID:        req.CompID,
 		LeaderID:      leader.ID,
 		TeamName:      req.TeamName,
-		AdvisorInfo:   "{}",
+		AdvisorInfo:   "[]",
 		AttachmentUrl: req.AttachmentUrl,
 		Status:        0,
 		Members:       make([]models.RegMember, 0),
@@ -574,7 +601,7 @@ func SubmitRegistration(c *gin.Context) {
 		register.Status = 1
 	}
 
-	if req.AdvisorInfo != nil {
+	if len(req.AdvisorInfo) > 0 {
 		advisorJSON, err := json.Marshal(req.AdvisorInfo)
 		if err != nil {
 			utils.InternalServerError(c, "指导老师信息处理失败", err)
@@ -1333,7 +1360,7 @@ func ResubmitRegistration(c *gin.Context) {
 		return
 	}
 
-	if detail.NeedAdvisor == 2 && req.AdvisorInfo == nil {
+	if detail.NeedAdvisor == 2 && len(req.AdvisorInfo) == 0 {
 		utils.BadRequest(c, "该赛事要求必须填写指导老师")
 		return
 	}
@@ -1350,15 +1377,15 @@ func ResubmitRegistration(c *gin.Context) {
 	if selectedLeader.ID != 0 {
 		reg.LeaderID = selectedLeader.ID
 	}
-	if req.ParticipationType != "" && req.AdvisorInfo == nil {
-		reg.AdvisorInfo = "{}"
+	if req.ParticipationType != "" && len(req.AdvisorInfo) == 0 {
+		reg.AdvisorInfo = "[]"
 	}
 	reg.TeamName = req.TeamName
 	reg.AttachmentUrl = req.AttachmentUrl
 	reg.AdvisorID = req.AdvisorID
 	reg.Track = req.Track
 
-	if req.AdvisorInfo != nil {
+	if len(req.AdvisorInfo) > 0 {
 		advisorJSON, err := json.Marshal(req.AdvisorInfo)
 		if err != nil {
 			utils.InternalServerError(c, "指导老师信息处理失败", err)
