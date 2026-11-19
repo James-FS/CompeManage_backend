@@ -22,6 +22,7 @@ services:
       CAS_FRONTEND_URL: https://your-domain.example
     volumes:
       - ./config/config-prod.yaml:/app/config/config-prod.yaml:ro
+      - ./static:/app/static
     depends_on:
       - mysql-db
       - redis

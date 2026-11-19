@@ -155,16 +155,43 @@ func isValidTime(t time.Time) bool {
 	return !t.IsZero() && t.Year() > 1970
 }
 
-func removeUploadedFile(fileUrl string) {
-	if fileUrl == "" {
+func removeUploadedFile(c *gin.Context, fileUrl string) {
+	userIDValue, exists := c.Get("user_id")
+	userID, valid := userIDValue.(uint)
+	if !exists || !valid {
 		return
 	}
-	relativePath := strings.TrimPrefix(fileUrl, "/")
-	nativePath := filepath.FromSlash(relativePath)
-	if err := os.Remove(nativePath); err != nil {
-		fmt.Println("清理垃圾文件失败:", err)
-	} else {
-		fmt.Println("已清理垃圾文件:", nativePath)
+	ctx := c.Request.Context()
+	for _, url := range attachmentURLs(fileUrl) {
+		const downloadPrefix = "/api/file/download/"
+		if !strings.HasPrefix(url, downloadPrefix) {
+			continue
+		}
+		parts := strings.SplitN(strings.TrimPrefix(url, downloadPrefix), "/", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		filename := strings.SplitN(parts[1], "_", 2)
+		if len(filename) != 2 || len(filename[0]) != 32 {
+			continue
+		}
+
+		var record models.FileRecord
+		if err := database.DB.WithContext(ctx).Where("file_hash = ? AND biz_type = ?", filename[0], parts[0]).First(&record).Error; err != nil {
+			continue
+		}
+		if record.UploaderID != userID || fileRecordIsReferenced(record) {
+			continue
+		}
+
+		if record.StoragePath != "" {
+			nativePath := filepath.FromSlash(strings.TrimPrefix(record.StoragePath, "/"))
+			if err := os.Remove(nativePath); err != nil && !os.IsNotExist(err) {
+				fmt.Println("清理垃圾文件失败:", err)
+				continue
+			}
+		}
+		_ = database.DB.WithContext(ctx).Delete(&record).Error
 	}
 }
 
@@ -479,6 +506,11 @@ func SubmitRegistration(c *gin.Context) {
 		utils.BadRequest(c, "参数格式错误")
 		return
 	}
+	if attachmentURLCount(req.AttachmentUrl) > maxBusinessAttachments {
+		utils.BadRequest(c, "报名附件最多5个")
+		return
+	}
+	req.AttachmentUrl = attachmentURLsToLegacyString(req.AttachmentUrl)
 
 	_, exists := c.Get("user_id")
 	if !exists {
@@ -494,7 +526,7 @@ func SubmitRegistration(c *gin.Context) {
 	}
 
 	if comp.Detail.ID == 0 {
-		removeUploadedFile(req.AttachmentUrl)
+		removeUploadedFile(c, req.AttachmentUrl)
 		utils.BadRequest(c, "赛事配置未完成，暂不接受报名")
 		return
 	}
@@ -515,13 +547,13 @@ func SubmitRegistration(c *gin.Context) {
 	now := time.Now()
 
 	if now.Before(comp.Detail.RegStartTime) {
-		removeUploadedFile(req.AttachmentUrl)
+		removeUploadedFile(c, req.AttachmentUrl)
 		utils.Forbidden(c, "非法请求：报名尚未开始")
 		return
 	}
 
 	if now.After(comp.Detail.RegEndTime) {
-		removeUploadedFile(req.AttachmentUrl)
+		removeUploadedFile(c, req.AttachmentUrl)
 		utils.Forbidden(c, "非法请求：报名已截止")
 		return
 	}
@@ -531,7 +563,7 @@ func SubmitRegistration(c *gin.Context) {
 		if err := json.Unmarshal([]byte(comp.Detail.Track), &trackConfig); err == nil && len(trackConfig) > 0 {
 			// 赛事配置了赛道，必须填写
 			if req.Track == "" {
-				removeUploadedFile(req.AttachmentUrl)
+				removeUploadedFile(c, req.AttachmentUrl)
 				utils.BadRequest(c, "该赛事要求必须选择赛道")
 				return
 			}
@@ -557,7 +589,7 @@ func SubmitRegistration(c *gin.Context) {
 			}
 
 			if !trackValid {
-				removeUploadedFile(req.AttachmentUrl)
+				removeUploadedFile(c, req.AttachmentUrl)
 				utils.BadRequest(c, "选择的赛道无效")
 				return
 			}
@@ -570,7 +602,7 @@ func SubmitRegistration(c *gin.Context) {
 	}
 
 	if comp.Detail.NeedAdvisor == 2 && len(req.AdvisorInfo) == 0 {
-		removeUploadedFile(req.AttachmentUrl)
+		removeUploadedFile(c, req.AttachmentUrl)
 		utils.BadRequest(c, "该赛事要求必须填写指导老师")
 		return
 	}
@@ -578,11 +610,11 @@ func SubmitRegistration(c *gin.Context) {
 	var leader models.User
 	if err := database.DB.WithContext(c.Request.Context()).Where("username = ?", req.Leader.StuID).First(&leader).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			removeUploadedFile(req.AttachmentUrl)
+			removeUploadedFile(c, req.AttachmentUrl)
 			utils.BadRequest(c, "负责人学号不存在")
 			return
 		}
-		removeUploadedFile(req.AttachmentUrl)
+		removeUploadedFile(c, req.AttachmentUrl)
 		utils.InternalServerError(c, "查询负责人信息失败", err)
 		return
 	}
@@ -1251,6 +1283,11 @@ func ResubmitRegistration(c *gin.Context) {
 		utils.BadRequest(c, "参数错误")
 		return
 	}
+	if attachmentURLCount(req.AttachmentUrl) > maxBusinessAttachments {
+		utils.BadRequest(c, "报名附件最多5个")
+		return
+	}
+	req.AttachmentUrl = attachmentURLsToLegacyString(req.AttachmentUrl)
 
 	userIDVal, exists := c.Get("user_id")
 	if !exists {
@@ -1561,6 +1598,11 @@ func SubmitWork(c *gin.Context) {
 		utils.BadRequest(c, "参数错误")
 		return
 	}
+	if attachmentURLCount(req.WorkUrl) > maxWorkAttachments {
+		utils.BadRequest(c, "每次最多提交10个作品文件")
+		return
+	}
+	req.WorkUrl = attachmentURLsToLegacyString(req.WorkUrl)
 
 	userIDVal, exists := c.Get("user_id")
 	if !exists {

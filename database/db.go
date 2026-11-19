@@ -73,6 +73,15 @@ func autoMigrate() {
 	// 禁用外键检查，避免迁移时的外键约束问题
 	DB.Exec("SET FOREIGN_KEY_CHECKS=0")
 
+	// 文件去重需要按“哈希 + 业务类型”唯一；移除旧的全局哈希唯一索引。
+	for _, indexName := range []string{"idx_file_records_file_hash", "uni_file_records_file_hash"} {
+		if DB.Migrator().HasIndex(&models.FileRecord{}, indexName) {
+			if err := DB.Migrator().DropIndex(&models.FileRecord{}, indexName); err != nil {
+				log.Fatalf("删除旧文件哈希索引失败：%v", err)
+			}
+		}
+	}
+
 	err := DB.AutoMigrate(
 		// 在此处添加需要自动迁移的模型
 		// 例如：&moder.User{},

@@ -7,8 +7,10 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/url"
 	"os"
@@ -21,20 +23,110 @@ import (
 
 const maxFileSize = 30 << 20
 
-var uploadDirs = map[string]string{
-	"notice":           "static/notices",
-	"reg_attachment":   "static/reg_attachments",
-	"competition_work": "static/reg_attachments",
-	"award_proof":      "static/award_proofs",
-	"award_cert":       "static/temp", // Legacy student uploads retained this business type.
-	"temp":             "static/temp",
+const maxBusinessAttachments = 5
+const maxWorkAttachments = 10
+
+func attachmentURLCount(value string) int {
+	return len(attachmentURLs(value))
 }
 
-var allowedExts = map[string]bool{
-	".jpg": true, ".jpeg": true, ".png": true,
-	".pdf": true, ".doc": true, ".docx": true,
-	".xls": true, ".xlsx": true, ".csv": true,
-	".zip": true, ".rar": true, ".ppt": true, ".pptx": true,
+func attachmentURLsToLegacyString(value string) string {
+	return strings.Join(attachmentURLs(value), ",")
+}
+
+func attachmentURLs(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if strings.HasPrefix(value, "[") {
+		var refs []struct {
+			URL string `json:"url"`
+		}
+		if json.Unmarshal([]byte(value), &refs) == nil {
+			urls := make([]string, 0, len(refs))
+			for _, ref := range refs {
+				if url := strings.TrimSpace(ref.URL); url != "" {
+					urls = append(urls, url)
+				}
+			}
+			return urls
+		}
+	}
+	urls := make([]string, 0)
+	for _, url := range strings.Split(value, ",") {
+		if url = strings.TrimSpace(url); url != "" {
+			urls = append(urls, url)
+		}
+	}
+	return urls
+}
+
+var uploadDirs = map[string]string{
+	"notice":             "static/notices",
+	"notice_attachment":  "static/notices", // Legacy alias used by older notice upload forms.
+	"reg_attachment":     "static/reg_attachments",
+	"competition_work":   "static/reg_attachments",
+	"award_proof":        "static/award_proofs",
+	"award_cert":         "static/temp", // Legacy student uploads retained this business type.
+	"declare_attachment": "static/declare_attachments",
+	"summary_attachment": "static/summary_attachments",
+	"temp":               "static/temp", // Legacy temporary uploads; new forms should use a business type.
+}
+
+func extensionSet(exts ...string) map[string]bool {
+	allowed := make(map[string]bool, len(exts))
+	for _, ext := range exts {
+		allowed[ext] = true
+	}
+	return allowed
+}
+
+var knownMimeTypes = map[string]string{
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".png":  "image/png",
+	".pdf":  "application/pdf",
+	".doc":  "application/msword",
+	".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".xls":  "application/vnd.ms-excel",
+	".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	".csv":  "text/csv; charset=utf-8",
+	".zip":  "application/zip",
+	".rar":  "application/vnd.rar",
+	".ppt":  "application/vnd.ms-powerpoint",
+	".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
+
+func mimeTypeForExtension(ext string) string {
+	if contentType, ok := knownMimeTypes[strings.ToLower(ext)]; ok {
+		return contentType
+	}
+	if contentType := mime.TypeByExtension(ext); contentType != "" {
+		return contentType
+	}
+	return "application/octet-stream"
+}
+
+var allUploadExts = extensionSet(
+	".jpg", ".jpeg", ".png", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".zip", ".rar", ".ppt", ".pptx",
+)
+
+var officeDocumentExts = extensionSet(".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv")
+var registrationAttachmentExts = extensionSet(".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".zip")
+var awardProofExts = extensionSet(".jpg", ".jpeg", ".png", ".pdf", ".doc", ".docx")
+
+// uploadAllowedExts mirrors the file picker policies while keeping the server authoritative.
+var uploadAllowedExts = map[string]map[string]bool{
+	"notice":             allUploadExts,
+	"notice_attachment":  allUploadExts,
+	"reg_attachment":     registrationAttachmentExts,
+	"competition_work":   allUploadExts,
+	"award_proof":        awardProofExts,
+	"award_cert":         awardProofExts,
+	"declare_attachment": officeDocumentExts,
+	"summary_attachment": extensionSet(".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".zip", ".rar"),
+	"temp":               allUploadExts,
 }
 
 // calcFileMD5 计算上传文件的 MD5 哈希
@@ -55,15 +147,17 @@ func calcFileMD5(file *multipart.FileHeader) (string, error) {
 func sanitizeFilename(filename string) string {
 	filename = filepath.Base(filename)
 	filename = strings.ReplaceAll(filename, " ", "_")
+	filename = strings.ReplaceAll(filename, ",", "_")
 	filename = strings.ReplaceAll(filename, "..", "")
 	return filename
 }
 
 func UploadFile(c *gin.Context) {
-	bizType := c.PostForm("type")
+	bizType := strings.TrimSpace(c.PostForm("type"))
 	savePathRoot, ok := uploadDirs[bizType]
 	if !ok {
-		savePathRoot = uploadDirs["temp"]
+		utils.BadRequest(c, "上传业务类型无效")
+		return
 	}
 
 	file, err := c.FormFile("file")
@@ -78,8 +172,8 @@ func UploadFile(c *gin.Context) {
 	}
 
 	ext := strings.ToLower(filepath.Ext(file.Filename))
-	if !allowedExts[ext] {
-		utils.BadRequest(c, "不支持的文件格式(仅支持图片、PDF、Word、Excel、压缩包)")
+	if !uploadAllowedExts[bizType][ext] {
+		utils.BadRequest(c, "该类附件不支持此文件格式")
 		return
 	}
 
@@ -120,7 +214,8 @@ func UploadFile(c *gin.Context) {
 				"url":       buildDownloadURL(existingRecord.BizType, existingRecord.FileHash, existingRecord.OriginalName),
 				"name":      existingRecord.OriginalName,
 				"size":      existingRecord.FileSize,
-				"mime_type": existingRecord.FileExt,
+				"file_ext":  existingRecord.FileExt,
+				"mime_type": mimeTypeForExtension(existingRecord.FileExt),
 			})
 			return
 		}
@@ -155,13 +250,14 @@ func UploadFile(c *gin.Context) {
 		"url":       buildDownloadURL(bizType, fileHash, originalName),
 		"name":      originalName,
 		"size":      file.Size,
-		"mime_type": ext,
+		"file_ext":  ext,
+		"mime_type": mimeTypeForExtension(ext),
 	})
 }
 
 // buildDownloadURL 构造受控下载 URL
 func buildDownloadURL(bizType, fileHash, originalName string) string {
-	return fmt.Sprintf("/api/file/download/%s/%s_%s", bizType, fileHash, originalName)
+	return fmt.Sprintf("/api/file/download/%s/%s_%s", bizType, fileHash, url.PathEscape(originalName))
 }
 
 // DownloadFile 处理文件下载/预览，支持权限校验
@@ -207,19 +303,91 @@ func DownloadFile(c *gin.Context) {
 		return
 	}
 
-	// 设置 Content-Disposition：attachment 触发下载，inline 内嵌预览
-	// 中文 filename 用 URL 编码防止乱码
+	// 设置原始文件名，前端按返回的 MIME 类型决定预览或下载。
+	// 中文 filename 用 URL 编码防止乱码。
 	encodedName := url.QueryEscape(record.OriginalName)
 	disposition := fmt.Sprintf("attachment; filename*=UTF-8''%s", encodedName)
 	c.Header("Content-Disposition", disposition)
-	c.Header("Content-Type", "application/octet-stream")
+	contentType := mimeTypeForExtension(record.FileExt)
+	c.Header("Content-Type", contentType)
+	c.Header("X-Content-Type-Options", "nosniff")
 
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		utils.NotFound(c, "文件读取失败")
 		return
 	}
-	c.Data(200, "application/octet-stream", data)
+	c.Data(200, contentType, data)
+}
+
+// DeleteUnlinkedUpload removes an uploaded file after a form discards it, but only while no business record references it.
+func DeleteUnlinkedUpload(c *gin.Context) {
+	fileType := c.Param("type")
+	filename := c.Param("filename")
+	if _, ok := uploadDirs[fileType]; !ok {
+		utils.BadRequest(c, "不支持的文件类型")
+		return
+	}
+	parts := strings.SplitN(filename, "_", 2)
+	if len(parts) != 2 || len(parts[0]) != 32 {
+		utils.BadRequest(c, "无效的文件名格式")
+		return
+	}
+
+	var record models.FileRecord
+	if err := database.DB.WithContext(c.Request.Context()).
+		Where("file_hash = ? AND biz_type = ?", parts[0], fileType).
+		First(&record).Error; err != nil {
+		utils.Success(c, gin.H{"removed": false})
+		return
+	}
+	uidValue, exists := c.Get("user_id")
+	uid, valid := uidValue.(uint)
+	if !exists || !valid || record.UploaderID != uid || fileRecordIsReferenced(record) {
+		utils.Success(c, gin.H{"removed": false})
+		return
+	}
+
+	if record.StoragePath != "" {
+		filePath := filepath.FromSlash(strings.TrimPrefix(record.StoragePath, "/"))
+		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+			utils.InternalServerError(c, "清理未使用附件失败", err)
+			return
+		}
+	}
+	if err := database.DB.WithContext(c.Request.Context()).Delete(&record).Error; err != nil {
+		utils.InternalServerError(c, "清理附件记录失败", err)
+		return
+	}
+	utils.Success(c, gin.H{"removed": true})
+}
+
+func fileRecordIsReferenced(record models.FileRecord) bool {
+	pattern := "%" + record.FileHash + "%"
+	checks := []struct {
+		model interface{}
+		query string
+	}{
+		{&models.Notice{}, "attachment LIKE ?"},
+		{&models.CompDeclaration{}, "attachment_path LIKE ?"},
+		{&models.Summary{}, "attachments LIKE ?"},
+		{&models.Register{}, "attachment_url LIKE ? OR work_attachment_url LIKE ?"},
+		{&models.Award{}, "proof_url LIKE ?"},
+	}
+	for _, check := range checks {
+		var count int64
+		args := []interface{}{pattern}
+		if strings.Count(check.query, "?") == 2 {
+			args = append(args, pattern)
+		}
+		if err := database.DB.Model(check.model).Where(check.query, args...).Count(&count).Error; err != nil {
+			return true
+		}
+		if count > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // canAccessFile 判断当前用户是否有权限访问指定文件
@@ -254,8 +422,12 @@ func canAccessFile(ctx context.Context, c *gin.Context, fileType string, record 
 	}
 
 	switch fileType {
-	case "notice":
+	case "notice", "notice_attachment":
 		return true
+	case "declare_attachment":
+		return canAccessDeclarationFile(ctx, scope, record)
+	case "summary_attachment":
+		return canAccessSummaryFile(ctx, scope, record)
 	case "reg_attachment":
 		if isTeamMemberForFile(ctx, uid, record.StoragePath) {
 			return true
@@ -272,10 +444,57 @@ func canAccessFile(ctx context.Context, c *gin.Context, fileType string, record 
 	case "award_proof", "award_cert":
 		return canAccessAwardProof(ctx, uid, scope, record)
 	case "temp":
-		// Only temporary files already attached to an accessible award can be shared.
-		return canAccessAwardProof(ctx, uid, scope, record)
+		// Legacy temp files may still be linked to summaries or declarations.
+		return canAccessAwardProof(ctx, uid, scope, record) ||
+			canAccessDeclarationFile(ctx, scope, record) ||
+			canAccessSummaryFile(ctx, scope, record)
 	}
 
+	return false
+}
+
+func canAccessDeclarationFile(ctx context.Context, scope *UserAccessScope, record models.FileRecord) bool {
+	if scope == nil || record.FileHash == "" {
+		return false
+	}
+
+	var declarations []models.CompDeclaration
+	if err := database.DB.WithContext(ctx).
+		Where("attachment_path LIKE ?", "%"+record.FileHash+"%").
+		Find(&declarations).Error; err != nil {
+		return false
+	}
+	for _, declaration := range declarations {
+		if strings.Contains(declaration.AttachmentPath, record.FileHash) && canAccessDeclaration(scope, declaration) {
+			return true
+		}
+	}
+	return false
+}
+
+func canAccessSummaryFile(ctx context.Context, scope *UserAccessScope, record models.FileRecord) bool {
+	if scope == nil || record.FileHash == "" {
+		return false
+	}
+
+	var summaries []models.Summary
+	if err := database.DB.WithContext(ctx).
+		Select("comp_id", "attachments").
+		Where("attachments LIKE ?", "%"+record.FileHash+"%").
+		Find(&summaries).Error; err != nil {
+		return false
+	}
+	for _, summary := range summaries {
+		if !strings.Contains(summary.Attachments, record.FileHash) {
+			continue
+		}
+		var comp models.CompDirectory
+		if err := database.DB.WithContext(ctx).
+			Select("id", "manager_id", "college_id").
+			First(&comp, summary.CompID).Error; err == nil && canAccessCompetition(scope, comp) {
+			return true
+		}
+	}
 	return false
 }
 

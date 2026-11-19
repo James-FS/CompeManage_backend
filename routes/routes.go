@@ -23,6 +23,7 @@ func SetupRoutes(r *gin.Engine) {
 	file := r.Group("/api/file", middleware.AuthRequired())
 	{
 		file.GET("/download/:type/:filename", controllers.DownloadFile)
+		file.DELETE("/unlinked/:type/:filename", controllers.DeleteUnlinkedUpload)
 	}
 
 	// CAS/OAuth2.0 统一认证接口（公开）
@@ -59,6 +60,9 @@ func SetupRoutes(r *gin.Engine) {
 		notice.PUT("/:id/publish",
 			middleware.RequirePermission("notice:publish"),
 			controllers.PublishNotice)
+		notice.PUT("/:id/revoke",
+			middleware.RequirePermission("notice:publish"),
+			controllers.RevokeNotice)
 		notice.PUT("/:id",
 			middleware.RequirePermission("notice:update"),
 			controllers.UpdateNotice)

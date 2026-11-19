@@ -351,6 +351,10 @@ func SaveSummary(c *gin.Context) {
 		utils.BadRequest(c, "参数错误")
 		return
 	}
+	if len(req.Attachments) > maxBusinessAttachments {
+		utils.BadRequest(c, "赛事总结最多添加5个附件")
+		return
+	}
 	if req.Status != 0 && req.Status != 1 {
 		utils.BadRequest(c, "status 只能是 0 或 1")
 		return

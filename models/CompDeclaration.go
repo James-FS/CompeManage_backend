@@ -14,7 +14,7 @@ type CompDeclaration struct {
 	ManagerID      uint   `gorm:"column:manager_id;index;comment:赛事负责人ID(关联用户表)" json:"manager_id"`
 	Year           int    `gorm:"column:year;comment:举办年份" json:"year"`
 	Desc           string `gorm:"column:desc;type:text;comment:赛事简介" json:"desc"`
-	AttachmentPath string `gorm:"column:attachment_path;type:varchar(255);comment:申报附件路径" json:"attachment_path"`
+	AttachmentPath string `gorm:"column:attachment_path;type:longtext;comment:申报附件引用JSON" json:"attachment_path"`
 
 	// 申报状态：0-草稿 1-已提交 2-已通过 3-已拒绝
 	DeclareStatus int8       `gorm:"column:declare_status;type:tinyint;default:0;comment:申报状态(0:草稿 1:已提交 2:已通过 3:已拒绝)" json:"declare_status"`
