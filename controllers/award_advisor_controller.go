@@ -291,12 +291,14 @@ func (r *advisorAwardEdit) validate() error {
 	if r.ProjectName == "" || len([]rune(r.ProjectName)) > 255 {
 		return errors.New("项目名称不能为空且不能超过255字")
 	}
-	if r.AwardCategory != "国家级" && r.AwardCategory != "省级" && r.AwardCategory != "校级" {
+	if r.AwardCategory != "国家级" && r.AwardCategory != "省部级" && r.AwardCategory != "省级" && r.AwardCategory != "校级" {
 		return errors.New("请选择有效的获奖类别")
 	}
-	if r.AwardName != "一等奖" && r.AwardName != "二等奖" && r.AwardName != "三等奖" {
+	awardName, err := normalizeAwardName(r.AwardName)
+	if err != nil {
 		return errors.New("请选择有效的获奖等级")
 	}
+	r.AwardName = awardName
 	if r.AwardDate.IsZero() {
 		return errors.New("请选择获奖时间")
 	}

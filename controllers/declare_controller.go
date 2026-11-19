@@ -58,6 +58,11 @@ func CreateDeclare(c *gin.Context) {
 		utils.BadRequest(c, "请求参数错误")
 		return
 	}
+	if attachmentURLCount(req.AttachmentPath) > maxBusinessAttachments {
+		utils.BadRequest(c, "申报最多添加5个附件")
+		return
+	}
+	req.AttachmentPath = attachmentURLsToLegacyString(req.AttachmentPath)
 
 	userID, exists := c.Get("user_id")
 	if !exists {
@@ -155,6 +160,14 @@ func UpdateDeclare(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "参数错误")
 		return
+	}
+	if req.AttachmentPath != nil && attachmentURLCount(*req.AttachmentPath) > maxBusinessAttachments {
+		utils.BadRequest(c, "申报最多添加5个附件")
+		return
+	}
+	if req.AttachmentPath != nil {
+		legacyValue := attachmentURLsToLegacyString(*req.AttachmentPath)
+		req.AttachmentPath = &legacyValue
 	}
 	var declaration models.CompDeclaration
 	if err := database.DB.WithContext(c.Request.Context()).First(&declaration, declareID).Error; err != nil {

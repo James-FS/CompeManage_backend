@@ -206,7 +206,7 @@ func awardSummaryBucket(compLevel, awardText string) int {
 		family = 0
 	case "国家级":
 		family = 1
-	case "省级":
+	case "省级", "省部级":
 		family = 2
 	case "校级", "校赛":
 		family = 3
@@ -264,7 +264,7 @@ func buildAwardSummaryRows(ctx context.Context, scope *UserAccessScope, year str
 		Joins("LEFT JOIN colleges cn ON cn.id = cd.college_id").
 		Joins("LEFT JOIN comp_details cdp ON cdp.comp_id = a.comp_id AND cdp.delete_time IS NULL").
 		Where("a.delete_time IS NULL").Where("a.status IN ?", awardExportFilterStatus()).
-		Where("cd.comp_level IN ?", []string{"国际级", "国家级", "省级", "校级", "校赛"}).
+		Where("cd.comp_level IN ?", []string{"国际级", "国家级", "省部级", "省级", "校级", "校赛"}).
 		Order("cn.name ASC, cd.comp_name ASC, a.id ASC")
 	if year != "" {
 		q = q.Where("cd.year = ?", year)

@@ -166,6 +166,11 @@ func CreateNotice(c *gin.Context) {
 	content := c.PostForm("content")
 	compIDStr := c.PostForm("compID")         // 简化后的竞赛ID
 	attachmentURL := c.PostForm("attachment") // 前端上传附件后拿到的URL
+	if attachmentURLCount(attachmentURL) > maxBusinessAttachments {
+		utils.BadRequest(c, "通知最多添加5个附件")
+		return
+	}
+	attachmentURL = attachmentURLsToLegacyString(attachmentURL)
 
 	// 2. 参数校验（必填项检查）
 	if title == "" {
@@ -211,6 +216,11 @@ func CreateCompNotice(c *gin.Context) {
 	content := c.PostForm("content")
 	compIDStr := c.PostForm("compID") // 赛事页面必须传当前赛事ID
 	attachmentURL := c.PostForm("attachment")
+	if attachmentURLCount(attachmentURL) > maxBusinessAttachments {
+		utils.BadRequest(c, "通知最多添加5个附件")
+		return
+	}
+	attachmentURL = attachmentURLsToLegacyString(attachmentURL)
 
 	// 2. 基础校验（title/publishTime/compID均必填）
 	if title == "" {
@@ -313,6 +323,54 @@ func PublishNotice(c *gin.Context) {
 	})
 }
 
+// RevokeNotice 撤回已发布通知，将状态恢复为未发布。
+func RevokeNotice(c *gin.Context) {
+	noticeIDStr := c.Param("id")
+	noticeIDUint, err := strconv.ParseUint(noticeIDStr, 10, 32)
+	if err != nil {
+		utils.BadRequest(c, "通知ID格式错误，必须是数字")
+		return
+	}
+	noticeID := uint(noticeIDUint)
+
+	var notice models.Notice
+	if err := database.DB.WithContext(c.Request.Context()).First(&notice, noticeID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			utils.NotFound(c, "该通知不存在")
+		} else {
+			utils.InternalServerError(c, "查询通知失败", err)
+		}
+		return
+	}
+
+	if !canManageNotice(c, notice) {
+		utils.Forbidden(c, "仅可操作自己发布的通知")
+		return
+	}
+
+	if notice.Status != 1 {
+		utils.BadRequest(c, "该通知尚未发布，无需撤回")
+		return
+	}
+
+	now := time.Now()
+	if err := database.DB.WithContext(c.Request.Context()).Model(&notice).Updates(map[string]interface{}{
+		"status":     0,
+		"updated_at": now,
+	}).Error; err != nil {
+		utils.InternalServerError(c, "撤回通知失败", err)
+		return
+	}
+
+	notice.Status = 0
+	notice.UpdatedAt = now
+	clearNoticeListCache(c.Request.Context())
+	utils.Success(c, gin.H{
+		"notice": notice,
+		"msg":    "通知已撤回",
+	})
+}
+
 // UpdateNotice 修改通知
 func UpdateNotice(c *gin.Context) {
 	// 1. 获取通知ID
@@ -348,6 +406,13 @@ func UpdateNotice(c *gin.Context) {
 	content := c.PostForm("content")
 	compIDStr := c.PostForm("compID")
 	attachmentURL := c.PostForm("attachment")
+	if attachmentURLCount(attachmentURL) > maxBusinessAttachments {
+		utils.BadRequest(c, "通知最多添加5个附件")
+		return
+	}
+	if _, hasAttachment := c.Request.PostForm["attachment"]; hasAttachment {
+		attachmentURL = attachmentURLsToLegacyString(attachmentURL)
+	}
 
 	// 4. 构建更新字段
 	updates := make(map[string]interface{})
@@ -365,7 +430,7 @@ func UpdateNotice(c *gin.Context) {
 		}
 		updates["competition_detail_id"] = uint(compIDUint64)
 	}
-	if attachmentURL != "" {
+	if _, hasAttachment := c.Request.PostForm["attachment"]; hasAttachment {
 		updates["attachment"] = attachmentURL
 	}
 

@@ -11,7 +11,7 @@ type Register struct {
 	AdvisorID         *uint         `gorm:"index" json:"advisor_id"`                                     // 指导老师ID (指针类型允许为空/NULL)
 	AdvisorInfo       string        `gorm:"type:json;column:advisor_info" json:"advisor_info"`
 	Status            int8          `gorm:"default:0;comment:'0:待审核 1:已通过 2:已驳回 3:补录待审核 4:补录已通过 5:补录已驳回'" json:"status"`
-	AttachmentUrl     string        `gorm:"type:varchar(512)" json:"attachment_url"`
+	AttachmentUrl     string        `gorm:"type:longtext" json:"attachment_url"`
 	WorkAttachmentUrl string        `gorm:"type:text" json:"work_attachment_url"`
 	RejectReason      string        `gorm:"type:text" json:"reject_reason"`
 	Competition       CompDirectory `gorm:"foreignKey:CompID" json:"competition,omitempty"`
