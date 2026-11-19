@@ -668,6 +668,12 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 		return
 	}
 	if req.ParticipationType != "" {
+		awardName, nameErr := normalizeAwardName(req.AwardName)
+		if nameErr != nil {
+			utils.BadRequest(c, nameErr.Error())
+			return
+		}
+		req.AwardName = awardName
 		if err := validateStudentAwardDetails(req.ParticipationType, req.AwardCategory, req.AwardName, req.AwardDate.Time, req.Members, req.Advisors, req.Remark); err != nil {
 			utils.BadRequest(c, err.Error())
 			return
@@ -1585,7 +1591,7 @@ func validateStudentAwardDetails(kind, category, level string, date time.Time, m
 	if kind == "team" && len(members) < 2 {
 		return errors.New("团队赛必须填写队长和至少一名团队成员")
 	}
-	if category != "国家级" && category != "省级" && category != "校级" {
+	if category != "国家级" && category != "省部级" && category != "省级" && category != "校级" {
 		return errors.New("请选择有效的获奖类别")
 	}
 	if level != "一等奖" && level != "二等奖" && level != "三等奖" {

@@ -39,7 +39,7 @@ func levelPrefix(level string) (string, bool) {
 	switch strings.TrimSpace(level) {
 	case "国家级":
 		return "G", true
-	case "省级":
+	case "省级", "省部级":
 		return "S", true
 	case "校级":
 		return "X", true
