@@ -90,6 +90,10 @@ func SetupRoutes(r *gin.Engine) {
 			middleware.RequireRole("school_admin"),
 			middleware.RequirePermission("user:assign_role"),
 			controllers.AssignUserRole)
+		perm.DELETE("/member/:id",
+			middleware.RequireRole("school_admin"),
+			middleware.RequirePermission("user:assign_role"),
+			controllers.DeleteUser)
 	}
 
 	comp := r.Group("/api/comp", middleware.AuthRequired())

@@ -69,6 +69,8 @@ func TestGetNoticeList_FindError(t *testing.T) {
 // 本用例回归验证"预置旧缓存键不再被使用、请求直查库"。
 func TestGetUserList_CacheRemoved(t *testing.T) {
 	rdb := ensureRedisForUserList(t)
+	mock := setupRegDBMock(t)
+	defer mock.ExpectationsWereMet()
 	rdb.FlushDB(t.Context())
 
 	// 2026-10-31 合并：缓存键形态随 develop 增加 college 维度；本用例验证旧缓存不再被读取
@@ -76,11 +78,16 @@ func TestGetUserList_CacheRemoved(t *testing.T) {
 	key := fmt.Sprintf("cache:reg_user_list:%x", md5.Sum([]byte(raw)))
 	rdb.Set(t.Context(), key, `{"list":[],"total":2}`, 0)
 
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `users`").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery("SELECT .* FROM `users`").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "realname"}).AddRow(1, "T001", "教师甲"))
 	_, w, c := buildGET("/api/reg/user/list?page=1&page_size=10&role=teacher")
 	GetUserList(c)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.NotContains(t, w.Body.String(), `"total":2`)
+	assert.Contains(t, w.Body.String(), `"total":1`)
 }
 
 // ===================== GetManagerList =====================

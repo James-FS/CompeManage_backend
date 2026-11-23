@@ -30,7 +30,8 @@ func GetReviewCompList(c *gin.Context) {
 	}
 	query := database.DB.WithContext(c.Request.Context()).
 		Table("comp_directories").
-		Joins("JOIN comp_details ON comp_details.comp_id = comp_directories.id").
+		Joins("JOIN comp_details ON comp_details.comp_id = comp_directories.id AND comp_details.delete_time IS NULL").
+		Where("comp_directories.delete_time IS NULL").
 		Where("comp_details.need_review = ?", 1)
 	scope, ok := requestAccessScopeIfAvailable(c)
 	if !ok {
@@ -1149,9 +1150,11 @@ func GetMyReviewTasks(c *gin.Context) {
 		size = 10
 	}
 
+	query := database.DB.WithContext(c.Request.Context()).Model(&models.ReviewTask{}).
+		Where("expert_id = ?", expertID).
+		Where("EXISTS (SELECT 1 FROM comp_directories WHERE comp_directories.id = review_tasks.comp_id AND comp_directories.delete_time IS NULL)")
 	var total int64
-	database.DB.WithContext(c.Request.Context()).Model(&models.ReviewTask{}).
-		Where("expert_id = ?", expertID).Count(&total)
+	query.Count(&total)
 
 	type TaskItem struct {
 		TaskID          uint   `json:"task_id"`
@@ -1167,8 +1170,7 @@ func GetMyReviewTasks(c *gin.Context) {
 
 	var tasks []models.ReviewTask
 	offset := (page - 1) * size
-	database.DB.WithContext(c.Request.Context()).Where("expert_id = ?", expertID).
-		Order("id DESC").Offset(offset).Limit(size).Find(&tasks)
+	query.Order("id DESC").Offset(offset).Limit(size).Find(&tasks)
 
 	var list []TaskItem
 	for _, t := range tasks {

@@ -125,6 +125,10 @@ func (scope *UserAccessScope) IsCollegeAdmin() bool {
 	return scope != nil && scope.RoleCode == "college_admin"
 }
 
+func studentAccountScope(query *gorm.DB) *gorm.DB {
+	return query.Where("users.identity_type IN ?", []string{"student", "postgraduate"})
+}
+
 func applyCompetitionScope(query *gorm.DB, scope *UserAccessScope, alias string) *gorm.DB {
 	if scope == nil || query == nil {
 		return query

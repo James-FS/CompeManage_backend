@@ -4,6 +4,7 @@ import (
 	"CompeManage_backend/models"
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
+	"github.com/xuri/excelize/v2"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"regexp"
@@ -50,6 +51,9 @@ func TestAwardCategoryNormalization(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, category, got)
 	}
+	schoolCategory, err := normalizeAwardCategory("校级")
+	require.NoError(t, err)
+	require.Equal(t, "校赛", schoolCategory)
 	got, err := normalizeAwardCategory("国际级")
 	require.NoError(t, err)
 	require.Equal(t, "国家级", got)
@@ -170,11 +174,37 @@ func TestParseAwardImportDate(t *testing.T) {
 		require.NoError(t, err, tt.in)
 		require.Equal(t, tt.want, got.Format("2006-01-02"), tt.in)
 	}
-	for _, bad := range []string{"", "abc", "2025/11", "25-11", "2025-13", "202511"} {
+	for _, bad := range []string{"", "abc", "2025/11", "25-11", "2025-13", "202511", "2026-02-31"} {
 		_, err := parseAwardImportDate(bad)
 		require.Error(t, err, bad)
 		require.Contains(t, err.Error(), "获奖时间")
 	}
+}
+
+func TestReadAwardSheetPreservesIdentifiersAndDates(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+	sheet := f.GetSheetName(0)
+	require.NoError(t, f.SetSheetRow(sheet, "A1", &[]interface{}{"学号", "指导教师工号", "获奖时间"}))
+	require.NoError(t, f.SetSheetRow(sheet, "A2", &[]interface{}{123, 102971, 46111}))
+	require.NoError(t, f.SetSheetRow(sheet, "A3", &[]interface{}{"00124", "102971，105654", "2026-02-31"}))
+	require.NoError(t, f.SetSheetRow(sheet, "A4", &[]interface{}{125, 102971105654, 46111}))
+	padded := "00000"
+	paddedStyle, err := f.NewStyle(&excelize.Style{CustomNumFmt: &padded})
+	require.NoError(t, err)
+	groupedStyle, err := f.NewStyle(&excelize.Style{NumFmt: 3})
+	require.NoError(t, err)
+	dateStyle, err := f.NewStyle(&excelize.Style{NumFmt: 14})
+	require.NoError(t, err)
+	require.NoError(t, f.SetCellStyle(sheet, "A2", "A2", paddedStyle))
+	require.NoError(t, f.SetCellStyle(sheet, "B2", "B4", groupedStyle))
+	require.NoError(t, f.SetCellStyle(sheet, "C2", "C4", dateStyle))
+
+	rows, err := readAwardSheet(f)
+	require.NoError(t, err)
+	require.Equal(t, []string{"00123", "102971", "2026-03-30"}, rows[1])
+	require.Equal(t, []string{"00124", "102971，105654", "2026-02-31"}, rows[2])
+	require.Equal(t, []string{"125", "102971105654", "2026-03-30"}, rows[3])
 }
 
 // P0 回归：获奖赛事范围（院管未绑学院 / 本院+校级 / 校管全量）

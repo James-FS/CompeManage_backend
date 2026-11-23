@@ -4,18 +4,9 @@ import (
 	"CompeManage_backend/models"
 	"log"
 
-	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
-
-func hashPassword(password string) string {
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		log.Printf("密码加密失败: %v", err)
-		return password
-	}
-	return string(hashedPassword)
-}
 
 func grantRolePermissionsByCode(roleCode string, permCodes []string) {
 	if len(permCodes) == 0 {
@@ -344,8 +335,7 @@ func ensureUserManagePermissions() {
 }
 
 // ensureCoreRoles 对存量库补齐缺失的系统角色。
-// 历史库可能缺少 teacher 等后加角色，导致测试账号创建被跳过、
-// 用户角色迁移的默认角色解析失败（"默认角色不存在: teacher"）。
+// 历史库可能缺少 teacher 等后加角色，导致用户角色迁移无法解析默认角色。
 func ensureCoreRoles() {
 	roles := []models.Role{
 		{RoleName: "校级管理员", RoleCode: "school_admin", Description: "校级系统管理员，拥有所有权限"},
@@ -422,49 +412,16 @@ func ensureSummaryPermissions() {
 	grantRolePermissionsByCode("competition_manager", []string{"summary:list", "summary:detail", "summary:edit"})
 }
 
-// ensureTestUsers 确保测试账号存在（用于人工登录测试）
-func ensureTestUsers() {
-	type testUser struct {
-		User     models.User
-		RoleCode string
-	}
-
-	testUsers := []testUser{
-		{User: models.User{Username: "900001", Realname: "测试校管理员", Password: hashPassword("Pw@yy03"), College: "教务处", Grade: "教职员工", Major: "管理", IdentityType: "staff"}, RoleCode: "school_admin"},
-		{User: models.User{Username: "900006", Realname: "测试学生", Password: hashPassword("Pw@yy03"), College: "计算机科学与网络工程学院", Grade: "2024级", Major: "计算机科学与技术", IdentityType: "student"}, RoleCode: "student"},
-		{User: models.User{Username: "900007", Realname: "测试教师", Password: hashPassword("Pw@yy03"), College: "计算机科学与网络工程学院", Grade: "教职员工", Major: "计算机科学与技术", IdentityType: "staff"}, RoleCode: "teacher"},
-	}
-
-	for _, tu := range testUsers {
-		var existing models.User
-		if DB.Where("username = ?", tu.User.Username).First(&existing).Error == nil {
-			continue
-		}
-		var role models.Role
-		if DB.Where("role_code = ?", tu.RoleCode).First(&role).Error != nil {
-			log.Printf("未找到角色 %s，跳过测试用户 %s 角色分配", tu.RoleCode, tu.User.Username)
-			continue
-		}
-		if err := DB.Transaction(func(tx *gorm.DB) error {
-			if err := tx.Create(&tu.User).Error; err != nil {
-				return err
-			}
-			return SetUserRole(tx, tu.User.ID, role.ID)
-		}); err != nil {
-			log.Printf("创建测试用户 %s 失败: %v", tu.User.Username, err)
-			continue
-		}
-		log.Printf("已创建测试用户: %s (角色: %s)", tu.User.Username, tu.RoleCode)
-	}
-}
-
-// InitData 初始化角色、权限、学院及保留的人工测试账号。
+// InitData 初始化角色、权限和学院。
 func InitData() {
-	// 1. 先检查是否已经有数据了，防止重复插入
-	var count int64
-	DB.Model(&models.User{}).Count(&count)
-	if count > 0 {
-		log.Println("数据库已有数据，跳过初始化...")
+	// 权限数据是种子初始化的标记，空用户表在重启时也可能合法。
+	var permissionCount int64
+	if err := DB.Unscoped().Model(&models.Permission{}).Count(&permissionCount).Error; err != nil {
+		log.Printf("检查基础权限数据失败: %v", err)
+		return
+	}
+	if permissionCount > 0 {
+		log.Println("基础权限数据已存在，检查缺失的角色和权限")
 		ensureCoreRoles()
 		ensureSummaryPermissions()
 		ensureNoticeManagePermissions()
@@ -476,7 +433,6 @@ func InitData() {
 		ensureUserPickerPermissions()
 		ensureReviewPermissions()
 		ensureUserManagePermissions()
-		ensureTestUsers()
 		return
 	}
 
@@ -775,32 +731,31 @@ func InitData() {
 	// ==========================================
 	// 初始化学院数据
 	colleges := []models.College{
-		{ID: 1, Name: "计算机科学与网络工程学院"},
-		{ID: 2, Name: "数学学院"},
-		{ID: 3, Name: "机械工程学院"},
-		{ID: 4, Name: "电子信息工程学院"},
-		{ID: 5, Name: "经济管理学院"},
-		{ID: 6, Name: "外国语学院"},
-		{ID: 7, Name: "法学院"},
-		{ID: 8, Name: "艺术学院"},
-		{ID: 9, Name: "体育学院"},
-		{ID: 10, Name: "生命科学学院"},
+		{ID: 1, Name: "计算机科学与网络工程学院", IsValid: true},
+		{ID: 2, Name: "数学学院", IsValid: true},
+		{ID: 3, Name: "机械工程学院", IsValid: true},
+		{ID: 4, Name: "电子信息工程学院", IsValid: true},
+		{ID: 5, Name: "经济管理学院", IsValid: true},
+		{ID: 6, Name: "外国语学院", IsValid: true},
+		{ID: 7, Name: "法学院", IsValid: true},
+		{ID: 8, Name: "艺术学院", IsValid: true},
+		{ID: 9, Name: "体育学院", IsValid: true},
+		{ID: 10, Name: "生命科学学院", IsValid: true},
 	}
 
-	// 这里建议用 Save，如果 ID 已存在则更新，不存在则创建
+	// 已存在的学院可能已由数据同步停用，保留其状态。
 	for _, col := range colleges {
-		if err := DB.Save(&col).Error; err != nil {
+		if err := DB.Clauses(clause.OnConflict{DoNothing: true}).Create(&col).Error; err != nil {
 			log.Printf("初始化学院数据失败: %v", err)
 		}
 	}
 	log.Println("学院数据初始化完成")
 
-	log.Println("基础数据初始化完成（不创建历史示例账号或比赛相关种子）")
+	log.Println("角色、权限和学院基础数据初始化完成")
 	log.Println("================================")
 	log.Println("🔐 新权限结构说明：")
 	log.Println("  第1层: 竞赛管理(competition)、报名管理(registration)、通知管理(notice)、系统管理(system)")
 	log.Println("  第2层: 竞赛目录(comp)、赛事申报(declare)、获奖管理(award)等子分类")
 	log.Println("  第3层: 具体的操作权限(如 comp:list, reg:audit:update 等)")
 	log.Println("================================")
-	ensureTestUsers()
 }

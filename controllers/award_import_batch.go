@@ -30,7 +30,7 @@ func validateAwardImportTeams(data *awardImportLookup, rows []AwardImportRow) ma
 		if errorsByTeam[key] != "" {
 			continue
 		}
-		fail := func(message string) { errorsByTeam[key] = "该团队未导入：" + message }
+		fail := func(message string) { errorsByTeam[key] = "该团队未导入:" + message }
 		if utf8.RuneCountInString(row.ProjectName) > 255 || utf8.RuneCountInString(row.AwardName) > 100 {
 			fail("项目或奖项超出长度限制")
 			continue
@@ -92,7 +92,8 @@ func validateAwardImportTeams(data *awardImportLookup, rows []AwardImportRow) ma
 		if award.AwardTime != nil {
 			storedMonth = award.AwardTime.Format("2006-01")
 		}
-		if award.AwardCategory != row.Category || name != row.AwardName || storedMonth != row.AwardMonth {
+		storedCategory, _ := normalizeAwardCategory(award.AwardCategory)
+		if storedCategory != row.Category || name != row.AwardName || storedMonth != row.AwardMonth {
 			fail("与已有团队的类别、等级或时间冲突，请先更正团队奖项")
 			continue
 		}
@@ -117,13 +118,12 @@ func validateAwardImportTeams(data *awardImportLookup, rows []AwardImportRow) ma
 }
 
 type awardImportLookup struct {
-	managedCollege string
-	users          map[string]models.User
-	teachers       map[string]models.User
-	awards         map[string][]models.Award
-	legacyAwards   map[string][]models.Award
-	registrations  map[uint]map[uint]bool
-	memberships    map[uint]map[uint]bool
+	users         map[string]models.User
+	teachers      map[string]models.User
+	awards        map[string][]models.Award
+	legacyAwards  map[string][]models.Award
+	registrations map[uint]map[uint]bool
+	memberships   map[uint]map[uint]bool
 }
 
 // Join the requested identifiers instead of matching them in Go: username
@@ -147,6 +147,8 @@ func loadAwardImportUsers(tx *gorm.DB, names []string, teachers bool) (map[strin
 		if teachers {
 			// 2026-10-29：全校教职工口径（与弹窗一致），不再用 awardAdvisorCandidates
 			query = query.Where("users.identity_type = 'staff'").Where("users.delete_time IS NULL")
+		} else {
+			query = query.Scopes(studentAccountScope)
 		}
 		if err := query.Find(&rows).Error; err != nil {
 			return nil, err
@@ -377,10 +379,10 @@ func writeAwardImportRows(tx *gorm.DB, scope *UserAccessScope, compID uint, rows
 
 func (data *awardImportLookup) teacher(username string) (models.User, error) {
 	if user, ok := data.teachers[username]; ok {
-		if data.managedCollege != "" && user.College != data.managedCollege {
-			return models.User{}, fmt.Errorf("指导教师工号 %s 不属于本院", username)
-		}
 		return user, nil
+	}
+	if strings.Trim(username, "0123456789") == "" {
+		return models.User{}, fmt.Errorf("指导教师工号 %s 不存在或不是教职工；填写多个工号时，请将单元格设为文本后用顿号分隔并重新填写", username)
 	}
 	return models.User{}, fmt.Errorf("指导教师工号 %s 不存在或不是教职工", username)
 }

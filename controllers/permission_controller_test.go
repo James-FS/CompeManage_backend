@@ -119,6 +119,21 @@ func TestGetAllRoles_EmptyList(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "获取成功")
 }
 
+func TestGetAllRoles_BriefSkipsPermissions(t *testing.T) {
+	mock := setupPermDBMock(t)
+	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
+	mock.ExpectQuery("SELECT `id`,`role_name`,`role_code` FROM `roles`").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "role_name", "role_code"}).
+			AddRow(1, "校级管理员", "school_admin"))
+
+	_, w, c := buildGET("/api/perm/role/list?brief=true")
+	GetAllRoles(c)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "school_admin")
+	assert.NotContains(t, w.Body.String(), "permissions")
+}
+
 // ===================== AssignPermissions =====================
 
 func TestAssignPermissions_BadRequest(t *testing.T) {
