@@ -87,15 +87,17 @@ func TestResolveCompetitionYear(t *testing.T) {
 		{name: "正常年份", yearText: "2025", expected: 2025},
 		{name: "带空格", yearText: " 2024 ", expected: 2024},
 		{name: "空字符串", yearText: "", expected: currentYear},
-		{name: "非数字", yearText: "abc", expected: currentYear},
-		{name: "零", yearText: "0", expected: currentYear},
-		{name: "负数", yearText: "-1", expected: currentYear},
+		{name: "非数字", yearText: "abc"},
+		{name: "数字后有字符", yearText: "2025abc"},
+		{name: "零", yearText: "0"},
+		{name: "负数", yearText: "-1"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			year := resolveCompetitionYear(tt.yearText)
+			year, valid := resolveCompetitionYear(tt.yearText, currentYear)
 			assert.Equal(t, tt.expected, year)
+			assert.Equal(t, tt.expected != 0, valid)
 		})
 	}
 }
@@ -366,8 +368,10 @@ func TestRestoreCompetition_NotFound(t *testing.T) {
 	mock := setupCompDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mock.ExpectQuery("SELECT .* FROM `comp_directories`").
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .* FROM `comp_directories`.*FOR UPDATE").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_code", "delete_time"}))
+	mock.ExpectRollback()
 
 	_, w, c := buildCompGET("/api/comp/restore/999")
 	c.Params = []gin.Param{{Key: "id", Value: "999"}}
@@ -380,8 +384,10 @@ func TestRestoreCompetition_NotDeleted(t *testing.T) {
 	mock := setupCompDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mock.ExpectQuery("SELECT .* FROM `comp_directories`").
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .* FROM `comp_directories`.*FOR UPDATE").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_code", "delete_time"}).AddRow(1, "X2026001", nil))
+	mock.ExpectRollback()
 
 	_, w, c := buildCompGET("/api/comp/restore/1")
 	c.Params = []gin.Param{{Key: "id", Value: "1"}}

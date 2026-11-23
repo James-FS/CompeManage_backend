@@ -4,11 +4,16 @@ import (
 	"CompeManage_backend/database"
 	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+var errDeclarationStatusChanged = errors.New("申报状态已变化，请刷新后重试")
 
 type DeclareCreateReq struct {
 	CompName       string `json:"comp_name" binding:"required"`
@@ -56,6 +61,10 @@ func CreateDeclare(c *gin.Context) {
 	var req DeclareCreateReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.BadRequest(c, "请求参数错误")
+		return
+	}
+	if !validCompetitionYear(req.Year) {
+		utils.BadRequest(c, "所属年份须为1000至9999的4位数字")
 		return
 	}
 	if attachmentURLCount(req.AttachmentPath) > maxBusinessAttachments {
@@ -161,6 +170,10 @@ func UpdateDeclare(c *gin.Context) {
 		utils.BadRequest(c, "参数错误")
 		return
 	}
+	if req.Year != 0 && !validCompetitionYear(req.Year) {
+		utils.BadRequest(c, "所属年份须为1000至9999的4位数字")
+		return
+	}
 	if req.AttachmentPath != nil && attachmentURLCount(*req.AttachmentPath) > maxBusinessAttachments {
 		utils.BadRequest(c, "申报最多添加5个附件")
 		return
@@ -241,8 +254,14 @@ func UpdateDeclare(c *gin.Context) {
 		if err := validateCompetitionManager(c, tx, managerID, &collegeID); err != nil {
 			return err
 		}
-		if err := tx.Model(&declaration).Updates(updates).Error; err != nil {
-			return err
+		if len(updates) > 0 {
+			result := tx.Model(&declaration).Where("declare_status = ?", declaration.DeclareStatus).Updates(updates)
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				return errDeclarationStatusChanged
+			}
 		}
 		if managerChanged {
 			oldRoleID, newRoleID, promoteErr := promoteCompetitionManagerIfTeacher(tx, req.ManagerID)
@@ -259,6 +278,10 @@ func UpdateDeclare(c *gin.Context) {
 		}
 		return nil
 	})
+	if errors.Is(err, errDeclarationStatusChanged) {
+		utils.Conflict(c, err.Error())
+		return
+	}
 	if err != nil {
 		respondCompetitionMutationError(c, "更新失败", err)
 		return
@@ -296,8 +319,14 @@ func SubmitDeclare(c *gin.Context) {
 		return
 	}
 
-	if err := database.DB.WithContext(c.Request.Context()).Model(&declaration).Update("declare_status", 1).Error; err != nil {
-		utils.InternalServerError(c, "提交失败", err)
+	result := database.DB.WithContext(c.Request.Context()).Model(&declaration).
+		Where("declare_status = ?", declaration.DeclareStatus).Update("declare_status", 1)
+	if result.Error != nil {
+		utils.InternalServerError(c, "提交失败", result.Error)
+		return
+	}
+	if result.RowsAffected == 0 {
+		utils.Conflict(c, errDeclarationStatusChanged.Error())
 		return
 	}
 
@@ -326,8 +355,14 @@ func RevokeDeclare(c *gin.Context) {
 		return
 	}
 
-	if err := database.DB.WithContext(c.Request.Context()).Model(&declaration).Update("declare_status", 0).Error; err != nil {
-		utils.InternalServerError(c, "撤回失败", err)
+	result := database.DB.WithContext(c.Request.Context()).Model(&declaration).
+		Where("declare_status = ?", declaration.DeclareStatus).Update("declare_status", 0)
+	if result.Error != nil {
+		utils.InternalServerError(c, "撤回失败", result.Error)
+		return
+	}
+	if result.RowsAffected == 0 {
+		utils.Conflict(c, errDeclarationStatusChanged.Error())
 		return
 	}
 
@@ -501,8 +536,14 @@ func DeleteDeclare(c *gin.Context) {
 		return
 	}
 
-	if err := database.DB.WithContext(c.Request.Context()).Unscoped().Delete(&declaration).Error; err != nil {
-		utils.InternalServerError(c, "删除失败", err)
+	result := database.DB.WithContext(c.Request.Context()).Unscoped().
+		Where("declare_status = ? AND delete_time IS NULL", 0).Delete(&declaration)
+	if result.Error != nil {
+		utils.InternalServerError(c, "删除失败", result.Error)
+		return
+	}
+	if result.RowsAffected == 0 {
+		utils.Conflict(c, errDeclarationStatusChanged.Error())
 		return
 	}
 
@@ -579,77 +620,69 @@ func AuditDeclare(c *gin.Context) {
 		return
 	}
 
-	var declaration models.CompDeclaration
-	if err := database.DB.WithContext(c.Request.Context()).First(&declaration, req.DeclareID).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			utils.NotFound(c, "申报记录不存在")
-			return
-		}
-		utils.InternalServerError(c, "查询失败", err)
+	req.AuditRemark = strings.TrimSpace(req.AuditRemark)
+	if req.AuditStatus == 3 && req.AuditRemark == "" {
+		utils.BadRequest(c, "请输入驳回原因")
 		return
 	}
 
-	if declaration.DeclareStatus != 1 {
-		utils.Forbidden(c, "只能审核已提交的申报")
-		return
-	}
-
-	now := time.Now()
-	var status string
-
-	switch req.AuditStatus {
-	case 2:
-		compCode, codeErr := nextCompetitionCode(database.DB.WithContext(c.Request.Context()), declaration.CompLevel, declaration.Year)
-		if codeErr != nil {
-			utils.InternalServerError(c, "生成赛事编号失败", codeErr)
-			return
+	errNotSubmitted := errors.New("只能审核已提交的申报")
+	errInvalidYear := errors.New("申报年份须为1000至9999的4位数字")
+	err := database.TransactionWithDeadlockRetry(database.DB.WithContext(c.Request.Context()), func(tx *gorm.DB) error {
+		var declaration models.CompDeclaration
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&declaration, req.DeclareID).Error; err != nil {
+			return err
+		}
+		if declaration.DeclareStatus != 1 {
+			return errNotSubmitted
 		}
 
-		collegeID := declaration.CollegeID
-		newComp := models.CompDirectory{
-			CompCode:   compCode,
-			CompName:   declaration.CompName,
-			CompLevel:  declaration.CompLevel,
-			CompType:   declaration.CompType,
-			Organizer:  declaration.Organizer,
-			Undertaker: declaration.Undertaker,
-			CollegeID:  &collegeID,
-			ManagerID:  declaration.ManagerID,
-			Year:       declaration.Year,
-			Desc:       declaration.Desc,
-			CreatedBy:  auditorID,
-			Status:     0,
-			Source:     2,
-			DeclareID:  &declaration.ID,
+		updates := map[string]interface{}{
+			"declare_status": req.AuditStatus,
+			"audit_by":       auditorID,
+			"audit_at":       time.Now(),
+			"audit_remark":   req.AuditRemark,
 		}
-
-		if err := database.DB.WithContext(c.Request.Context()).Create(&newComp).Error; err != nil {
-			utils.InternalServerError(c, "创建赛事目录失败", err)
-			return
+		if req.AuditStatus == 2 {
+			if !validCompetitionYear(declaration.Year) {
+				return errInvalidYear
+			}
+			compCode, err := nextCompetitionCode(tx, declaration.CompLevel, declaration.Year)
+			if err != nil {
+				return err
+			}
+			collegeID := declaration.CollegeID
+			comp := models.CompDirectory{
+				CompCode: compCode, CompName: declaration.CompName,
+				CompLevel: declaration.CompLevel, CompType: declaration.CompType,
+				Organizer: declaration.Organizer, Undertaker: declaration.Undertaker,
+				CollegeID: &collegeID, ManagerID: declaration.ManagerID, Year: declaration.Year,
+				Desc: declaration.Desc, CreatedBy: auditorID, Source: 2, DeclareID: &declaration.ID,
+			}
+			if err := tx.Create(&comp).Error; err != nil {
+				return err
+			}
+			updates["comp_directory_id"] = comp.ID
+			updates["audit_remark"] = "审核通过"
 		}
+		return tx.Model(&declaration).Updates(updates).Error
+	})
 
-		declaration.DeclareStatus = 2
-		declaration.AuditBy = &auditorID
-		declaration.AuditAt = &now
-		compDirID := newComp.ID
-		declaration.CompDirectoryID = &compDirID
-		declaration.AuditRemark = "审核通过"
-		status = "通过"
-
-	case 3:
-		declaration.DeclareStatus = 3
-		declaration.AuditBy = &auditorID
-		declaration.AuditAt = &now
-		declaration.AuditRemark = req.AuditRemark
-		status = "拒绝"
-	}
-
-	if err := database.DB.WithContext(c.Request.Context()).Save(&declaration).Error; err != nil {
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		utils.NotFound(c, "申报记录不存在")
+	case errors.Is(err, errNotSubmitted):
+		utils.Forbidden(c, err.Error())
+	case errors.Is(err, errInvalidYear):
+		utils.BadRequest(c, err.Error())
+	case err != nil:
 		utils.InternalServerError(c, "审核失败", err)
-		return
+	case req.AuditStatus == 2:
+		clearCompListCache(c.Request.Context())
+		utils.SuccessWithMessage(c, "申报审核通过", nil)
+	default:
+		utils.SuccessWithMessage(c, "申报审核拒绝", nil)
 	}
-
-	utils.SuccessWithMessage(c, "申报审核"+status, nil)
 }
 
 func GetAllDeclares(c *gin.Context) {

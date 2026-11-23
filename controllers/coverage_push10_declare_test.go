@@ -308,10 +308,12 @@ func TestAuditDeclare_QueryError(t *testing.T) {
 	mock := setupDeclareDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mock.ExpectQuery("SELECT .* FROM `comp_declarations`").
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .* FROM `comp_declarations`.*FOR UPDATE").
 		WillReturnError(fmt.Errorf("db error"))
+	mock.ExpectRollback()
 
-	body := DeclareAuditReq{DeclareID: 1, AuditStatus: 3}
+	body := DeclareAuditReq{DeclareID: 1, AuditStatus: 3, AuditRemark: "需修正"}
 	_, w, c := buildAuthPOSTJSON(body)
 	c.Set("user_id", uint(1))
 	c.Set("role_code", "school_admin")
@@ -324,12 +326,14 @@ func TestAuditDeclare_ApproveCodegenError(t *testing.T) {
 	mock := setupDeclareDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mock.ExpectQuery("SELECT .* FROM `comp_declarations`").
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .* FROM `comp_declarations`.*FOR UPDATE").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "declare_status", "comp_level", "year"}).
 			AddRow(1, 1, "校级", 2026))
 	// nextCompetitionCode：非 ErrRecordNotFound 的错误
 	mock.ExpectQuery("SELECT `comp_code` FROM `comp_directories`").
 		WillReturnError(fmt.Errorf("db error"))
+	mock.ExpectRollback()
 
 	body := DeclareAuditReq{DeclareID: 1, AuditStatus: 2}
 	_, w, c := buildAuthPOSTJSON(body)
@@ -344,12 +348,12 @@ func TestAuditDeclare_ApproveCreateCompError(t *testing.T) {
 	mock := setupDeclareDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mock.ExpectQuery("SELECT .* FROM `comp_declarations`").
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .* FROM `comp_declarations`.*FOR UPDATE").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "declare_status", "comp_level", "year"}).
 			AddRow(1, 1, "校级", 2026))
 	mock.ExpectQuery("SELECT `comp_code` FROM `comp_directories`").
 		WillReturnError(gorm.ErrRecordNotFound)
-	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO `comp_directories`").
 		WillReturnError(fmt.Errorf("insert failed"))
 	mock.ExpectRollback()
@@ -367,9 +371,9 @@ func TestAuditDeclare_RejectSaveError(t *testing.T) {
 	mock := setupDeclareDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mock.ExpectQuery("SELECT .* FROM `comp_declarations`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "declare_status"}).AddRow(1, 1))
 	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .* FROM `comp_declarations`.*FOR UPDATE").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "declare_status"}).AddRow(1, 1))
 	mock.ExpectExec("UPDATE `comp_declarations`").
 		WillReturnError(fmt.Errorf("db error"))
 	mock.ExpectRollback()

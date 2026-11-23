@@ -39,7 +39,7 @@ func TestAdvisorEditValidate_InvalidCategory(t *testing.T) {
 
 func TestAdvisorEditValidate_InvalidAwardName(t *testing.T) {
 	r := validAdvisorEdit()
-	r.AwardName = "特等奖"
+	r.AwardName = "优胜奖"
 	assert.ErrorContains(t, r.validate(), "请选择有效的获奖等级")
 }
 

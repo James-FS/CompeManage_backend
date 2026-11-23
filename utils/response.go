@@ -104,6 +104,10 @@ func NotFound(c *gin.Context, message string) {
 	errorResponse(c, http.StatusNotFound, NotFoundCode, message)
 }
 
+func Conflict(c *gin.Context, message string) {
+	errorResponse(c, http.StatusConflict, http.StatusConflict, message)
+}
+
 // InternalServerError 服务器错误（500 Internal Server Error）
 // 支持传入原始错误，根据环境决定是否展示详情
 func InternalServerError(c *gin.Context, message string, err error) {
