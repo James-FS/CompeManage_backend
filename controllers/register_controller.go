@@ -619,6 +619,10 @@ func SubmitRegistration(c *gin.Context) {
 		return
 	}
 
+	if !validateRegistrationMembers(c, &req) {
+		return
+	}
+
 	register := models.Register{
 		CompID:        req.CompID,
 		LeaderID:      leader.ID,
@@ -953,14 +957,15 @@ func GetWorkAuditCompList(c *gin.Context) {
 
 	buildBaseQuery := func(withRegisterJoin bool) *gorm.DB {
 		query := database.DB.WithContext(c.Request.Context()).Table("comp_directories").
-			Joins("LEFT JOIN comp_details ON comp_details.comp_id = comp_directories.id").
+			Joins("LEFT JOIN comp_details ON comp_details.comp_id = comp_directories.id AND comp_details.delete_time IS NULL").
 			Joins("LEFT JOIN users ON users.id = comp_directories.manager_id").
 			Joins("LEFT JOIN colleges ON colleges.id = comp_directories.college_id").
+			Where("comp_directories.delete_time IS NULL").
 			Where("YEAR(comp_details.submit_start_time) > 1970").
 			Where("comp_details.submit_start_time <= ?", now)
 
 		if withRegisterJoin {
-			query = query.Joins("LEFT JOIN registers ON registers.comp_id = comp_directories.id")
+			query = query.Joins("LEFT JOIN registers ON registers.comp_id = comp_directories.id AND registers.delete_time IS NULL")
 		}
 
 		query = applyCompetitionScope(query, scope, "comp_directories")
@@ -1058,7 +1063,7 @@ func GetWorkAuditStudentList(c *gin.Context) {
 
 	query := database.DB.WithContext(c.Request.Context()).Table("registers").
 		Joins("LEFT JOIN reg_members ON reg_members.reg_id = registers.id AND reg_members.is_leader = ?", true).
-		Where("registers.comp_id = ?", req.CompID).
+		Where("registers.comp_id = ? AND registers.delete_time IS NULL", req.CompID).
 		Where("registers.work_attachment_url IS NOT NULL AND registers.work_attachment_url <> ''")
 
 	if strings.TrimSpace(req.Keyword) != "" {
@@ -1399,6 +1404,10 @@ func ResubmitRegistration(c *gin.Context) {
 
 	if detail.NeedAdvisor == 2 && len(req.AdvisorInfo) == 0 {
 		utils.BadRequest(c, "该赛事要求必须填写指导老师")
+		return
+	}
+
+	if !validateRegistrationMembers(c, &req) {
 		return
 	}
 
@@ -1812,6 +1821,54 @@ func GetUserList(c *gin.Context) {
 	}
 
 	utils.Success(c, respData)
+}
+
+func validateRegistrationMembers(c *gin.Context, req *ApplicationReq) bool {
+	if len(req.Members) == 0 {
+		return true
+	}
+	usernames := make([]string, 0, len(req.Members))
+	seen := map[string]bool{strings.TrimSpace(req.Leader.StuID): true}
+	for i := range req.Members {
+		member := &req.Members[i]
+		member.StuID = strings.TrimSpace(member.StuID)
+		member.Name = strings.TrimSpace(member.Name)
+		if member.StuID == "" || member.Name == "" {
+			utils.BadRequest(c, "请完整填写参赛成员的姓名和学号")
+			return false
+		}
+		if seen[member.StuID] {
+			utils.BadRequest(c, "参赛成员不能重复")
+			return false
+		}
+		seen[member.StuID] = true
+		usernames = append(usernames, member.StuID)
+	}
+
+	var students []models.User
+	if err := database.DB.WithContext(c.Request.Context()).Scopes(studentAccountScope).
+		Select("username", "realname", "college").Where("username IN ?", usernames).Find(&students).Error; err != nil {
+		utils.InternalServerError(c, "查询参赛成员失败", err)
+		return false
+	}
+	byUsername := make(map[string]models.User, len(students))
+	for _, student := range students {
+		byUsername[student.Username] = student
+	}
+	for i := range req.Members {
+		member := &req.Members[i]
+		student, ok := byUsername[member.StuID]
+		if !ok {
+			utils.BadRequest(c, fmt.Sprintf("队员学号 %s 不存在或不是学生账号", member.StuID))
+			return false
+		}
+		if member.Name != strings.TrimSpace(student.Realname) {
+			utils.BadRequest(c, fmt.Sprintf("队员学号 %s 与系统姓名不匹配", member.StuID))
+			return false
+		}
+		member.Name, member.College = student.Realname, student.College
+	}
+	return true
 }
 
 // Verify the selected mode against the competition's participant limits.

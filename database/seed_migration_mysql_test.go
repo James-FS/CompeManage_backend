@@ -76,6 +76,10 @@ func TestInitDataMySQL_FreshSeedThenIdempotent(t *testing.T) {
 
 	InitData() // 空库 → 全量种子
 
+	var validColleges int64
+	require.NoError(t, db.Model(&models.College{}).Where("is_valid = ?", true).Count(&validColleges).Error)
+	require.EqualValues(t, 10, validColleges)
+
 	var roleCount int64
 	db.Model(&models.Role{}).Count(&roleCount)
 	require.EqualValues(t, 7, roleCount)
@@ -85,19 +89,19 @@ func TestInitDataMySQL_FreshSeedThenIdempotent(t *testing.T) {
 	require.Greater(t, permCount, int64(20))
 
 	var userCount int64
-	db.Model(&models.User{}).Count(&userCount)
-	require.EqualValues(t, 3, userCount)
+	require.NoError(t, db.Unscoped().Model(&models.User{}).Count(&userCount).Error)
+	require.Zero(t, userCount)
 
 	var linkCount int64
-	db.Table("user_roles").Count(&linkCount)
-	require.EqualValues(t, 3, linkCount)
+	require.NoError(t, db.Table("user_roles").Count(&linkCount).Error)
+	require.Zero(t, linkCount)
 
-	// 第二次：已有数据 → ensure* 幂等路径
+	// 用户表仍为空，重启时也应进入权限补齐流程。
 	InitData()
 
 	var userCount2 int64
-	db.Model(&models.User{}).Count(&userCount2)
-	require.EqualValues(t, 3, userCount2, "重复 InitData 不应重复建用户")
+	require.NoError(t, db.Unscoped().Model(&models.User{}).Count(&userCount2).Error)
+	require.Zero(t, userCount2)
 
 	var permCount2 int64
 	db.Model(&models.Permission{}).Count(&permCount2)
@@ -109,6 +113,25 @@ func TestInitDataMySQL_FreshSeedThenIdempotent(t *testing.T) {
 	var granted int64
 	db.Table("role_permissions").Where("role_id = ?", schoolAdmin.ID).Count(&granted)
 	require.Greater(t, granted, int64(5))
+
+	deletedStudent := models.User{Username: "900006", Realname: "历史测试账号", IdentityType: "student"}
+	require.NoError(t, db.Create(&deletedStudent).Error)
+	require.NoError(t, db.Delete(&deletedStudent).Error)
+	InitData()
+	var archived models.User
+	require.NoError(t, db.Unscoped().First(&archived, deletedStudent.ID).Error)
+	require.True(t, archived.DeletedAt.Valid)
+}
+
+func TestInitDataMySQL_PreservesDisabledCollege(t *testing.T) {
+	db := newSeedMySQLTestDB(t)
+	college := models.College{ID: 2, Name: "数学学院", IsValid: false}
+	require.NoError(t, db.Create(&college).Error)
+
+	InitData()
+
+	require.NoError(t, db.First(&college, college.ID).Error)
+	require.False(t, college.IsValid)
 }
 
 // 用户角色迁移：异常数据 → 报告 → 迁移 → 校验
@@ -137,9 +160,10 @@ func TestUserRoleMigrationMySQL_FullCycle(t *testing.T) {
 	noRole := models.User{Username: "800002", Realname: "无角色", IdentityType: "student", College: "计算机科学与网络工程学院"}
 	require.NoError(t, db.Create(&noRole).Error)
 
-	// 异常 3：缺 identity（测试账号被删掉 identity 即可）
-	require.NoError(t, db.Model(&models.User{}).Where("username = ?", "900007").
-		Update("identity_type", "").Error)
+	// 异常 3：缺 identity
+	legacyTeacher := models.User{Username: "800004", Realname: "历史教师", Grade: "教职员工"}
+	require.NoError(t, db.Create(&legacyTeacher).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: legacyTeacher.ID, RoleID: teacherRole.ID}).Error)
 
 	// 异常 4：college_admin 无管理学院
 	admin := models.User{Username: "800003", Realname: "院管", IdentityType: "staff", College: "计算机科学与网络工程学院"}
@@ -148,7 +172,7 @@ func TestUserRoleMigrationMySQL_FullCycle(t *testing.T) {
 
 	report, err := BuildUserRoleMigrationReport()
 	require.NoError(t, err)
-	require.Equal(t, int64(6), report.TotalUsers)
+	require.Equal(t, int64(4), report.TotalUsers)
 	require.Len(t, report.MultiRoleUsers, 1)
 	require.NotEmpty(t, report.MultiRoleUsers[0].SuggestedRole)
 	require.Len(t, report.NoRoleUsers, 1)

@@ -180,7 +180,7 @@ func TestUploadFile_UnsupportedExt(t *testing.T) {
 	UploadFile(c)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code, "不支持的后缀应该返回 400")
-	assert.Contains(t, w.Body.String(), "不支持的文件格式", "应该提示文件格式不支持")
+	assert.Contains(t, w.Body.String(), "该类附件不支持此文件格式", "应该提示文件格式不支持")
 }
 
 func TestUploadFile_NoFile(t *testing.T) {
@@ -249,8 +249,6 @@ func TestUploadFile_MissingType(t *testing.T) {
 	mock := setupDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mockInsertSuccess(mock)
-
 	tempDir := t.TempDir()
 	originalTempDir := uploadDirs["temp"]
 	uploadDirs["temp"] = filepath.Join(tempDir, "temp")
@@ -270,16 +268,9 @@ func TestUploadFile_MissingType(t *testing.T) {
 
 	UploadFile(c)
 
-	assert.Equal(t, http.StatusOK, w.Code, "缺少type字段应该默认存到temp并成功")
-
-	expectedSubDir := time.Now().Format("200601")
-	expectedDir := filepath.Join(tempDir, "temp", expectedSubDir)
-	_, err := os.Stat(expectedDir)
-	assert.NoError(t, err, "应该在temp目录下创建子目录")
-
-	files, err := os.ReadDir(expectedDir)
-	assert.NoError(t, err)
-	assert.Equal(t, 1, len(files), "temp目录中应该有1个文件")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "上传业务类型无效")
+	assert.NoDirExists(t, uploadDirs["temp"])
 }
 
 func TestUploadFile_MkdirAllFails(t *testing.T) {

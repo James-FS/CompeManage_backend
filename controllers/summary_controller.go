@@ -56,10 +56,11 @@ func GetSummaryList(c *gin.Context) {
 	}
 
 	query := database.DB.WithContext(c.Request.Context()).Table("comp_directories").
-		Joins("LEFT JOIN comp_details ON comp_details.comp_id = comp_directories.id").
+		Joins("LEFT JOIN comp_details ON comp_details.comp_id = comp_directories.id AND comp_details.delete_time IS NULL").
 		Joins("LEFT JOIN users ON users.id = comp_directories.manager_id").
 		Joins("LEFT JOIN colleges ON colleges.id = comp_directories.college_id").
-		Joins("LEFT JOIN summaries ON summaries.comp_id = comp_directories.id").
+		Joins("LEFT JOIN summaries ON summaries.comp_id = comp_directories.id AND summaries.delete_time IS NULL").
+		Where("comp_directories.delete_time IS NULL").
 		Where("comp_directories.status = ?", 2)
 
 	query = applyCompetitionScope(query, scope, "comp_directories")

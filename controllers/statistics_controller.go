@@ -77,7 +77,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 	if rdb != nil {
 		generation, _ = rdb.Get(ctx, "cache:stats:dashboard:generation").Result()
 	}
-	cacheKey := fmt.Sprintf("cache:stats:dashboard:v4:%s:%d:%s:%d:m%d", generation, scope.UserID, scope.RoleCode, managedCollegeID, months)
+	cacheKey := fmt.Sprintf("cache:stats:dashboard:v5:%s:%d:%s:%d:m%d", generation, scope.UserID, scope.RoleCode, managedCollegeID, months)
 
 	cacheData := ""
 	if rdb != nil {
@@ -98,19 +98,19 @@ func GetStatisticsDashboard(c *gin.Context) {
 
 	newRegBase := func() *gorm.DB {
 		q := database.DB.WithContext(ctx).Model(&models.Register{}).
-			Joins("JOIN comp_directories ON comp_directories.id = registers.comp_id")
+			Joins("JOIN comp_directories ON comp_directories.id = registers.comp_id AND comp_directories.delete_time IS NULL")
 		return applyCompetitionScope(q, scope, "comp_directories")
 	}
 
 	newAwardBase := func() *gorm.DB {
 		q := database.DB.WithContext(ctx).Model(&models.Award{}).
-			Joins("JOIN comp_directories ON comp_directories.id = awards.comp_id")
+			Joins("JOIN comp_directories ON comp_directories.id = awards.comp_id AND comp_directories.delete_time IS NULL")
 		return applyCompetitionScope(q, scope, "comp_directories")
 	}
 
 	newSummaryBase := func() *gorm.DB {
 		q := database.DB.WithContext(ctx).Model(&models.Summary{}).
-			Joins("JOIN comp_directories ON comp_directories.id = summaries.comp_id")
+			Joins("JOIN comp_directories ON comp_directories.id = summaries.comp_id AND comp_directories.delete_time IS NULL")
 		return applyCompetitionScope(q, scope, "comp_directories")
 	}
 
@@ -243,10 +243,10 @@ func GetStatisticsDashboard(c *gin.Context) {
 	err := newCompBase().
 		Joins("LEFT JOIN colleges ON colleges.id = comp_directories.college_id").
 		Select("comp_directories.id, comp_directories.comp_name, comp_directories.comp_level, COALESCE(colleges.name, '未知学院') as college_name, " +
-			"(SELECT COUNT(*) FROM registers WHERE registers.comp_id = comp_directories.id) as reg_count, " +
+			"(SELECT COUNT(*) FROM registers WHERE registers.comp_id = comp_directories.id AND registers.delete_time IS NULL) as reg_count, " +
 			"(SELECT COUNT(*) FROM award_members JOIN awards ON awards.id = award_members.award_id WHERE awards.comp_id = comp_directories.id AND award_members.delete_time IS NULL AND awards.delete_time IS NULL AND (awards.status = '1' OR awards.status = 'approved')) as award_count, " +
 			"(SELECT COUNT(*) FROM awards WHERE awards.comp_id = comp_directories.id AND awards.delete_time IS NULL AND awards.status IN ('approved','1')) as award_team_count, " +
-			"COALESCE((SELECT status FROM summaries WHERE summaries.comp_id = comp_directories.id LIMIT 1), 0) as summary_status").
+			"COALESCE((SELECT status FROM summaries WHERE summaries.comp_id = comp_directories.id AND summaries.delete_time IS NULL LIMIT 1), 0) as summary_status").
 		Scan(&compStats).Error
 
 	if err != nil {
