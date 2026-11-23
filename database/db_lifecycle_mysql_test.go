@@ -58,7 +58,7 @@ func TestInitDataMySQL_MissingParentsAndRoles(t *testing.T) {
 		Delete(&models.Permission{}).Error)
 	assert.NoError(t, db.Where("role_code = ?", "teacher").Delete(&models.Role{}).Error)
 
-	InitData() // count>0 → ensure* 路径
+	InitData() // 权限数据已存在 → ensure* 路径
 
 	// 仍不应产生 teacher 角色
 	var cnt int64
@@ -72,8 +72,8 @@ func TestGrantRolePermissionsByCode_Missing(t *testing.T) {
 	InitData()
 
 	grantRolePermissionsByCode("not_exist_role", []string{"comp:list"}) // 角色缺失
-	grantRolePermissionsByCode("student", []string{"no:such:perm"})    // 权限缺失
-	grantRolePermissionsByCode("student", nil)                         // 空列表
+	grantRolePermissionsByCode("student", []string{"no:such:perm"})     // 权限缺失
+	grantRolePermissionsByCode("student", nil)                          // 空列表
 }
 
 var _ = fmt.Sprintf

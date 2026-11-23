@@ -174,7 +174,7 @@ func readUnifiedAwardImport(c *gin.Context) ([]AwardImportRow, error) {
 			return nil, errors.New("Excel读取失败")
 		}
 		defer f.Close()
-		sheet, err := f.GetRows(f.GetSheetName(0))
+		sheet, err := readAwardSheet(f)
 		if err != nil {
 			return nil, err
 		}
@@ -319,14 +319,14 @@ func unifiedAwardGroupIndices(rows []AwardImportRow) (map[uint][]int, []uint) {
 	return groups, ids
 }
 
-func validateUnifiedAwardRows(tx *gorm.DB, rows []AwardImportRow, requireReg bool, scope *UserAccessScope) error {
+func validateUnifiedAwardRows(tx *gorm.DB, rows []AwardImportRow, requireReg bool) error {
 	groups, ids := unifiedAwardGroupIndices(rows)
 	for _, id := range ids {
 		input := make([]AwardImportRow, 0, len(groups[id]))
 		for _, index := range groups[id] {
 			input = append(input, rows[index])
 		}
-		validated, _, err := validateAwardRowsForScope(tx, id, input, requireReg, scope)
+		validated, _, err := validateAwardRows(tx, id, input, requireReg)
 		if err != nil {
 			return err
 		}
@@ -433,7 +433,7 @@ func handleUnifiedAwardImport(c *gin.Context, commit bool) {
 				rows[indices[i]] = row
 			}
 		}
-		if err := validateUnifiedAwardRows(tx, rows, requireRegistration, scope); err != nil {
+		if err := validateUnifiedAwardRows(tx, rows, requireRegistration); err != nil {
 			return err
 		}
 		if !commit {

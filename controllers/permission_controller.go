@@ -21,8 +21,18 @@ func GetAllPermissions(c *gin.Context) {
 }
 
 func GetAllRoles(c *gin.Context) {
+	query := database.DB.WithContext(c.Request.Context()).Order("id asc")
+	if c.Query("brief") == "true" {
+		var roles []RoleBrief
+		if err := query.Model(&models.Role{}).Select("id", "role_name", "role_code").Find(&roles).Error; err != nil {
+			utils.InternalServerError(c, "获取角色列表失败", err)
+			return
+		}
+		utils.SuccessWithMessage(c, "获取成功", roles)
+		return
+	}
 	var roles []models.Role
-	if err := database.DB.WithContext(c.Request.Context()).Preload("Permissions").Order("id asc").Find(&roles).Error; err != nil {
+	if err := query.Preload("Permissions").Find(&roles).Error; err != nil {
 		utils.InternalServerError(c, "获取角色列表失败", err)
 		return
 	}

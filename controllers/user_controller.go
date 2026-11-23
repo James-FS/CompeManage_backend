@@ -161,6 +161,76 @@ type roleAssignmentBusinessError struct {
 
 func (e *roleAssignmentBusinessError) Error() string { return e.message }
 
+var errDeleteUserForbidden = errors.New("仅有效的校级管理员可以删除用户")
+
+func DeleteUser(c *gin.Context) {
+	targetID, err := strconv.ParseUint(c.Param("id"), 10, strconv.IntSize)
+	if err != nil || targetID == 0 {
+		utils.BadRequest(c, "用户ID无效")
+		return
+	}
+	targetUserID := uint(targetID)
+	operator, _ := c.Get("user_id")
+	operatorID, ok := operator.(uint)
+	if !ok || operatorID == 0 {
+		utils.Unauthorized(c, "未登录")
+		return
+	}
+	if operatorID == targetUserID {
+		utils.BadRequest(c, "不能删除自己的账号")
+		return
+	}
+
+	db := database.DB.WithContext(c.Request.Context())
+	err = database.TransactionWithDeadlockRetry(db, func(tx *gorm.DB) error {
+		var target models.User
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&target, targetUserID).Error; err != nil {
+			return err
+		}
+		schoolRole, err := lockSchoolAdminRole(tx)
+		if err != nil {
+			return fmt.Errorf("查询校管理员角色失败: %w", err)
+		}
+
+		// 与角色分配共用角色行锁。操作者必须仍是另一位有效校管，才允许删除目标账号。
+		var activeOperator int64
+		if err := activeRoleMembers(tx, schoolRole.ID).Where("user_roles.user_id = ?", operatorID).
+			Count(&activeOperator).Error; err != nil {
+			return err
+		}
+		if activeOperator != 1 {
+			return errDeleteUserForbidden
+		}
+		return tx.Delete(&target).Error
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, errDeleteUserForbidden):
+			utils.Forbidden(c, errDeleteUserForbidden.Error())
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			utils.NotFound(c, "用户不存在或已删除")
+		default:
+			utils.InternalServerError(c, "删除用户失败", err)
+		}
+		return
+	}
+	slog.Info("用户软删除", "operator_id", operatorID, "target_user_id", targetUserID, "ip", c.ClientIP())
+	utils.SuccessWithMessage(c, "用户已删除", gin.H{"id": targetUserID})
+}
+
+func lockSchoolAdminRole(tx *gorm.DB) (models.Role, error) {
+	var role models.Role
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("role_code = ?", "school_admin").First(&role).Error
+	return role, err
+}
+
+func activeRoleMembers(tx *gorm.DB, roleID uint) *gorm.DB {
+	return tx.Model(&models.UserRole{}).
+		Joins("JOIN users ON users.id = user_roles.user_id AND users.delete_time IS NULL").
+		Where("user_roles.role_id = ?", roleID)
+}
+
 func AssignUserRole(c *gin.Context) {
 	targetID64, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil || targetID64 == 0 {
@@ -204,9 +274,8 @@ func AssignUserRole(c *gin.Context) {
 			return err
 		}
 
-		var schoolAdminRole models.Role
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("role_code = ?", "school_admin").First(&schoolAdminRole).Error; err != nil {
+		schoolAdminRole, err := lockSchoolAdminRole(tx)
+		if err != nil {
 			return fmt.Errorf("查询校管理员角色失败: %w", err)
 		}
 
@@ -248,10 +317,7 @@ func AssignUserRole(c *gin.Context) {
 
 		if oldRoleID != nil && *oldRoleID == schoolAdminRole.ID && targetRole.ID != schoolAdminRole.ID {
 			var activeAdminLinks []models.UserRole
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-				Model(&models.UserRole{}).
-				Joins("JOIN users ON users.id = user_roles.user_id AND users.delete_time IS NULL").
-				Where("user_roles.role_id = ?", schoolAdminRole.ID).
+			if err := activeRoleMembers(tx, schoolAdminRole.ID).Clauses(clause.Locking{Strength: "UPDATE"}).
 				Find(&activeAdminLinks).Error; err != nil {
 				return err
 			}

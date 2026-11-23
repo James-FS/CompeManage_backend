@@ -98,6 +98,8 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 	}
 	rowA := AwardImportRow{StudentNumber: studentA.Username, Name: studentA.Realname, College: studentA.College, Major: studentA.Major, ProjectName: "跨院项目", AwardMonth: "2026-10", Category: "国际级", AwardName: "金奖"}
 	rowB := AwardImportRow{StudentNumber: studentB.Username, Name: studentB.Realname, College: studentB.College, Major: studentB.Major, ProjectName: rowA.ProjectName, AwardMonth: rowA.AwardMonth, Category: rowA.Category, AwardName: rowA.AwardName}
+	rowA.AdvisorUsernames = teacherA.Username + " " + teacherB.Username
+	rowB.AdvisorUsernames = rowA.AdvisorUsernames
 	invoke := func(method, path, role string, collegeID *uint, userID uint, body interface{}, handler gin.HandlerFunc) *httptest.ResponseRecorder {
 		data, _ := json.Marshal(body)
 		w := httptest.NewRecorder()
@@ -131,10 +133,13 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 		_, err = parseAwardSheet(rows)
 		require.ErrorContains(t, err, "暂无可导入数据")
 	})
-	t.Run("registration-free import rejects another college member", func(t *testing.T) {
+	t.Run("college admin imports a team with cross-college students and advisors", func(t *testing.T) {
+		preview := invoke("POST", fmt.Sprintf("/api/award/import/preview?comp_id=%d", school.ID), "college_admin", &ca.ID, studentA.ID, map[string]interface{}{"rows": []AwardImportRow{rowA, rowB}}, PreviewAwardImport)
+		require.Equal(t, 200, preview.Code, preview.Body.String())
+		require.Contains(t, preview.Body.String(), `"error_count":0`)
 		w := importRows([]AwardImportRow{rowA, rowB})
 		require.Equal(t, 200, w.Code, w.Body.String())
-		require.Contains(t, w.Body.String(), `"fail_count":1`)
+		require.Contains(t, w.Body.String(), `"success_count":2`)
 		var awards []models.Award
 		require.NoError(t, db.Find(&awards).Error)
 		require.Len(t, awards, 1)
@@ -144,20 +149,37 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 		require.NoError(t, db.Model(&models.Award{}).Where("reg_id IS NULL").Count(&regNull).Error)
 		require.EqualValues(t, 1, regNull)
 		var members []models.AwardMember
-		require.NoError(t, db.Find(&members).Error)
-		require.Len(t, members, 1)
-		require.Equal(t, studentA.ID, members[0].StudentID)
-		require.Equal(t, ca.ID, *members[0].SubmittedCollegeID)
+		require.NoError(t, db.Where("award_id = ?", awards[0].ID).Find(&members).Error)
+		require.Len(t, members, 2)
+		require.ElementsMatch(t, []uint{studentA.ID, studentB.ID}, []uint{members[0].StudentID, members[1].StudentID})
+		for _, member := range members {
+			require.Equal(t, ca.ID, *member.SubmittedCollegeID)
+		}
+		var advisors []models.AwardAdvisor
+		require.NoError(t, db.Where("award_id = ?", awards[0].ID).Find(&advisors).Error)
+		require.Len(t, advisors, 2)
+		require.ElementsMatch(t, []string{teacherA.Username, teacherB.Username}, []string{advisors[0].Username, advisors[1].Username})
 	})
 	var a models.Award
 	require.NoError(t, db.First(&a).Error)
-	t.Run("shared competition lets each college add only its own member", func(t *testing.T) {
+	t.Run("reimport by another college preserves original ownership", func(t *testing.T) {
 		w := invoke("POST", fmt.Sprintf("/api/award/import?comp_id=%d", school.ID), "college_admin", &cb.ID, studentB.ID, map[string]interface{}{"rows": []AwardImportRow{rowB}}, ImportAward)
 		require.Equal(t, 200, w.Code, w.Body.String())
-		require.Contains(t, w.Body.String(), `"success_count":1`)
+		require.Contains(t, w.Body.String(), `"existing_count":1`)
 		var m models.AwardMember
 		require.NoError(t, db.Where("student_id = ?", studentB.ID).First(&m).Error)
-		require.Equal(t, cb.ID, *m.SubmittedCollegeID)
+		require.Equal(t, ca.ID, *m.SubmittedCollegeID)
+	})
+	t.Run("award member must have a student identity", func(t *testing.T) {
+		staff := rowA
+		staff.StudentNumber, staff.Name, staff.College, staff.Major = teacherA.Username, teacherA.Realname, teacherA.College, ""
+		staff.ProjectName = "误填教职工"
+		w := importRows([]AwardImportRow{staff})
+		require.Equal(t, 200, w.Code, w.Body.String())
+		require.Contains(t, w.Body.String(), "学号不存在或不是学生账号")
+		var count int64
+		require.NoError(t, db.Model(&models.AwardMember{}).Where("student_id = ?", teacherA.ID).Count(&count).Error)
+		require.Zero(t, count)
 	})
 	t.Run("conflicting rows are skipped", func(t *testing.T) {
 		fresh := rowA
@@ -253,10 +275,34 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 		w = edit("college_admin", &cb.ID, a.ID, map[string]interface{}{"project_name": a.ProjectName, "award_category": "国家级", "award_name": "一等奖", "award_month": "2026-10"}, UpdateAwardTeam)
 		require.Equal(t, 200, w.Code, w.Body.String())
 	})
+	t.Run("editing an award member rejects a staff account", func(t *testing.T) {
+		w := edit("school_admin", nil, m.ID, map[string]interface{}{"student_id": teacherA.Username}, UpdateAwardMember)
+		require.Equal(t, 400, w.Code, w.Body.String())
+		require.Contains(t, w.Body.String(), "学号不存在或不是学生账号")
+		var saved models.AwardMember
+		require.NoError(t, db.First(&saved, m.ID).Error)
+		require.Equal(t, studentA.ID, saved.StudentID)
+	})
 	t.Run("student list works without award registration", func(t *testing.T) {
 		w := invoke("GET", "/student/my-awards", "student", nil, studentB.ID, nil, GetStudentMyAwardList)
 		require.Equal(t, 200, w.Code, w.Body.String())
 		require.Contains(t, w.Body.String(), school.CompName)
+	})
+	t.Run("college advisor edits preserve the other college's advisor", func(t *testing.T) {
+		var externalAdvisor models.AwardAdvisor
+		require.NoError(t, db.Where("award_id = ? AND username = ?", a.ID, teacherB.Username).First(&externalAdvisor).Error)
+		w := edit("college_admin", &ca.ID, a.ID, map[string]interface{}{
+			"project_name": a.ProjectName, "award_category": "国家级", "award_name": "一等奖",
+			"award_month": "2026-10", "advisors": []AwardAdvisorEditReq{},
+		}, UpdateAwardTeam)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		var updated models.Award
+		require.NoError(t, db.Preload("Advisors").First(&updated, a.ID).Error)
+		require.Len(t, updated.Advisors, 1)
+		require.Equal(t, externalAdvisor.ID, updated.Advisors[0].ID)
+		require.Equal(t, teacherB.Username, updated.Advisors[0].Username)
+		require.Contains(t, updated.AdvisorInfo, teacherB.Username)
+		require.NotContains(t, updated.AdvisorInfo, teacherA.Username)
 	})
 	t.Run("student supplement materializes members and rejects duplicate imported project", func(t *testing.T) {
 		studentProof := models.FileRecord{BizType: "award_cert", FileHash: "11234567890123456789012345678901", OriginalName: "student.pdf", UploaderID: studentB.ID, StoragePath: "/static/temp/student.pdf"}
@@ -445,7 +491,17 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 		leader := map[string]interface{}{"name": studentB.Realname, "stuID": studentB.Username, "phone": "13800000001", "email": "b@example.com", "college": studentB.College}
 		member := map[string]interface{}{"name": studentA.Realname, "stuID": studentA.Username, "phone": "13800000002", "email": "a@example.com", "college": studentA.College}
 		body := map[string]interface{}{"comp_id": comp.ID, "team_name": "团队参赛项目", "participation_type": "team", "leader": leader, "members": []interface{}{member}}
-		w := invoke("POST", "/reg/submit", "student", nil, studentA.ID, body, SubmitRegistration)
+		staff := map[string]interface{}{"name": teacherA.Realname, "stuID": teacherA.Username}
+		body["members"] = []interface{}{staff}
+		w := invoke("POST", "/reg/submit", "student", nil, studentB.ID, body, SubmitRegistration)
+		require.Equal(t, 400, w.Code, w.Body.String())
+		require.Contains(t, w.Body.String(), "不存在或不是学生账号")
+		delete(body, "participation_type")
+		w = invoke("POST", "/reg/submit", "student", nil, studentB.ID, body, SubmitRegistration)
+		require.Equal(t, 400, w.Code, w.Body.String())
+		body["participation_type"] = "team"
+		body["members"] = []interface{}{member}
+		w = invoke("POST", "/reg/submit", "student", nil, studentA.ID, body, SubmitRegistration)
 		require.Equal(t, 200, w.Code, w.Body.String())
 		var reg models.Register
 		require.NoError(t, db.Where("comp_id = ?", comp.ID).Preload("Members").First(&reg).Error)
@@ -455,6 +511,10 @@ func TestAwardWorkflowMySQL(t *testing.T) {
 		body["reg_id"] = reg.ID
 		body["team_name"] = "普通成员重新提交项目"
 		body["leader"] = member
+		body["members"] = []interface{}{map[string]interface{}{"name": "姓名有误", "stuID": studentB.Username}}
+		w = invoke("PUT", "/reg/resubmit", "student", nil, studentA.ID, body, ResubmitRegistration)
+		require.Equal(t, 400, w.Code, w.Body.String())
+		require.Contains(t, w.Body.String(), "与系统姓名不匹配")
 		body["members"] = []interface{}{leader}
 		w = invoke("PUT", "/reg/resubmit", "student", nil, studentA.ID, body, ResubmitRegistration)
 		require.Equal(t, 200, w.Code, w.Body.String())
