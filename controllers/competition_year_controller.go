@@ -28,7 +28,11 @@ func parseDirectoryYear(value string) (int, bool) {
 		}
 	}
 	year, err := strconv.Atoi(value)
-	return year, err == nil && year >= 1000 && year <= 9999
+	return year, err == nil && validCompetitionYear(year)
+}
+
+func validCompetitionYear(year int) bool {
+	return year >= 1000 && year <= 9999
 }
 
 func bindDirectoryYear(c *gin.Context) (int, bool) {

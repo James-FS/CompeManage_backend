@@ -204,7 +204,7 @@ func TestGetCompetitionList_CacheHit(t *testing.T) {
 	req := CompListReq{Page: 1, PageSize: 10}
 	reqBytes, _ := json.Marshal(req)
 	identity := fmt.Sprintf("%v:%v:%v:%d", interface{}(uint(5)), interface{}("student"), interface{}(nil), uint(0))
-	cacheKey := fmt.Sprintf("cache:comp_list:duty_v3:%s:%x", identity, md5.Sum(reqBytes))
+	cacheKey := fmt.Sprintf("cache:comp_list:duty_v4::%s:%x", identity, md5.Sum(reqBytes))
 	rdb.Set(t.Context(), cacheKey, `{"list":[],"total":0,"page":1,"size":10}`, 0)
 
 	_, w, c := buildGET("/api/comp/list?page=1&page_size=10")

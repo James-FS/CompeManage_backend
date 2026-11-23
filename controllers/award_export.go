@@ -284,7 +284,11 @@ func buildAwardProjectRows(ctx context.Context, scope *UserAccessScope, year str
 		return nil, err
 	}
 	q := database.DB.WithContext(ctx).Table("awards").
-		Select("awards.id, awards.project_name, awards.award_level, awards.award_category, awards.award_name, awards.award_time, awards.advisor_info, r.advisor_info AS reg_advisor_info, cd.comp_name, cd.organizer, cd.year AS competition_year, cdp.participant_type, cn.name AS comp_college").
+		Select(`awards.id, awards.project_name, awards.award_level, awards.award_category, awards.award_name,
+			awards.award_time, awards.advisor_info, r.advisor_info AS reg_advisor_info, cd.comp_name, cd.organizer,
+			cd.year AS competition_year, CASE awards.participation_type
+				WHEN 'team' THEN 2 WHEN 'individual' THEN 1 ELSE cdp.participant_type
+			END AS participant_type, cn.name AS comp_college`).
 		Joins("JOIN comp_directories cd ON cd.id = awards.comp_id AND cd.delete_time IS NULL").
 		Joins("LEFT JOIN comp_details cdp ON cdp.comp_id = awards.comp_id AND cdp.delete_time IS NULL").
 		Joins("LEFT JOIN registers r ON r.id = awards.reg_id AND r.delete_time IS NULL").

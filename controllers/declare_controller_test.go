@@ -696,8 +696,10 @@ func TestAuditDeclare_NotFound(t *testing.T) {
 	mock := setupDeclareDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mock.ExpectQuery("SELECT .* FROM `comp_declarations`").
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .* FROM `comp_declarations`.*FOR UPDATE").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectRollback()
 
 	body := map[string]interface{}{"declare_id": 999, "audit_status": 2}
 	_, w, c := buildAuthPOSTJSON(body)
@@ -711,8 +713,10 @@ func TestAuditDeclare_Forbidden_NotSubmitted(t *testing.T) {
 	mock := setupDeclareDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mock.ExpectQuery("SELECT .* FROM `comp_declarations`").
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .* FROM `comp_declarations`.*FOR UPDATE").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "declare_status"}).AddRow(1, 0))
+	mock.ExpectRollback()
 
 	body := map[string]interface{}{"declare_id": 1, "audit_status": 2}
 	_, w, c := buildAuthPOSTJSON(body)
@@ -727,11 +731,10 @@ func TestAuditDeclare_Reject_Success(t *testing.T) {
 	mock := setupDeclareDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mock.ExpectQuery("SELECT .* FROM `comp_declarations`").
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .* FROM `comp_declarations`.*FOR UPDATE").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "declare_status", "college_id", "manager_id", "comp_level", "year"}).
 			AddRow(1, 1, 1, 1, "校级", 2026))
-	// Save 使用事务
-	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE `comp_declarations`").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()

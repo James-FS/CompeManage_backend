@@ -1,6 +1,9 @@
 package controllers
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"CompeManage_backend/models"
@@ -49,4 +52,57 @@ func TestNextCompetitionCodeMySQL_BadLevel(t *testing.T) {
 	_, err := nextCompetitionCode(db, "市级", 2026)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "不支持的竞赛级别")
+}
+
+func TestConcurrentDeclareApprovalMySQL(t *testing.T) {
+	db := newAwardMySQLTestDB(t)
+	require.NoError(t, db.AutoMigrate(&models.CompDeclaration{}))
+	conn, err := db.DB()
+	require.NoError(t, err)
+	conn.SetMaxOpenConns(12)
+
+	college := models.College{Name: "并行审核学院", IsValid: true}
+	manager := models.User{Username: "AUDIT-MANAGER", IdentityType: "staff"}
+	require.NoError(t, db.Create(&college).Error)
+	require.NoError(t, db.Create(&manager).Error)
+
+	const count = 8
+	declarations := make([]models.CompDeclaration, count)
+	for i := range declarations {
+		declarations[i] = models.CompDeclaration{
+			CompName: fmt.Sprintf("并行审核赛事%d", i), CompLevel: "省级", Year: 2055,
+			CollegeID: college.ID, ManagerID: manager.ID, CreatedBy: manager.ID, DeclareStatus: 1,
+		}
+	}
+	require.NoError(t, db.Create(&declarations).Error)
+
+	start := make(chan struct{})
+	responses := make(chan *httptest.ResponseRecorder, count)
+	for _, declaration := range declarations {
+		_, response, c := buildAuthPOSTJSON(DeclareAuditReq{DeclareID: declaration.ID, AuditStatus: 2})
+		c.Set("user_id", manager.ID)
+		go func() {
+			<-start
+			AuditDeclare(c)
+			responses <- response
+		}()
+	}
+	close(start)
+	for range count {
+		response := <-responses
+		assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	}
+
+	var competitions []models.CompDirectory
+	require.NoError(t, db.Order("comp_code").Find(&competitions).Error)
+	require.Len(t, competitions, count)
+	for i, comp := range competitions {
+		require.Equal(t, fmt.Sprintf("S2055%03d", i+1), comp.CompCode)
+		require.NotNil(t, comp.DeclareID)
+		var approved models.CompDeclaration
+		require.NoError(t, db.First(&approved, *comp.DeclareID).Error)
+		require.EqualValues(t, 2, approved.DeclareStatus)
+		require.NotNil(t, approved.CompDirectoryID)
+		require.Equal(t, comp.ID, *approved.CompDirectoryID)
+	}
 }
