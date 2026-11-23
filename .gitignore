@@ -67,3 +67,7 @@ app.logger
 /benchmark-results/
 /server
 /FETCH_HEAD
+cover_bare
+one
+probe1
+two
