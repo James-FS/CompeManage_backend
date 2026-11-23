@@ -192,7 +192,7 @@ func TestManagementCompetitionListIgnoresStaleCachedOwnership(t *testing.T) {
 	req := CompListReq{Page: 1, PageSize: 10, IsMy: true}
 	encoded, err := json.Marshal(req)
 	require.NoError(t, err)
-	key := fmt.Sprintf("cache:comp_list:duty_v3:%s:%x", competitionCacheIdentity(c), md5.Sum(encoded))
+	key := fmt.Sprintf("cache:comp_list:duty_v4::%s:%x", competitionCacheIdentity(c), md5.Sum(encoded))
 	require.NoError(t, middleware.RedisClient.Set(context.Background(), key, `{"list":[{"id":99,"comp_name":"stale owner"}],"total":1}`, time.Minute).Err())
 	mock.ExpectQuery("SELECT count.*FROM `comp_directories`.*college_id = ").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery("SELECT .*FROM `comp_directories`.*college_id = ").WillReturnRows(sqlmock.NewRows([]string{"id"}))

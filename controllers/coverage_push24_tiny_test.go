@@ -30,13 +30,14 @@ func TestRoleAssignmentBusinessError_Error(t *testing.T) {
 	assert.Equal(t, "自定义消息", e.Error())
 }
 
-// removeUploadedFile：删除真实存在的文件（成功分支）
-func TestRemoveUploadedFile_Success(t *testing.T) {
+func TestRemoveUploadedFile_IgnoresLocalPath(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "a.txt")
 	assert.NoError(t, os.WriteFile(p, []byte("x"), 0o600))
-	removeUploadedFile("/" + filepath.ToSlash(p))
-	assert.NoFileExists(t, p)
+	_, _, c := buildGET("/x")
+	c.Set("user_id", uint(1))
+	removeUploadedFile(c, "/"+filepath.ToSlash(p))
+	assert.FileExists(t, p)
 }
 
 // GetUserList：page_size 超上限裁剪到 50

@@ -18,20 +18,25 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+const competitionListCacheVersionKey = "cache:comp_list_version"
 
 func clearCompListCache(ctx context.Context) {
 	rdb := middleware.GetRedisClient()
 	if rdb == nil {
 		return
 	}
-	for _, pattern := range []string{"cache:comp_list:*", "cache:stats:dashboard:*"} {
-		iter := rdb.Scan(ctx, 0, pattern, 0).Iterator()
-		for iter.Next(ctx) {
-			rdb.Del(ctx, iter.Val())
-		}
+	// Readers that started before the mutation can only populate the old version.
+	if err := rdb.Incr(ctx, competitionListCacheVersionKey).Err(); err != nil {
+		logger.Error("赛事目录缓存失效失败", "error", err)
+	}
+	iter := rdb.Scan(ctx, 0, "cache:stats:dashboard:*", 0).Iterator()
+	for iter.Next(ctx) {
+		rdb.Del(ctx, iter.Val())
 	}
 }
 
@@ -50,15 +55,11 @@ func levelPrefix(level string) (string, bool) {
 	}
 }
 
-func resolveCompetitionYear(yearText string) int {
-	year := 0
-	if strings.TrimSpace(yearText) != "" {
-		fmt.Sscanf(yearText, "%d", &year)
+func resolveCompetitionYear(yearText string, defaultYear int) (int, bool) {
+	if strings.TrimSpace(yearText) == "" {
+		return defaultYear, validCompetitionYear(defaultYear)
 	}
-	if year <= 0 {
-		year = time.Now().Year()
-	}
-	return year
+	return parseDirectoryYear(strings.TrimSpace(yearText))
 }
 
 func competitionCodeBase(level string, year int) (string, error) {
@@ -144,16 +145,20 @@ func GetCompetitionList(c *gin.Context) {
 		return
 	}
 	reqBytes, _ := json.Marshal(req)
-	cacheKey := fmt.Sprintf("cache:comp_list:duty_v3:%s:%x", competitionCacheIdentity(c), md5.Sum(reqBytes))
 	rdb := middleware.GetRedisClient()
 	ctx := c.Request.Context()
 
 	role, _ := c.Get("role_code")
 	// Management responses must reflect reassignment immediately; cache browsing data only.
 	useCache := rdb != nil && role != "school_admin" && role != "college_admin" && role != "competition_manager"
-	cacheData := ""
+	var cacheKey, cacheData string
 	if useCache {
-		cacheData, _ = rdb.Get(ctx, cacheKey).Result()
+		version, err := rdb.Get(ctx, competitionListCacheVersionKey).Result()
+		useCache = err == nil || errors.Is(err, redis.Nil)
+		if useCache {
+			cacheKey = fmt.Sprintf("cache:comp_list:duty_v4:%s:%s:%x", version, competitionCacheIdentity(c), md5.Sum(reqBytes))
+			cacheData, _ = rdb.Get(ctx, cacheKey).Result()
+		}
 	}
 	if cacheData != "" {
 		var resp struct {
@@ -302,11 +307,21 @@ func CreateCompetition(c *gin.Context) {
 		return
 	}
 
-	year := resolveCompetitionYear(req.Year)
+	req.CompName = strings.TrimSpace(req.CompName)
+	if req.CompName == "" {
+		utils.BadRequest(c, "赛事名称不能为空")
+		return
+	}
+	year, validYear := resolveCompetitionYear(req.Year, time.Now().Year())
+	if !validYear {
+		utils.BadRequest(c, "所属年份须为1000至9999的4位数字")
+		return
+	}
 
 	var created models.CompDirectory
 	var promotions []RolePromotion
-	err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+	err := database.TransactionWithDeadlockRetry(database.DB.WithContext(c.Request.Context()), func(tx *gorm.DB) error {
+		promotions = nil
 		collegeID, collegeErr := resolveCollegeIDByName(tx, req.College)
 		if collegeErr != nil {
 			return collegeErr
@@ -379,21 +394,33 @@ func BatchImportCompetition(c *gin.Context) {
 		return
 	}
 
-	// 校验负责人非 0（validator 对 slice 元素不递归校验，required 在批量路径不生效）。
-	// 未匹配到负责人的行应在前端补充完整，而不是以 0 落库。
-	for i, item := range req.Items {
+	years := make([]int, len(req.Items))
+	defaultYear := time.Now().Year()
+	for i := range req.Items {
+		item := &req.Items[i]
+		item.CompName = strings.TrimSpace(item.CompName)
+		if item.CompName == "" {
+			utils.BadRequest(c, fmt.Sprintf("第%d项赛事名称不能为空", i+1))
+			return
+		}
 		if item.ManagerID == 0 {
 			utils.BadRequest(c, fmt.Sprintf("第%d项(%s)缺少赛事负责人", i+1, item.CompName))
 			return
 		}
+		year, valid := resolveCompetitionYear(item.Year, defaultYear)
+		if !valid {
+			utils.BadRequest(c, fmt.Sprintf("第%d项(%s): 所属年份须为1000至9999的4位数字", i+1, item.CompName))
+			return
+		}
+		years[i] = year
 	}
 
 	var compDirs []models.CompDirectory
 	var promotions []RolePromotion
-	err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+	err := database.TransactionWithDeadlockRetry(database.DB.WithContext(c.Request.Context()), func(tx *gorm.DB) error {
+		promotions = nil
 		processedManagers := make(map[uint]bool)
 		collegeIDs := make([]*uint, len(req.Items))
-		years := make([]int, len(req.Items))
 		codeGroups := make(map[string][]int)
 		codeGroupBases := make([]string, 0)
 
@@ -474,9 +501,7 @@ func BatchImportCompetition(c *gin.Context) {
 				}
 			}
 
-			year := resolveCompetitionYear(item.Year)
-			years[i] = year
-			base, codeErr := competitionCodeBase(item.CompLevel, year)
+			base, codeErr := competitionCodeBase(item.CompLevel, years[i])
 			if codeErr != nil {
 				return fmt.Errorf("第%d项(%s): %w", i+1, item.CompName, codeErr)
 			}
@@ -547,6 +572,7 @@ func BatchImportCompetition(c *gin.Context) {
 		return
 	}
 
+	clearCompListCache(c.Request.Context())
 	finalizeRolePromotions(c, promotions, auditReasonImport, nil)
 	InvalidateStatisticsDashboard()
 	utils.SuccessWithMessage(c, "批量导入成功", gin.H{
@@ -785,32 +811,26 @@ func DeleteCompetition(c *gin.Context) {
 
 func RestoreCompetition(c *gin.Context) {
 	id := c.Param("id")
-
 	var comp models.CompDirectory
-	if err := database.DB.WithContext(c.Request.Context()).Unscoped().First(&comp, id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			utils.NotFound(c, "赛事不存在")
-		} else {
-			utils.InternalServerError(c, "���询失败", err)
-		}
-		return
-	}
-
-	if comp.DeletedAt.Time.IsZero() {
-		utils.BadRequest(c, "赛事未被删除")
-		return
-	}
-
-	if err := database.DB.WithContext(c.Request.Context()).Model(&comp).Update("delete_time", nil).Error; err != nil {
-		utils.InternalServerError(c, "恢复失败", err)
-		return
-	}
-	clearCompListCache(c.Request.Context())
-
-	// 幂等兜底：恢复的赛事负责人若为教师则自动提升（覆盖「删除前被回收」的场景；
-	// 因本次不做自动降级，通常为 no-op）。
 	var promotions []RolePromotion
-	err := database.DB.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+	errActiveCompetition := errors.New("赛事未被删除")
+	err := database.TransactionWithDeadlockRetry(database.DB.WithContext(c.Request.Context()), func(tx *gorm.DB) error {
+		comp = models.CompDirectory{}
+		promotions = nil
+		if err := tx.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).First(&comp, id).Error; err != nil {
+			return err
+		}
+		if !comp.DeletedAt.Valid {
+			return errActiveCompetition
+		}
+		result := tx.Unscoped().Model(&comp).Where("delete_time IS NOT NULL").Update("delete_time", nil)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errActiveCompetition
+		}
+		// 恢复时重新确认负责人角色，与恢复记录一起提交。
 		oldRoleID, newRoleID, promoteErr := promoteCompetitionManagerIfTeacher(tx, comp.ManagerID)
 		if promoteErr != nil {
 			return promoteErr
@@ -824,10 +844,18 @@ func RestoreCompetition(c *gin.Context) {
 		}
 		return nil
 	})
-	if err != nil {
-		utils.InternalServerError(c, "恢复负责人角色失败", err)
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		utils.NotFound(c, "赛事不存在")
+		return
+	case errors.Is(err, errActiveCompetition):
+		utils.BadRequest(c, err.Error())
+		return
+	case err != nil:
+		utils.InternalServerError(c, "恢复失败", err)
 		return
 	}
+	clearCompListCache(c.Request.Context())
 	sourceID := comp.ID
 	finalizeRolePromotions(c, promotions, auditReasonCompetition, &sourceID)
 	utils.SuccessWithMessage(c, "恢复成功", gin.H{
@@ -897,6 +925,16 @@ func GetCompetitionDetail(c *gin.Context) {
 		utils.NotFound(c, "赛事不存在")
 		return
 	}
+	if c.GetString("role_code") == "college_admin" {
+		scope, ok := requireUserAccessScope(c)
+		if !ok {
+			return
+		}
+		if !canAccessCompetition(scope, comp) {
+			utils.Forbidden(c, "无权访问该赛事")
+			return
+		}
+	}
 
 	caps, ok := competitionCapabilities(c, comp)
 	if !ok {
@@ -964,9 +1002,15 @@ func UpdateCompetition(c *gin.Context) {
 		utils.Forbidden(c, "仅校级管理员可以修改赛事所属学院")
 		return
 	}
-	year := 0
-	if req.Year != "" {
-		fmt.Sscanf(req.Year, "%d", &year)
+	req.CompName = strings.TrimSpace(req.CompName)
+	if req.CompName == "" {
+		utils.BadRequest(c, "赛事名称不能为空")
+		return
+	}
+	year, validYear := resolveCompetitionYear(req.Year, comp.Year)
+	if !validYear {
+		utils.BadRequest(c, "所属年份须为1000至9999的4位数字")
+		return
 	}
 
 	var promotions []RolePromotion

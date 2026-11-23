@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"CompeManage_backend/database"
+	"CompeManage_backend/models"
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
 	"github.com/xuri/excelize/v2"
@@ -19,6 +21,39 @@ func exportCell(t *testing.T, f *excelize.File, sheet, cell string) string {
 	value, err := f.GetCellValue(sheet, cell)
 	require.NoError(t, err)
 	return value
+}
+
+func TestAwardExportProjectParticipationMySQL(t *testing.T) {
+	db := newAwardMySQLTestDB(t)
+	manager := models.User{Username: "EXPORT-MANAGER", IdentityType: "staff"}
+	require.NoError(t, db.Create(&manager).Error)
+	configured := models.CompDirectory{CompCode: "EXPORT-1", CompName: "已配置赛事", Year: 2026, ManagerID: manager.ID}
+	unconfigured := models.CompDirectory{CompCode: "EXPORT-2", CompName: "未配置赛事", Year: 2026, ManagerID: manager.ID}
+	require.NoError(t, db.Create(&configured).Error)
+	require.NoError(t, db.Create(&unconfigured).Error)
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	require.NoError(t, db.Create(&models.CompDetail{
+		CompID: configured.ID, ParticipantType: 2, AwardHierarchy: "[]", Track: "[]",
+		CompStartTime: start, CompEndTime: end, RegStartTime: start, RegEndTime: end,
+		SubmitStartTime: start, SubmitEndTime: end, ReviewStartTime: start, ReviewEndTime: end,
+	}).Error)
+	awards := []models.Award{
+		{CompID: configured.ID, ProjectName: "个人获奖", ParticipationType: "individual"},
+		{CompID: unconfigured.ID, ProjectName: "团队获奖", ParticipationType: "team"},
+		{CompID: configured.ID, ProjectName: "旧获奖记录"},
+	}
+	for i := range awards {
+		awards[i].Status, awards[i].AwardCategory, awards[i].AwardName, awards[i].AdvisorInfo = "approved", "省级", "一等奖", "[]"
+	}
+	require.NoError(t, db.Create(&awards).Error)
+	rows, err := buildAwardProjectRows(context.Background(), &UserAccessScope{RoleCode: "school_admin"}, "2026")
+	require.NoError(t, err)
+	labels := make(map[string]string)
+	for _, row := range rows[2026] {
+		labels[row[3].(string)] = row[11].(string)
+	}
+	require.Equal(t, map[string]string{"个人获奖": "个人", "团队获奖": "团体", "旧获奖记录": "团体"}, labels)
 }
 
 func TestAwardExportTemplatesExpandAndPreserveNotes(t *testing.T) {
@@ -47,8 +82,8 @@ func TestAwardExportTemplatesExpandAndPreserveNotes(t *testing.T) {
 			} else {
 				require.Contains(t, exportCell(t, f, layout.Sheet, "A2"), "单位名称（公章）：测试单位")
 				require.Equal(t, "信息工程学院", exportCell(t, f, layout.Sheet, "H4")) // 学生所在学院（插列后 H 列）
-				require.Empty(t, exportCell(t, f, layout.Sheet, "I4"))                // 指导教师
-				require.Empty(t, exportCell(t, f, layout.Sheet, "J4"))                // 指导教师所在学院
+				require.Empty(t, exportCell(t, f, layout.Sheet, "I4"))           // 指导教师
+				require.Empty(t, exportCell(t, f, layout.Sheet, "J4"))           // 指导教师所在学院
 				height, err := f.GetRowHeight(layout.Sheet, 4)
 				require.NoError(t, err)
 				require.Greater(t, height, layout.MinHeight)
