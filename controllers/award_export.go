@@ -165,12 +165,12 @@ func awardExportScope(c *gin.Context) (*UserAccessScope, bool) {
 	case scope.IsSchoolAdmin(), scope.IsCollegeAdmin():
 		// 校级导全校，院级按提交学院过滤（见导出查询）
 	case scope.RoleCode == "competition_manager":
-		// 赛事负责人：用于线下盖章上报，仅导出本人所属学院的数据
+		// 赛事负责人：用于线下盖章上报，仅导出本人所属单位的数据
 		var college string
 		if err := database.DB.WithContext(c.Request.Context()).Table("users").
 			Where("id = ? AND delete_time IS NULL", scope.UserID).
 			Pluck("college", &college).Error; err != nil || college == "" {
-			utils.Forbidden(c, "赛事负责人未配置所属学院，无法导出")
+			utils.Forbidden(c, "赛事负责人未配置所属单位，无法导出")
 			return nil, false
 		}
 		scope.College = college
@@ -277,7 +277,7 @@ func awardExportWorkbook(c *gin.Context, kind, year, unit string, rowsByYear map
 
 // ExportAwardProjects 导出附件1：按奖项一行，教师及签章区留空供人工填写。
 // buildAwardProjectRows 查询并构造附件1数据行（按赛事年份分组）。
-// 上报学院 = 项目首个成员的提交学院，缺省回退赛事所属学院。
+// 上报学院 = 项目首个成员的提交学院，缺省回退赛事所属单位。
 func buildAwardProjectRows(ctx context.Context, scope *UserAccessScope, year string) (map[int][][]interface{}, error) {
 	managedCollege, err := collegeNameForAwardScope(database.DB.WithContext(ctx), scope)
 	if err != nil {
@@ -376,7 +376,7 @@ func buildAwardProjectRows(ctx context.Context, scope *UserAccessScope, year str
 				advNames, advColleges = awardExportAdvisors(p.AdvisorInfo, p.RegAdvisorInfo)
 			}
 		}
-		// 上报学院：成员提交学院优先，缺省用赛事所属学院
+		// 上报学院：成员提交学院优先，缺省用赛事所属单位
 		reportCollege := strings.TrimSpace(p.CompCollege)
 		if scope.IsCollegeAdmin() {
 			reportCollege = managedCollege
@@ -394,7 +394,7 @@ func buildAwardProjectRows(ctx context.Context, scope *UserAccessScope, year str
 }
 
 // buildAwardStudentRows 查询并构造附件2数据行（按赛事年份分组）。
-// 上报学院 = 成员提交学院，缺省回退赛事所属学院。
+// 上报学院 = 成员提交学院，缺省回退赛事所属单位。
 func buildAwardStudentRows(ctx context.Context, scope *UserAccessScope, year string) (map[int][][]interface{}, error) {
 	managedCollege, err := collegeNameForAwardScope(database.DB.WithContext(ctx), scope)
 	if err != nil {

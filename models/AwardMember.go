@@ -12,7 +12,7 @@ type AwardMember struct {
 	StudentNumber      string `gorm:"type:varchar(50)" json:"student_id"`
 	College            string `gorm:"type:varchar(255)" json:"college"`
 	Major              string `gorm:"type:varchar(100)" json:"major"`
-	Class              string `gorm:"type:varchar(100)" json:"class_name"`
+	Class              string `gorm:"column:class;type:varchar(100)" json:"class_name"`
 	Remark             string `gorm:"type:text" json:"remark"`
 	SubmittedCollegeID *uint  `gorm:"index" json:"submitted_college_id"`
 	SubmittedBy        *uint  `gorm:"index" json:"submitted_by"`

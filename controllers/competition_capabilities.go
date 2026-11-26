@@ -38,7 +38,7 @@ func competitionCapabilities(c *gin.Context, comp models.CompDirectory) (map[str
 	}
 	// 2026-11-26 修复：cap 计算失败降级返回空 caps，不阻断列表数据返回。
 	// 旧实现在 requireUserAccessScope 失败（如院级管理员未配管理学院）或权限码加载失败时
-	// 返回 false，导致调用方丢弃整个列表——院级管理员看不到所属学院赛事的根因。
+	// 返回 false，导致调用方丢弃整个列表——院级管理员看不到所属单位赛事的根因。
 	scope, ok := requireUserAccessScope(c)
 	if !ok {
 		return map[string]bool{}, true

@@ -230,7 +230,7 @@ func TestAwardHandlersMySQL(t *testing.T) {
 		require.Equal(t, 200, w.Code)
 		require.Greater(t, w.Body.Len(), 500)
 
-		// 负责人无所属学院 → 403
+		// 负责人无所属单位 → 403
 		teacherNoCollege := models.User{Username: "IT999", Realname: "无学院教师", IdentityType: "staff", College: ""}
 		require.NoError(t, db.Create(&teacherNoCollege).Error)
 		w = invoke("GET", "/api/award/export/projects", "competition_manager", nil, teacherNoCollege.ID, nil, ExportAwardProjects)

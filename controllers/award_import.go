@@ -19,14 +19,14 @@ import (
 	"unicode/utf8"
 )
 
-var awardImportHeaders = []string{"序号", "学号", "学生姓名", "所属学院", "所在专业", "参赛项目名称", "获奖时间（年/月）", "获奖类别", "获奖等级", "指导教师工号", "指导教师所在学院", "备注"}
-var awardTemplateHeaders = []string{"序号", "学号", "学生姓名", "所属学院", "所在专业", "参赛项目名称", "获奖时间（年/月）", "获奖类别", "获奖等级", "指导教师工号", "备注"}
+var awardImportHeaders = []string{"序号", "学号", "学生姓名", "所属单位", "所在专业", "参赛项目名称", "获奖时间（年/月）", "获奖类别", "获奖等级", "指导教师工号", "指导教师所在学院", "备注"}
+var awardTemplateHeaders = []string{"序号", "学号", "学生姓名", "所属单位", "所在专业", "参赛项目名称", "获奖时间（年/月）", "获奖类别", "获奖等级", "指导教师工号", "备注"}
 var awardTemplateNotes = []string{
 	"说明：1. 获奖类别：校级（也可填校赛）、省级、省部级、国家级、国际级；国际级统一保存为国家级。",
 	"2. 获奖等级：指一等奖、二等奖、三等奖，冠军（金奖）、特等奖等同于一等奖，亚军（银奖）等同于二等奖，季军（铜奖）等同于三等奖。如冠亚季军、金银铜奖从一等奖获奖者中决出，则按一等奖计算。",
 	"3. 一行只能填写1个学生。学生须为我校全日制本科生（不含继续教育、二级学院），学号务必准确（否则影响奖励发放）。",
 	"4. 获奖时间填写 YYYY-MM 或 YYYY.MM；日期版模板中的 YYYY-MM-DD 也可导入并按月份保存。同一赛事内项目名称相同视为同一团队，类别、等级、时间必须一致。",
-	"5. 所属学院和专业需填写完整名称。",
+	"5. 所属单位和专业需填写完整名称。",
 	"6. 指导教师只需填写教职工工号；教师、赛事负责人、专家、院负责人和校负责人均可担任指导教师。多人可用逗号、空格、顿号或分号分隔，系统按工号自动获取姓名和学院，无需填写教师所在学院；不填表示无指导教师。",
 	"7. 同个团队的参赛项目名称一定要一样：同一赛事内项目名称相同才会归为同一团队，名称不同会被拆成不同团队。",
 }
@@ -509,7 +509,7 @@ func newAwardTemplateLayout(headers, notes []string) *excelize.File {
 	project.Alignment = &excelize.Alignment{Horizontal: "left", Vertical: "center", WrapText: true}
 	projectID, _ := f.NewStyle(&project)
 	noteID, _ := f.NewStyle(&excelize.Style{Alignment: &excelize.Alignment{Horizontal: "left", WrapText: true, Vertical: "center"}, Font: &excelize.Font{Family: "宋体", Size: 12, Color: "000000"}})
-	widths := map[string]float64{"序号": 7, "学号": 15, "学生姓名": 12, "所属学院": 23, "所在专业": 21, "参赛项目名称": 38, "获奖时间（年/月）": 15, "获奖类别": 13, "获奖等级": 13, "指导教师工号": 24, "备注": 14, "赛事名称": 38, "赛事年份": 13, "赛事编号": 18}
+	widths := map[string]float64{"序号": 7, "学号": 15, "学生姓名": 12, "所属单位": 23, "所在专业": 21, "参赛项目名称": 38, "获奖时间（年/月）": 15, "获奖类别": 13, "获奖等级": 13, "指导教师工号": 24, "备注": 14, "赛事名称": 38, "赛事年份": 13, "赛事编号": 18}
 	for i, h := range headers {
 		col, _ := excelize.ColumnNumberToName(i + 1)
 		switch h {
@@ -675,7 +675,7 @@ func parseAwardSheet(rows [][]string) ([]AwardImportRow, error) {
 		if awardDate == "" {
 			awardDate = value("获奖时间")
 		}
-		r := AwardImportRow{RowNumber: index + 2, StudentNumber: value("学号"), Name: value("学生姓名"), College: value("所属学院"), Major: value("所在专业"), ProjectName: value("参赛项目名称"), AwardMonth: awardDate, Category: value("获奖类别"), AwardName: value("获奖等级"), AdvisorUsernames: normalizeAdvisorList(value("指导教师工号")), AdvisorColleges: normalizeAdvisorList(value("指导教师所在学院")), Remark: value("备注"), CompName: value("赛事名称"), CompYear: value("赛事年份"), CompCode: value("赛事编号")}
+		r := AwardImportRow{RowNumber: index + 2, StudentNumber: value("学号"), Name: value("学生姓名"), College: value("所属单位"), Major: value("所在专业"), ProjectName: value("参赛项目名称"), AwardMonth: awardDate, Category: value("获奖类别"), AwardName: value("获奖等级"), AdvisorUsernames: normalizeAdvisorList(value("指导教师工号")), AdvisorColleges: normalizeAdvisorList(value("指导教师所在学院")), Remark: value("备注"), CompName: value("赛事名称"), CompYear: value("赛事年份"), CompCode: value("赛事编号")}
 		if r.StudentNumber == "" && r.Name == "" && r.ProjectName == "" && r.Category == "" && r.AwardName == "" && r.College == "" && r.Major == "" && r.AwardMonth == "" && r.AdvisorUsernames == "" && r.AdvisorColleges == "" && r.Remark == "" && r.CompName == "" && r.CompYear == "" && r.CompCode == "" {
 			continue
 		}
