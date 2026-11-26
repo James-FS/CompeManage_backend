@@ -1001,7 +1001,7 @@ func UpdateCompetition(c *gin.Context) {
 	}
 
 	if !scope.IsSchoolAdmin() && !equalUintPointers(comp.CollegeID, collegeID) {
-		utils.Forbidden(c, "仅校级管理员可以修改赛事所属学院")
+		utils.Forbidden(c, "仅校级管理员可以修改赛事所属单位")
 		return
 	}
 	req.CompName = strings.TrimSpace(req.CompName)
