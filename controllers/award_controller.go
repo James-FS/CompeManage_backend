@@ -149,6 +149,10 @@ func GetAwardCompList(c *gin.Context) {
 		like := "%" + keyword + "%"
 		db = db.Where("comp_name LIKE ? OR comp_code LIKE ?", like, like)
 	}
+	// 2026-11-26 按所属单位筛选（统一口径）
+	if college := strings.TrimSpace(c.Query("college")); college != "" {
+		db = db.Joins("LEFT JOIN colleges ON comp_directories.college_id = colleges.id").Where("colleges.name = ?", college)
+	}
 	if level := c.Query("level"); level != "" && level != "全部" {
 		db = db.Where("comp_level = ?", level)
 	}
