@@ -418,14 +418,9 @@ func awardCompetitionScope(q *gorm.DB, scope *UserAccessScope) *gorm.DB {
 		if scope.ManagedCollegeID == nil {
 			return q.Where("1 = 0")
 		}
-		// The regular competition directory is strictly college-scoped. Award
-		// filling also includes shared school competitions and competitions that
-		// have not been assigned to a college yet.
-		return q.Where(
-			"(comp_directories.college_id = ? OR comp_directories.college_id IS NULL OR comp_directories.college_id = 0 OR TRIM(comp_directories.comp_level) = ?)",
-			*scope.ManagedCollegeID,
-			"校级",
-		)
+		// 2026-11-26 修复：院级管理员严格按所属单位过滤（用户要求只能看本学院赛事）。
+		// 旧实现包含校级/未分配赛事，导致院级管理员看到 1258 条（含全校赛事），超出权限范围。
+		return q.Where("comp_directories.college_id = ?", *scope.ManagedCollegeID)
 	}
 	return applyCompetitionScope(q, scope, "comp_directories")
 }
