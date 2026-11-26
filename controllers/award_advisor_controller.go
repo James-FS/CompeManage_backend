@@ -176,27 +176,8 @@ func GetAwardChanges(c *gin.Context) {
 				return
 			}
 		}
-	} else {
-		scope, _, ok := requireAwardCompetition(c, a.CompID)
-		if !ok {
-			return
-		}
-		if scope.IsCollegeAdmin() {
-			collegeName, err := collegeNameForAwardScope(database.DB.WithContext(c.Request.Context()), scope)
-			if err != nil {
-				utils.InternalServerError(c, "查询管理学院失败", err)
-				return
-			}
-			allowed, err := awardBelongsToCollege(database.DB.WithContext(c.Request.Context()), a.ID, scope, collegeName)
-			if err != nil {
-				utils.InternalServerError(c, "查询获奖归属失败", err)
-				return
-			}
-			if !allowed {
-				utils.Forbidden(c, "无权查看其他学院的获奖修改记录")
-				return
-			}
-		}
+	} else if _, _, ok := requireAwardCompetition(c, a.CompID); !ok {
+		return
 	}
 	var changes []models.AwardChange
 	if err := database.DB.WithContext(c.Request.Context()).Where("award_id = ?", a.ID).Order("id DESC").Find(&changes).Error; err != nil {

@@ -21,6 +21,10 @@ func TestGetRegConfig_CapsQueryError(t *testing.T) {
 	mock.ExpectQuery("SELECT .* FROM `comp_details`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_id"}).AddRow(1, 1))
 
+	// 2026-11-26 capabilities 降级修复：权限码查询失败时降级返回空 caps（200），不再 500。
+	mock.ExpectQuery("SELECT .*FROM `permissions`").
+		WillReturnError(fmt.Errorf("db error"))
+
 	_, w, c := buildGET("/api/reg/config/get?comp_id=1")
 	c.Set("user_id", uint(1))
 	c.Set("role_code", "school_admin")
@@ -28,7 +32,7 @@ func TestGetRegConfig_CapsQueryError(t *testing.T) {
 	c.Set("permission_version", 1) // 无 permission_codes → 走 DB 并报错
 	GetRegConfig(c)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestGetRegConfig_EmptyConfigFields(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -74,10 +75,18 @@ func GetStatisticsDashboard(c *gin.Context) {
 	rdb := middleware.GetRedisClient()
 	ctx := c.Request.Context()
 	generation := ""
+	if scope.IsCollegeAdmin() {
+		// The source can change when the manager's profile is synchronized.
+		rdb = nil
+	}
 	if rdb != nil {
 		generation, _ = rdb.Get(ctx, "cache:stats:dashboard:generation").Result()
 	}
-	cacheKey := fmt.Sprintf("cache:stats:dashboard:v5:%s:%d:%s:%d:m%d", generation, scope.UserID, scope.RoleCode, managedCollegeID, months)
+	cacheKey := fmt.Sprintf("cache:stats:dashboard:v6:%s:%d:%s:%d:m%d", generation, scope.UserID, scope.RoleCode, managedCollegeID, months)
+	includeCompetitionStats := c.Query("include_competition_stats") != "false"
+	if !includeCompetitionStats {
+		cacheKey += ":overview"
+	}
 
 	cacheData := ""
 	if rdb != nil {
@@ -161,8 +170,8 @@ func GetStatisticsDashboard(c *gin.Context) {
 	pendingAudits := declarePending + regPending + awardPending
 
 	levelRows := make([]levelDistributionItem, 0)
-	if err := newCompBase().Select("COALESCE(comp_level, '未分类') as name, COUNT(*) as value").
-		Group("comp_level").
+	if err := newCompBase().Select("COALESCE(NULLIF(TRIM(comp_level), ''), '未分类') as name, COUNT(*) as value").
+		Group("name").
 		Order("value desc").
 		Scan(&levelRows).Error; err != nil {
 		levelRows = []levelDistributionItem{}
@@ -182,6 +191,8 @@ func GetStatisticsDashboard(c *gin.Context) {
 	monthLabels := make([]string, 0, months)
 	monthStartMap := make(map[string]time.Time, months)
 	now := time.Now()
+	firstMonth := time.Date(now.Year(), now.Month()-time.Month(months-1), 1, 0, 0, 0, 0, time.Local)
+	nextMonth := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.Local)
 	for i := months - 1; i >= 0; i-- {
 		m := time.Date(now.Year(), now.Month()-time.Month(i), 1, 0, 0, 0, 0, time.Local)
 		key := m.Format("2006-01")
@@ -199,6 +210,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 
 	var regMonthRows []monthCount
 	regTrendQuery := newRegBase().Select("DATE_FORMAT(registers.create_time, '%Y-%m') as month, COUNT(*) as value").
+		Where("registers.create_time >= ? AND registers.create_time < ?", firstMonth, nextMonth).
 		Group("DATE_FORMAT(registers.create_time, '%Y-%m')")
 	_ = regTrendQuery.Scan(&regMonthRows).Error
 	for _, item := range regMonthRows {
@@ -209,6 +221,7 @@ func GetStatisticsDashboard(c *gin.Context) {
 
 	var awardMonthRows []monthCount
 	awardTrendQuery := newAwardBase().Select("DATE_FORMAT(awards.create_time, '%Y-%m') as month, COUNT(*) as value").
+		Where("awards.create_time >= ? AND awards.create_time < ?", firstMonth, nextMonth).
 		Group("DATE_FORMAT(awards.create_time, '%Y-%m')")
 	_ = awardTrendQuery.Scan(&awardMonthRows).Error
 	for _, item := range awardMonthRows {
@@ -238,22 +251,6 @@ func GetStatisticsDashboard(c *gin.Context) {
 		{Title: "总结待归档", Value: maxInt64(totalCompetitions-summaryArchived, 0), Path: "/summary/summary-list"},
 	}
 
-	var compStats []competitionStatItem
-	// 这里通过子查询或 Join 来获取每个赛事的报名数和获奖数
-	err := newCompBase().
-		Joins("LEFT JOIN colleges ON colleges.id = comp_directories.college_id").
-		Select("comp_directories.id, comp_directories.comp_name, comp_directories.comp_level, COALESCE(colleges.name, '未知学院') as college_name, " +
-			"(SELECT COUNT(*) FROM registers WHERE registers.comp_id = comp_directories.id AND registers.delete_time IS NULL) as reg_count, " +
-			"(SELECT COUNT(*) FROM award_members JOIN awards ON awards.id = award_members.award_id WHERE awards.comp_id = comp_directories.id AND award_members.delete_time IS NULL AND awards.delete_time IS NULL AND (awards.status = '1' OR awards.status = 'approved')) as award_count, " +
-			"(SELECT COUNT(*) FROM awards WHERE awards.comp_id = comp_directories.id AND awards.delete_time IS NULL AND awards.status IN ('approved','1')) as award_team_count, " +
-			"COALESCE((SELECT status FROM summaries WHERE summaries.comp_id = comp_directories.id AND summaries.delete_time IS NULL LIMIT 1), 0) as summary_status").
-		Scan(&compStats).Error
-
-	if err != nil {
-		logger.Error("查询单项赛事统计失败", "error", err)
-		compStats = []competitionStatItem{}
-	}
-
 	responseData := gin.H{
 		"code": 200,
 		"msg":  "获取成功",
@@ -276,10 +273,26 @@ func GetStatisticsDashboard(c *gin.Context) {
 				"registrations": regSeries,
 				"awards":        awardSeries,
 			},
-			"funnel":            funnel,
-			"todos":             todos,
-			"competition_stats": compStats,
+			"funnel": funnel,
+			"todos":  todos,
 		},
+	}
+	if includeCompetitionStats {
+		compStats := make([]competitionStatItem, 0)
+		if err := dashboardCompetitionStats(newCompBase().
+			Joins("LEFT JOIN users comp_manager ON comp_manager.id = comp_directories.manager_id AND comp_manager.delete_time IS NULL")).Scan(&compStats).Error; err != nil {
+			logger.Error("查询单项赛事统计失败", "error", err)
+			compStats = []competitionStatItem{}
+		}
+		responseData["data"].(gin.H)["competition_stats"] = compStats
+	} else {
+		colleges := make([]string, 0)
+		if err := newCompBase().Joins("LEFT JOIN users comp_manager ON comp_manager.id = comp_directories.manager_id AND comp_manager.delete_time IS NULL").
+			Distinct("COALESCE(NULLIF(TRIM(comp_manager.college), ''), '未知学院')").
+			Pluck("COALESCE(NULLIF(TRIM(comp_manager.college), ''), '未知学院')", &colleges).Error; err != nil {
+			logger.Error("查询赛事所属单位失败", "error", err)
+		}
+		responseData["data"].(gin.H)["competition_colleges"] = colleges
 	}
 
 	// 4. 异步写入 Redis，设置 60 秒过期（2026-10-29：原 10 分钟在目录批量导入后
@@ -303,6 +316,94 @@ func GetStatisticsDashboard(c *gin.Context) {
 	// responseData 已经是完整响应信封。与 Redis 缓存命中时直接返回的结构保持一致，
 	// 避免缓存未命中时被 utils.Success 再包一层，导致前端读不到 data.summary。
 	c.JSON(http.StatusOK, responseData)
+}
+
+const dashboardAwardMemberRows = `FROM award_members
+	JOIN awards ON awards.id = award_members.award_id
+	WHERE awards.comp_id = comp_directories.id AND award_members.delete_time IS NULL
+		AND awards.delete_time IS NULL AND awards.status IN ('approved', '1')`
+
+const dashboardAwardMemberCount = "(SELECT COUNT(*) " + dashboardAwardMemberRows + ")"
+const dashboardRegistrationCount = `(SELECT COUNT(*) FROM registers
+	WHERE registers.comp_id = comp_directories.id AND registers.delete_time IS NULL)`
+const dashboardAwardTeamCount = `(SELECT COUNT(*) FROM awards WHERE awards.comp_id = comp_directories.id
+	AND awards.delete_time IS NULL AND awards.status IN ('approved', '1'))`
+
+func dashboardCompetitionStats(q *gorm.DB) *gorm.DB {
+	return q.Select(`comp_directories.id, comp_directories.comp_name, comp_directories.comp_level,
+		COALESCE(NULLIF(TRIM(comp_manager.college), ''), '未知学院') AS college_name,
+		` + dashboardRegistrationCount + ` AS reg_count,
+		` + dashboardAwardMemberCount + ` AS award_count,
+		` + dashboardAwardTeamCount + ` AS award_team_count,
+		COALESCE((SELECT status FROM summaries WHERE summaries.comp_id = comp_directories.id
+			AND summaries.delete_time IS NULL LIMIT 1), 0) AS summary_status`)
+}
+
+func GetDashboardCompetitionStats(c *gin.Context) {
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
+		return
+	}
+	page, size := awardListPagination(c.Query("page"), c.Query("page_size"))
+	sortExpression := dashboardAwardMemberCount
+	switch c.Query("sort") {
+	case "reg_count":
+		sortExpression = dashboardRegistrationCount
+	case "award_team_count":
+		sortExpression = dashboardAwardTeamCount
+	}
+	direction := " DESC"
+	if c.Query("order") == "ascending" {
+		direction = " ASC"
+	}
+
+	db := database.DB.WithContext(c.Request.Context()).Model(&models.CompDirectory{}).
+		Joins("LEFT JOIN users comp_manager ON comp_manager.id = comp_directories.manager_id AND comp_manager.delete_time IS NULL")
+	db = applyCompetitionScope(db, scope, "comp_directories")
+	if name := strings.ToLower(strings.TrimSpace(c.Query("name"))); name != "" {
+		db = db.Where("INSTR(CAST(LOWER(TRIM(comp_directories.comp_name)) AS BINARY), ?) > 0", name)
+	}
+	if level := strings.TrimSpace(c.Query("level")); level != "" {
+		db = db.Where("COALESCE(NULLIF(TRIM(comp_directories.comp_level), ''), '未分类') = ?", level)
+	}
+	if college := strings.TrimSpace(c.Query("college")); college == "-" {
+		db = db.Where("COALESCE(TRIM(comp_manager.college), '') IN ('', '未知学院')")
+	} else if college != "" {
+		db = db.Where("TRIM(comp_manager.college) = ?", college)
+	}
+	ranking := c.Query("ranking") == "true"
+	if ranking {
+		db = db.Where("EXISTS (SELECT 1 " + dashboardAwardMemberRows + ")")
+		direction = " DESC"
+	}
+
+	var total int64
+	if err := db.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		utils.InternalServerError(c, "查询赛事统计总数失败", err)
+		return
+	}
+	list := make([]competitionStatItem, 0, size)
+	if total > 0 && int64(page-1) <= (total-1)/int64(size) {
+		offset := (page - 1) * size
+		var query *gorm.DB
+		if ranking {
+			query = db.Select("comp_directories.id, comp_directories.comp_name, " + dashboardAwardMemberCount + " AS award_count").
+				Order("award_count DESC, comp_directories.id ASC").Offset(offset).Limit(size)
+		} else {
+			// Sort the filtered IDs by one metric, then calculate the remaining columns only for the page.
+			pageIDs := db.Select("comp_directories.id, " + sortExpression + " AS sort_value").
+				Order("sort_value" + direction + ", comp_directories.id ASC").Offset(offset).Limit(size)
+			query = dashboardCompetitionStats(database.DB.WithContext(c.Request.Context()).Model(&models.CompDirectory{}).
+				Joins("JOIN (?) dashboard_page ON dashboard_page.id = comp_directories.id", pageIDs).
+				Joins("LEFT JOIN users comp_manager ON comp_manager.id = comp_directories.manager_id AND comp_manager.delete_time IS NULL")).
+				Order("dashboard_page.sort_value" + direction + ", comp_directories.id ASC")
+		}
+		if err := query.Scan(&list).Error; err != nil {
+			utils.InternalServerError(c, "查询赛事统计失败", err)
+			return
+		}
+	}
+	utils.Success(c, gin.H{"list": list, "total": total})
 }
 
 func maxInt64(a int64, b int64) int64 {

@@ -119,6 +119,8 @@ func TestCompetitionCapabilities_ScopeInvalid(t *testing.T) {
 	c.Set("user_id", uint(1))
 	c.Set("role_code", "college_admin") // 未配置管理学院
 	caps, ok := competitionCapabilities(c, models.CompDirectory{})
-	assert.False(t, ok)
-	assert.Nil(t, caps)
+	// 2026-11-26 capabilities 降级修复：scope 失败降级返回空 caps（true），不阻断数据返回。
+	assert.True(t, ok)
+	assert.NotNil(t, caps)
+	assert.Empty(t, caps)
 }

@@ -105,3 +105,33 @@ func TestUpdateCompetition2_UpdatesError(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
+
+func TestUpdateCompetition_AssignLevelBeforeManager(t *testing.T) {
+	mock := setupCompDBMock(t)
+	mock.ExpectQuery("SELECT .* FROM `comp_directories`").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_code", "comp_level", "manager_id", "year"}).
+			AddRow(1, "P2026001", "", nil, 2026))
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT `comp_code` FROM `comp_directories`").
+		WithArgs("G2026%", 1).
+		WillReturnRows(sqlmock.NewRows([]string{"comp_code"}).AddRow("G2026003"))
+	mock.ExpectExec("UPDATE `comp_directories` SET .*comp_code.*comp_level.*manager_id").
+		WithArgs(nil, "G2026004", "国家级", "新名字", "个人赛", "描述", nil,
+			"教务处", "学院", 2026, sqlmock.AnyArg(), "P2026001", "", 0, 1).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	body := compUpdateBody()
+	body["allow_incomplete"] = true
+	body["comp_level"] = "国家级"
+	body["manager_id"] = 0
+	_, w, c := buildAuthPOSTJSON(body)
+	c.Params = []gin.Param{{Key: "id", Value: "1"}}
+	c.Set("user_id", uint(1))
+	c.Set("role_code", "school_admin")
+	c.Set("permission_codes", []string{"comp:update"})
+	UpdateCompetition(c)
+
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.NoError(t, mock.ExpectationsWereMet())
+}

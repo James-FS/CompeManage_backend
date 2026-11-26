@@ -28,50 +28,36 @@ func setCollegeManagerContext(c *gin.Context, codes ...string) {
 }
 
 func TestCompetitionWriteBoundaries(t *testing.T) {
-	college, other := uint(2), uint(3)
-	scope := &UserAccessScope{UserID: 10, RoleCode: "college_admin", ManagedCollegeID: &college}
+	scope := &UserAccessScope{UserID: 10, RoleCode: "college_admin"}
+	own := models.CompDirectory{ManagerID: 10}
+	colleague := models.CompDirectory{ManagerID: 11}
 	for _, permission := range []string{"comp:update", "reg:config:edit", "summary:edit"} {
-		for _, tc := range []struct {
-			name    string
-			manager uint
-			college *uint
-			codes   []string
-			want    bool
-		}{
-			{"own", 10, &college, []string{permission + ":own"}, true},
-			{"other manager", 11, &college, []string{permission + ":own"}, false},
-			{"broad grant still cannot edit other manager", 11, &college, []string{permission}, false},
-			{"cross college", 10, &other, []string{permission + ":own"}, false},
-			{"unassigned college", 10, nil, []string{permission + ":own"}, false},
-			{"revoked", 10, &college, nil, false},
-		} {
-			t.Run(permission+"/"+tc.name, func(t *testing.T) {
-				require.Equal(t, tc.want, canWriteCompetition(scope, models.CompDirectory{ManagerID: tc.manager, CollegeID: tc.college}, tc.codes, permission))
-			})
-		}
+		require.True(t, canWriteScopedCompetition(scope, own, []string{permission + ":own"}, permission))
+		require.False(t, canWriteScopedCompetition(scope, colleague, []string{permission + ":own"}, permission))
+		require.True(t, canWriteScopedCompetition(scope, colleague, []string{permission + ":source"}, permission))
+		require.True(t, canWriteScopedCompetition(scope, colleague, []string{permission}, permission))
+		require.False(t, canWriteScopedCompetition(scope, own, nil, permission))
 	}
-	comp := models.CompDirectory{ManagerID: 10, CollegeID: &college}
-	require.True(t, canWriteCompetition(&UserAccessScope{RoleCode: "school_admin"}, comp, []string{"comp:update"}, "comp:update"))
-	require.True(t, canWriteCompetition(&UserAccessScope{UserID: 10, RoleCode: "competition_manager"}, comp, []string{"comp:update"}, "comp:update"))
-	require.False(t, canWriteCompetition(&UserAccessScope{UserID: 11, RoleCode: "competition_manager"}, comp, []string{"comp:update"}, "comp:update"))
+	require.True(t, canWriteScopedCompetition(&UserAccessScope{RoleCode: "school_admin"}, own, []string{"comp:update"}, "comp:update"))
+	require.True(t, canWriteScopedCompetition(&UserAccessScope{UserID: 10, RoleCode: "competition_manager"}, own, []string{"comp:update"}, "comp:update"))
+	require.False(t, canWriteScopedCompetition(&UserAccessScope{UserID: 11, RoleCode: "competition_manager"}, own, []string{"comp:update"}, "comp:update"))
+	require.False(t, canWriteScopedCompetition(&UserAccessScope{UserID: 10, RoleCode: "competition_manager"}, own, []string{"comp:update:source"}, "comp:update"))
 }
 
-func TestCollegeManagerCannotReassignOrMoveCollege(t *testing.T) {
+func TestCollegeManagerCannotReassign(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		manager uint
 		college string
 	}{
-		{"reassign", 11, "学院甲"}, {"move college", 10, "学院乙"},
+		{"reassign", 11, "学院甲"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mock := setupCompDBMock(t)
 			t.Cleanup(func() { require.NoError(t, mock.ExpectationsWereMet()) })
 			mock.ExpectQuery("SELECT .* FROM `comp_directories`").WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}).AddRow(1, 10, 2))
 			mock.ExpectQuery("SELECT `id`,`manager_id`,`college_id` FROM `comp_directories`").WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}).AddRow(1, 10, 2))
-			if tc.manager == 10 {
-				mock.ExpectQuery("SELECT .* FROM `colleges`").WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(3, "学院乙"))
-			}
+
 			_, w, c := buildCompPOSTJSON(UpdateCompetitionReq{CompName: "赛事", CompLevel: "省级", ManagerID: tc.manager, College: tc.college})
 			c.Params = []gin.Param{{Key: "id", Value: "1"}}
 			setCollegeManagerContext(c, "comp:update:own")
@@ -98,6 +84,7 @@ func TestCollegeManagerSummaryOwnOnly(t *testing.T) {
 			mock := setupCompDBMock(t)
 			t.Cleanup(func() { require.NoError(t, mock.ExpectationsWereMet()) })
 			mock.ExpectQuery("SELECT .* FROM `comp_directories`").WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id", "status"}).AddRow(1, tc.manager, 2, 2))
+			mock.ExpectQuery("SELECT count.*FROM `comp_directories`.*project_source_college_id").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 			if tc.manager == 10 && tc.permission {
 				rows := sqlmock.NewRows([]string{"id", "status"})
 				if tc.archived {
@@ -133,30 +120,15 @@ func TestCollegeManagerCannotConfigureOtherManagerCompetition(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 }
 
-func TestCollegeManagerCandidateCollegeValidation(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		college *uint
-		valid   bool
-	}{
-		{"same college", uintPointer(2), true}, {"other college", uintPointer(3), false}, {"no college", nil, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			mock := setupCompDBMock(t)
-			t.Cleanup(func() { require.NoError(t, mock.ExpectationsWereMet()) })
-			mock.ExpectQuery("SELECT .* FROM `users`.*college_admin").WillReturnRows(sqlmock.NewRows([]string{"id", "managed_college_id"}).AddRow(10, 2))
-			mock.ExpectQuery("SELECT .* FROM `user_roles`").WillReturnRows(sqlmock.NewRows([]string{"user_id", "role_id"}).AddRow(10, 2))
-			mock.ExpectQuery("SELECT .* FROM `roles`").WillReturnRows(sqlmock.NewRows([]string{"id", "role_code"}).AddRow(2, "college_admin"))
-			_, _, c := buildCompGET("/")
-			setCollegeManagerContext(c)
-			err := validateCompetitionManager(c, database.DB, 10, tc.college)
-			if tc.valid {
-				require.NoError(t, err)
-			} else {
-				require.ErrorIs(t, err, errInvalidCompetitionManager)
-			}
-		})
-	}
+func TestCollegeAdminIsEligibleAsCompetitionManager(t *testing.T) {
+	mock := setupCompDBMock(t)
+	t.Cleanup(func() { require.NoError(t, mock.ExpectationsWereMet()) })
+	mock.ExpectQuery("SELECT .* FROM `users`.*college_admin").WillReturnRows(sqlmock.NewRows([]string{"id", "managed_college_id"}).AddRow(10, 2))
+	mock.ExpectQuery("SELECT .* FROM `user_roles`").WillReturnRows(sqlmock.NewRows([]string{"user_id", "role_id"}).AddRow(10, 2))
+	mock.ExpectQuery("SELECT .* FROM `roles`").WillReturnRows(sqlmock.NewRows([]string{"id", "role_code"}).AddRow(2, "college_admin"))
+	_, _, c := buildCompGET("/")
+	setCollegeManagerContext(c)
+	require.NoError(t, validateCompetitionManager(c, database.DB, 10))
 }
 
 func uintPointer(value uint) *uint { return &value }
@@ -192,33 +164,30 @@ func TestManagementCompetitionListIgnoresStaleCachedOwnership(t *testing.T) {
 	req := CompListReq{Page: 1, PageSize: 10, IsMy: true}
 	encoded, err := json.Marshal(req)
 	require.NoError(t, err)
-	key := fmt.Sprintf("cache:comp_list:duty_v4::%s:%x", competitionCacheIdentity(c), md5.Sum(encoded))
+	key := fmt.Sprintf("cache:comp_list:project_origin_v1::%s:%x", competitionCacheIdentity(c), md5.Sum(encoded))
 	require.NoError(t, middleware.RedisClient.Set(context.Background(), key, `{"list":[{"id":99,"comp_name":"stale owner"}],"total":1}`, time.Minute).Err())
-	mock.ExpectQuery("SELECT count.*FROM `comp_directories`.*college_id = ").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectQuery("SELECT .*FROM `comp_directories`.*college_id = ").WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery("SELECT count.*FROM `comp_directories`.*project_source_college_id = ").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery("SELECT .*FROM `comp_directories`.*project_source_college_id = ").WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	GetCompetitionList(c)
 	require.Equal(t, 200, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "stale owner")
 }
 
-func TestCollegeManagerCanSaveOwnCompetition(t *testing.T) {
+func TestCollegeAdminCanSaveCompetitionFromManagedSource(t *testing.T) {
 	mock := setupCompDBMock(t)
 	t.Cleanup(func() { require.NoError(t, mock.ExpectationsWereMet()) })
 	previousRedis := middleware.RedisClient
 	middleware.RedisClient = nil
 	t.Cleanup(func() { middleware.RedisClient = previousRedis })
-	mock.ExpectQuery("SELECT .* FROM `comp_directories`").WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}).AddRow(1, 10, 2))
-	mock.ExpectQuery("SELECT `id`,`manager_id`,`college_id` FROM `comp_directories`").WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}).AddRow(1, 10, 2))
-	mock.ExpectQuery("SELECT .* FROM `colleges`").WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(2, "学院甲"))
+	mock.ExpectQuery("SELECT .* FROM `comp_directories`").WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}).AddRow(1, 11, 2))
+	mock.ExpectQuery("SELECT `id`,`manager_id`,`college_id` FROM `comp_directories`").WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}).AddRow(1, 11, 2))
+
 	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT .* FROM `users`.*college_admin").WillReturnRows(sqlmock.NewRows([]string{"id", "managed_college_id"}).AddRow(10, 2))
-	mock.ExpectQuery("SELECT .* FROM `user_roles`").WillReturnRows(sqlmock.NewRows([]string{"user_id", "role_id"}).AddRow(10, 2))
-	mock.ExpectQuery("SELECT .* FROM `roles`").WillReturnRows(sqlmock.NewRows([]string{"id", "role_code"}).AddRow(2, "college_admin"))
 	mock.ExpectExec("UPDATE `comp_directories`").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	_, w, c := buildCompPOSTJSON(UpdateCompetitionReq{CompName: "更新的赛事", CompLevel: "省级", ManagerID: 10, College: "学院甲", Year: "2026"})
+	_, w, c := buildCompPOSTJSON(UpdateCompetitionReq{CompName: "更新的赛事", CompLevel: "省级", ManagerID: 11, College: "学院甲", Year: "2026"})
 	c.Params = []gin.Param{{Key: "id", Value: "1"}}
-	setCollegeManagerContext(c, "comp:update:own")
+	setCollegeManagerContext(c, "comp:update:source")
 	UpdateCompetition(c)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	// No user-role UPDATE is expected: editing preserves the administrator role.

@@ -19,6 +19,7 @@ func TestParseAwardTemplateNotesAndReorderedColumns(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, parsed, 1)
 	require.Equal(t, "0002", parsed[0].StudentNumber)
+	require.Equal(t, "学院", parsed[0].College)
 	require.Equal(t, "李四", parsed[0].Name)
 	require.Equal(t, 4, parsed[0].RowNumber)
 	require.Equal(t, "刘涛 曾岑", parsed[0].AdvisorUsernames)
@@ -26,23 +27,19 @@ func TestParseAwardTemplateNotesAndReorderedColumns(t *testing.T) {
 	_, err = parseAwardSheet([][]string{{"奖项等级", "获奖项目名称", "负责人", "学号"}})
 	require.ErrorContains(t, err, "新版模板")
 	// 指导教师两列为可选：旧模板（无这两列）仍可导入，教师为空
-	oldHeaders := []string{"序号", "学号", "学生姓名", "所属学院", "所在专业", "参赛项目名称", "获奖时间（年/月）", "获奖类别", "获奖等级", "备注"}
+	oldHeaders := []string{"序号", "学号", "学生姓名", "所属单位", "所在专业", "参赛项目名称", "获奖时间（年/月）", "获奖类别", "获奖等级", "备注"}
 	oldParsed, err := parseAwardSheet([][]string{oldHeaders, {"1", "0002", "李四", "学院", "专业", "项目", "2026-10", "国家级", "一等奖", "无教师"}})
 	require.NoError(t, err)
 	require.Len(t, oldParsed, 1)
+	require.Equal(t, "学院", oldParsed[0].College)
 	require.Empty(t, oldParsed[0].AdvisorUsernames)
 }
 
-func TestAwardMemberPermissionIsSubmittingCollege(t *testing.T) {
-	a, b := uint(1), uint(2)
-	m := models.AwardMember{College: "另一学院学生", SubmittedCollegeID: &a}
-	require.True(t, canEditAwardMember(&UserAccessScope{RoleCode: "college_admin", ManagedCollegeID: &a, UserID: 7}, m))
-	require.True(t, canEditAwardMember(&UserAccessScope{RoleCode: "college_admin", ManagedCollegeID: &a, UserID: 8}, m))
-	require.False(t, canEditAwardMember(&UserAccessScope{RoleCode: "college_admin", ManagedCollegeID: &b}, m))
-	require.False(t, canEditAwardMember(&UserAccessScope{RoleCode: "competition_manager", UserID: 7}, m))
-	m.SubmittedCollegeID = nil
-	require.False(t, canEditAwardMember(&UserAccessScope{RoleCode: "college_admin", ManagedCollegeID: &a}, m))
-	require.True(t, canEditAwardMember(&UserAccessScope{RoleCode: "school_admin"}, m))
+func TestAwardEditingPermittedRolesAfterSourceCheck(t *testing.T) {
+	require.True(t, canEditScopedAward(&UserAccessScope{RoleCode: "college_admin"}))
+	require.True(t, canEditScopedAward(&UserAccessScope{RoleCode: "school_admin"}))
+	require.False(t, canEditScopedAward(&UserAccessScope{RoleCode: "competition_manager"}))
+	require.False(t, canEditScopedAward(&UserAccessScope{RoleCode: "student"}))
 }
 
 func TestAwardCategoryNormalization(t *testing.T) {

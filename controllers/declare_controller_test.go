@@ -123,8 +123,15 @@ func TestCreateDeclare_DBError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestCreateDeclare_CollegeAdminCannotUseAnotherCollege(t *testing.T) {
-	setupDeclareDBMock(t)
+func TestCreateDeclare_CollegeAdminRequiresAnExistingActor(t *testing.T) {
+	mock := setupDeclareDBMock(t)
+	defer mock.ExpectationsWereMet()
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .* FROM `users`.*college_admin").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	mock.ExpectQuery("SELECT .* FROM `user_roles`").WillReturnRows(sqlmock.NewRows([]string{"user_id", "role_id"}).AddRow(1, 3))
+	mock.ExpectQuery("SELECT .* FROM `roles`").WillReturnRows(sqlmock.NewRows([]string{"id", "role_code"}).AddRow(3, "teacher"))
+	mock.ExpectQuery("SELECT .*college.* FROM .*users").WithArgs(uint(10), 1).WillReturnError(gorm.ErrRecordNotFound)
+	mock.ExpectRollback()
 	managedCollegeID := uint(2)
 	body := DeclareCreateReq{
 		CompName:   "测试赛事",
@@ -144,7 +151,7 @@ func TestCreateDeclare_CollegeAdminCannotUseAnotherCollege(t *testing.T) {
 	CreateDeclare(c)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "只能为所管理学院创建申报")
+	assert.Contains(t, w.Body.String(), "当前账号未配置有效的项目来源")
 }
 
 // ===================== GetDeclareDetail =====================
@@ -653,8 +660,12 @@ func TestAuditDeclare_BadRequest(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "参数错误")
 }
 
-func TestAuditDeclare_CollegeAdminForbidden(t *testing.T) {
-	setupDeclareDBMock(t)
+func TestAuditDeclare_CollegeAdminDeniedOutsideSource(t *testing.T) {
+	mock := setupDeclareDBMock(t)
+	defer mock.ExpectationsWereMet()
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .* FROM `comp_declarations`.*project_source_college_id").WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectRollback()
 	managedCollegeID := uint(2)
 	body := map[string]interface{}{"declare_id": 1, "audit_status": 2}
 	_, w, c := buildAuthPOSTJSON(body)
@@ -665,7 +676,7 @@ func TestAuditDeclare_CollegeAdminForbidden(t *testing.T) {
 	AuditDeclare(c)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "仅校级管理员")
+	assert.Contains(t, w.Body.String(), "无权审核该项目来源的赛事申报")
 }
 
 func TestAuditDeclare_BadRequest_InvalidStatus(t *testing.T) {

@@ -35,9 +35,9 @@ func TestSaveRegConfig_SubmitTimesHalfFilled(t *testing.T) {
 	defer mock.ExpectationsWereMet()
 
 	body := map[string]interface{}{
-		"comp_id": 1,
-		"reg_start_time": time.Now(),
-		"reg_end_time":   time.Now(),
+		"comp_id":           1,
+		"reg_start_time":    time.Now(),
+		"reg_end_time":      time.Now(),
 		"submit_start_time": time.Now(),
 	}
 	_, w, c := buildAuthPOSTJSON(body)
@@ -53,7 +53,7 @@ func TestSaveRegConfig_ScopeInvalid(t *testing.T) {
 	defer mock.ExpectationsWereMet()
 
 	body := map[string]interface{}{
-		"comp_id": 1,
+		"comp_id":        1,
 		"reg_start_time": time.Now(),
 		"reg_end_time":   time.Now(),
 	}
@@ -73,7 +73,7 @@ func TestSaveRegConfig_CompNotFound(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
 	body := map[string]interface{}{
-		"comp_id": 999,
+		"comp_id":        999,
 		"reg_start_time": time.Now(),
 		"reg_end_time":   time.Now(),
 	}
@@ -95,10 +95,10 @@ func TestSaveRegConfig_InvalidNeedRegAudit(t *testing.T) {
 
 	audit := 2
 	body := ConfigReq{
-		CompID:        1,
-		RegStartTime:  timePtr(time.Now().Add(-time.Hour)),
-		RegEndTime:    timePtr(time.Now().Add(time.Hour)),
-		NeedRegAudit:  &audit,
+		CompID:       1,
+		RegStartTime: timePtr(time.Now().Add(-time.Hour)),
+		RegEndTime:   timePtr(time.Now().Add(time.Hour)),
+		NeedRegAudit: &audit,
 	}
 	_, w, c := buildAuthPOSTJSON(body)
 	c.Set("user_id", uint(1))
@@ -138,10 +138,10 @@ func TestSaveRegConfig_CreateWithReviewDisabled(t *testing.T) {
 
 	audit := 0
 	body := ConfigReq{
-		CompID:        1,
-		RegStartTime:  timePtr(time.Now().Add(time.Hour)),
-		RegEndTime:    timePtr(time.Now().Add(2 * time.Hour)),
-		NeedRegAudit:  &audit,
+		CompID:           1,
+		RegStartTime:     timePtr(time.Now().Add(time.Hour)),
+		RegEndTime:       timePtr(time.Now().Add(2 * time.Hour)),
+		NeedRegAudit:     &audit,
 		GradeRequirement: []int{2024},
 		AwardHierarchy:   []string{"一等奖"},
 	}
@@ -182,12 +182,12 @@ func TestSaveRegConfig_UpdateWithReviewEnabled(t *testing.T) {
 
 	review := 1
 	body := ConfigReq{
-		CompID:           1,
-		RegStartTime:     timePtr(time.Now().Add(-time.Hour)),
-		RegEndTime:       timePtr(time.Now().Add(time.Hour)),
-		NeedReview:       &review,
-		ReviewStartTime:  timePtr(time.Now().Add(-time.Hour)),
-		ReviewEndTime:    timePtr(time.Now().Add(time.Hour)),
+		CompID:          1,
+		RegStartTime:    timePtr(time.Now().Add(-time.Hour)),
+		RegEndTime:      timePtr(time.Now().Add(time.Hour)),
+		NeedReview:      &review,
+		ReviewStartTime: timePtr(time.Now().Add(-time.Hour)),
+		ReviewEndTime:   timePtr(time.Now().Add(time.Hour)),
 	}
 	_, w, c := buildAuthPOSTJSON(body)
 	c.Set("user_id", uint(1))
@@ -386,10 +386,8 @@ func TestGetWorkAuditCompList_AllFiltersAndPaging(t *testing.T) {
 	mock := setupUnorderedDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mock.ExpectQuery("(?s)SELECT COUNT\\(DISTINCT\\(`comp_directories`\\.`id`\\)\\)").
+	mock.ExpectQuery("(?s)SELECT count\\(\\*\\) FROM `comp_directories`.*EXISTS").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectQuery("(?s)SELECT .*comp_directories\\.id AS comp_id").
-		WillReturnRows(sqlmock.NewRows([]string{"comp_id"}))
 
 	_, w, c := buildGET("/api/reg/work/audit/comp/list?page=0&size=0&comp_name=建模&manager=张&college=计算机学院&status=1")
 	c.Set("user_id", uint(1))
@@ -404,7 +402,7 @@ func TestGetWorkAuditCompList_CountError(t *testing.T) {
 	mock := setupUnorderedDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mock.ExpectQuery("(?s)SELECT COUNT\\(DISTINCT\\(`comp_directories`\\.`id`\\)\\)").
+	mock.ExpectQuery("(?s)SELECT count\\(\\*\\) FROM `comp_directories`.*EXISTS").
 		WillReturnError(fmt.Errorf("db error"))
 
 	_, w, c := buildGET("/api/reg/work/audit/comp/list")
@@ -419,7 +417,7 @@ func TestGetWorkAuditCompList_ListError(t *testing.T) {
 	mock := setupUnorderedDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mock.ExpectQuery("(?s)SELECT COUNT\\(DISTINCT\\(`comp_directories`\\.`id`\\)\\)").
+	mock.ExpectQuery("(?s)SELECT count\\(\\*\\) FROM `comp_directories`.*EXISTS").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery("(?s)SELECT .*comp_directories\\.id AS comp_id").
 		WillReturnError(fmt.Errorf("db error"))

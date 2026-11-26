@@ -269,7 +269,8 @@ func TestAuditRegister_NoAuditNeeded(t *testing.T) {
 
 	body := map[string]interface{}{"id": 1, "status": 1}
 	_, w, c := buildAuthPOSTJSON(body)
-	c.Set("user_id", uint(1))
+	c.Set("user_id", uint(10))
+	c.Set("role_code", "competition_manager")
 	AuditRegister(c)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -293,7 +294,8 @@ func TestAuditRegister_AlreadyAudited(t *testing.T) {
 
 	body := map[string]interface{}{"id": 1, "status": 1}
 	_, w, c := buildAuthPOSTJSON(body)
-	c.Set("user_id", uint(1))
+	c.Set("user_id", uint(10))
+	c.Set("role_code", "competition_manager")
 	AuditRegister(c)
 
 	assert.Equal(t, 409, w.Code)

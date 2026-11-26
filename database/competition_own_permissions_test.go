@@ -13,7 +13,7 @@ func TestCollegeManagerPermissionSeedPreservesRevocations(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT .* FROM `roles`").WithArgs("college_admin", 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(2))
-	for _, code := range []string{"comp:update:own", "reg:config:edit:own", "summary:edit:own"} {
+	for _, code := range []string{"comp:update:own", "reg:config:edit:own", "summary:edit:own", "comp:update:source", "reg:config:edit:source", "summary:edit:source", "declare:audit:source"} {
 		mock.ExpectQuery("SELECT .* FROM `permissions`").WithArgs(code, 1).
 			WillReturnRows(sqlmock.NewRows([]string{"id", "code"}).AddRow(20, code))
 	}
@@ -32,6 +32,7 @@ func TestCollegeManagerPermissionSeedCreatesGrantsAtomically(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(2))
 	for i, item := range []struct{ code, parent string }{
 		{"comp:update:own", "comp"}, {"reg:config:edit:own", "reg:config"}, {"summary:edit:own", "summary"},
+		{"comp:update:source", "comp"}, {"reg:config:edit:source", "reg:config"}, {"summary:edit:source", "summary"}, {"declare:audit:source", "declare"},
 	} {
 		mock.ExpectQuery("SELECT .* FROM `permissions`").WithArgs(item.code, 1).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}))

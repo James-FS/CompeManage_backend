@@ -78,24 +78,26 @@ func TestGetAwardAuditList_FiltersAndPaging(t *testing.T) {
 	mock := setupUnorderedDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	// 两行：一命中关键词、一被过滤
-	mock.ExpectQuery("(?s)SELECT .*FROM `awards`").
+	mock.ExpectQuery("(?s)SELECT count\\(\\*\\) FROM `awards`.*INSTR").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(11))
+	mock.ExpectQuery("(?s)SELECT .*FROM `awards`.*INSTR.*LIMIT.*OFFSET").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_id", "reg_id", "project_name", "award_level", "award_time", "status", "updated_at", "created_at"}).
-			AddRow(9, 1, 0, "项目A", "省级一等奖", nil, "draft", nil, nil).
-			AddRow(10, 1, 0, "项目B", "省级一等奖", nil, "draft", nil, nil))
+			AddRow(9, 1, 0, "项目A", "省级一等奖", nil, "draft", nil, nil))
 	mock.ExpectQuery("SELECT \\* FROM `award_members`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "award_id", "name", "student_number", "phone", "is_leader"}).
 			AddRow(1, 9, "张三", "S001", "138", true))
 	mock.ExpectQuery("(?s)SELECT (\\*|`comp_directories`)").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_name"}).AddRow(1, "建模大赛"))
 
-	_, w, c := buildGET("/api/award/audit/list?page=9&pageSize=999&keyword=张&award_level=省级一等奖&comp_name=建模&source=all&status=1")
+	_, w, c := buildGET("/api/award/audit/list?page=2&pageSize=999&keyword=张&award_level=省级一等奖&comp_name=建模&source=all&status=1")
 	c.Set("user_id", uint(1))
 	c.Set("role_code", "school_admin")
 	GetAwardAuditList(c)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "\"total\":1")
+	assert.Contains(t, w.Body.String(), "\"total\":11")
+	assert.Contains(t, w.Body.String(), "张三")
+	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestGetAwardAuditList_ScopeInvalid(t *testing.T) {
@@ -204,7 +206,7 @@ func TestGetCompetitionList_CacheHit(t *testing.T) {
 	req := CompListReq{Page: 1, PageSize: 10}
 	reqBytes, _ := json.Marshal(req)
 	identity := fmt.Sprintf("%v:%v:%v:%d", interface{}(uint(5)), interface{}("student"), interface{}(nil), uint(0))
-	cacheKey := fmt.Sprintf("cache:comp_list:duty_v4::%s:%x", identity, md5.Sum(reqBytes))
+	cacheKey := fmt.Sprintf("cache:comp_list:project_origin_v1::%s:%x", identity, md5.Sum(reqBytes))
 	rdb.Set(t.Context(), cacheKey, `{"list":[],"total":0,"page":1,"size":10}`, 0)
 
 	_, w, c := buildGET("/api/comp/list?page=1&page_size=10")
@@ -267,14 +269,12 @@ func TestGetStatisticsDashboard_CacheHit(t *testing.T) {
 	rdb := ensureRedisForUserList(t)
 	rdb.FlushDB(t.Context())
 
-	managed := uint(3)
-	cacheKey := fmt.Sprintf("cache:stats:dashboard:v5:%s:%d:%s:%d:m%d", "", uint(5), "college_admin", uint(3), 6)
+	cacheKey := fmt.Sprintf("cache:stats:dashboard:v6:%s:%d:%s:%d:m%d", "", uint(5), "school_admin", uint(0), 6)
 	rdb.Set(t.Context(), cacheKey, `{"total_competitions":7}`, 0)
 
 	_, w, c := buildGET("/api/statistics/dashboard")
 	c.Set("user_id", uint(5))
-	c.Set("role_code", "college_admin")
-	c.Set("managed_college_id", &managed)
+	c.Set("role_code", "school_admin")
 	GetStatisticsDashboard(c)
 
 	assert.Equal(t, http.StatusOK, w.Code)

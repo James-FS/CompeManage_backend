@@ -35,9 +35,11 @@ func TestAwardHandlersMySQL(t *testing.T) {
 	schoolAdmin := models.User{Username: "IS001", Realname: "集成校管", IdentityType: "staff", College: "教务处"}
 	require.NoError(t, db.Create(&schoolAdmin).Error)
 
-	schoolComp := models.CompDirectory{CompCode: "IX1", CompName: "集成校赛", CompLevel: "校级", ManagerID: teacher.ID, CollegeID: nil, Year: 2026}
-	ownComp := models.CompDirectory{CompCode: "IX2", CompName: "集成甲省赛", CompLevel: "省级", ManagerID: teacher.ID, CollegeID: &ca.ID, Year: 2026}
-	otherComp := models.CompDirectory{CompCode: "IX3", CompName: "集成乙省赛", CompLevel: "省级", ManagerID: teacher.ID, CollegeID: &cb.ID, Year: 2026}
+	schoolComp := models.CompDirectory{CompCode: "IX1", CompName: "集成校赛", CompLevel: "校级", ManagerID: teacher.ID, CollegeID: nil, Year: 2026, ProjectOrigin: models.ProjectOrigin{ProjectSource: ca.Name, ProjectSourceCollegeID: &ca.ID}}
+	ownComp := models.CompDirectory{CompCode: "IX2", CompName: "集成甲省赛", CompLevel: "省级", ManagerID: teacher.ID, CollegeID: &ca.ID, Year: 2026, ProjectOrigin: models.ProjectOrigin{ProjectSource: ca.Name, ProjectSourceCollegeID: &ca.ID}}
+	otherManager := models.User{Username: "IT002", Realname: "乙院教师", IdentityType: "staff", College: cb.Name}
+	require.NoError(t, db.Create(&otherManager).Error)
+	otherComp := models.CompDirectory{CompCode: "IX3", CompName: "集成乙省赛", CompLevel: "省级", ManagerID: otherManager.ID, CollegeID: &cb.ID, Year: 2026, ProjectOrigin: models.ProjectOrigin{ProjectSource: cb.Name, ProjectSourceCollegeID: &cb.ID}}
 	for _, c := range []*models.CompDirectory{&schoolComp, &ownComp, &otherComp} {
 		require.NoError(t, db.Create(c).Error)
 	}
@@ -141,20 +143,20 @@ func TestAwardHandlersMySQL(t *testing.T) {
 		require.NoError(t, db.Create(&models.FileRecord{
 			FileHash: proofHash, OriginalName: proofName,
 			StoragePath: "award_proof/" + proofHash + "_" + proofName,
-			FileSize: 10, FileExt: "png", BizType: "award_proof", UploaderID: studentC.ID,
+			FileSize:    10, FileExt: "png", BizType: "award_proof", UploaderID: studentC.ID,
 		}).Error)
 
 		// 学生补录
 		supplement := map[string]interface{}{
-			"comp_id":           schoolComp.ID,
-			"team_name":         "补录项目X",
-			"award_level":       "省级一等奖",
-			"award_name":        "一等奖",
-			"award_date":        "2026-05-10",
-			"proof_url":         proofURL,
+			"comp_id":            schoolComp.ID,
+			"team_name":          "补录项目X",
+			"award_level":        "省级一等奖",
+			"award_name":         "一等奖",
+			"award_date":         "2026-05-10",
+			"proof_url":          proofURL,
 			"participation_type": "individual",
-			"award_category":    "省级",
-			"advisors":          []map[string]string{{"username": "IT001", "name": "集成教师", "college": ca.Name}},
+			"award_category":     "省级",
+			"advisors":           []map[string]string{{"username": "IT001", "name": "集成教师", "college": ca.Name}},
 			"members": []map[string]interface{}{{
 				"name": "补录学生C", "student_id": "I003", "phone": "13800000000",
 				"college": ca.Name, "is_leader": true,
@@ -195,7 +197,7 @@ func TestAwardHandlersMySQL(t *testing.T) {
 		base := map[string]interface{}{
 			"comp_id": schoolComp.ID, "team_name": "无队长项目", "award_level": "省级一等奖",
 			"award_name": "一等奖", "proof_url": "/p.png",
-			"members": []map[string]interface{}{{"name": "甲", "student_id": "I001", "phone": "1", "college": ca.Name, "is_leader": false}},
+			"members":  []map[string]interface{}{{"name": "甲", "student_id": "I001", "phone": "1", "college": ca.Name, "is_leader": false}},
 			"advisors": []map[string]string{{"username": "IT001"}},
 		}
 		w = invoke("POST", "/api/award/student/supplement", "student", nil, student.ID, base, SubmitStudentAwardSupplement)
@@ -230,7 +232,7 @@ func TestAwardHandlersMySQL(t *testing.T) {
 		require.Equal(t, 200, w.Code)
 		require.Greater(t, w.Body.Len(), 500)
 
-		// 负责人无所属学院 → 403
+		// 负责人无所属单位 → 403
 		teacherNoCollege := models.User{Username: "IT999", Realname: "无学院教师", IdentityType: "staff", College: ""}
 		require.NoError(t, db.Create(&teacherNoCollege).Error)
 		w = invoke("GET", "/api/award/export/projects", "competition_manager", nil, teacherNoCollege.ID, nil, ExportAwardProjects)
@@ -496,7 +498,7 @@ func TestAwardSettingsAdvisorExtraMySQL(t *testing.T) {
 	require.NoError(t, db.Create(&models.FileRecord{
 		FileHash: proofHash, OriginalName: proofName,
 		StoragePath: "award_proof/" + proofHash + "_" + proofName,
-		FileSize: 5, FileExt: "png", BizType: "award_proof", UploaderID: student.ID,
+		FileSize:    5, FileExt: "png", BizType: "award_proof", UploaderID: student.ID,
 	}).Error)
 
 	award := models.Award{

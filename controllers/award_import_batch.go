@@ -142,7 +142,7 @@ func loadAwardImportUsers(tx *gorm.DB, names []string, teachers bool) (map[strin
 			LookupUsername string
 		}
 		query := tx.Model(&models.User{}).
-			Select("users.id, users.username, users.realname, users.college, users.major, requested.lookup_username").
+			Select("users.id, users.username, users.realname, users.college, users.major, users.class_name, requested.lookup_username").
 			Joins("JOIN ("+strings.Join(selects, " UNION ALL ")+") AS requested ON users.username = requested.lookup_username", args...)
 		if teachers {
 			// 2026-10-29：全校教职工口径（与弹窗一致），不再用 awardAdvisorCandidates
@@ -357,7 +357,7 @@ func writeAwardImportRows(tx *gorm.DB, scope *UserAccessScope, compID uint, rows
 			continue
 		}
 		uid := scope.UserID
-		members = append(members, models.AwardMember{AwardID: groupIDs[database.AwardProjectKey(row.ProjectName)], StudentID: row.UserID, RegID: row.RegID, Name: row.Name, StudentNumber: row.StudentNumber, College: row.College, Major: row.Major, Remark: row.Remark, SubmittedCollegeID: scope.ManagedCollegeID, SubmittedBy: &uid})
+		members = append(members, models.AwardMember{AwardID: groupIDs[database.AwardProjectKey(row.ProjectName)], StudentID: row.UserID, RegID: row.RegID, Name: row.Name, StudentNumber: row.StudentNumber, College: row.College, Major: row.Major, Class: row.Class, Remark: row.Remark, SubmittedCollegeID: scope.ManagedCollegeID, SubmittedBy: &uid})
 		if row.RegID != nil && !seenRegs[*row.RegID] {
 			seenRegs[*row.RegID] = true
 			regIDs = append(regIDs, *row.RegID)
