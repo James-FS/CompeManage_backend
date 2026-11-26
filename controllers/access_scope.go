@@ -141,7 +141,12 @@ func applyCompetitionScope(query *gorm.DB, scope *UserAccessScope, alias string)
 	case "school_admin":
 		return query
 	case "college_admin":
-		return applyProjectSourceScope(query.Where(alias+".delete_time IS NULL"), scope, alias)
+		// 2026-11-26 按所属单位过滤（college_id，承办学院），不用项目来源。
+		// 队友的 project_source_college_id 是项目来源（独立字段，不参与过滤）。
+		if scope.ManagedCollegeID == nil {
+			return query.Where("1 = 0")
+		}
+		return query.Where(alias+".college_id = ?", *scope.ManagedCollegeID)
 	default:
 		return query.Where(alias+".manager_id = ?", scope.UserID)
 	}

@@ -13,10 +13,10 @@ func TestGetCompetitionListAlwaysScopesCollegeAdmin(t *testing.T) {
 	mock := setupCompDBMock(t)
 	managedCollegeID := uint(17)
 
-	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `comp_directories` WHERE .*project_source_college_id = \\?").
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `comp_directories` WHERE .*college_id = \\?").
 		WithArgs(managedCollegeID).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectQuery("SELECT \\* FROM `comp_directories` WHERE .*project_source_college_id = \\?").
+	mock.ExpectQuery("SELECT \\* FROM `comp_directories` WHERE .*college_id = \\?").
 		WithArgs(managedCollegeID, 10).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 

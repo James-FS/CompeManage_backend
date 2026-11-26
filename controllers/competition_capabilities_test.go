@@ -84,7 +84,7 @@ func TestCollegeManagerSummaryOwnOnly(t *testing.T) {
 			mock := setupCompDBMock(t)
 			t.Cleanup(func() { require.NoError(t, mock.ExpectationsWereMet()) })
 			mock.ExpectQuery("SELECT .* FROM `comp_directories`").WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id", "status"}).AddRow(1, tc.manager, 2, 2))
-			mock.ExpectQuery("SELECT count.*FROM `comp_directories`.*project_source_college_id").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+			mock.ExpectQuery("SELECT count.*FROM `comp_directories`.*college_id").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 			if tc.manager == 10 && tc.permission {
 				rows := sqlmock.NewRows([]string{"id", "status"})
 				if tc.archived {
@@ -166,8 +166,8 @@ func TestManagementCompetitionListIgnoresStaleCachedOwnership(t *testing.T) {
 	require.NoError(t, err)
 	key := fmt.Sprintf("cache:comp_list:project_origin_v1::%s:%x", competitionCacheIdentity(c), md5.Sum(encoded))
 	require.NoError(t, middleware.RedisClient.Set(context.Background(), key, `{"list":[{"id":99,"comp_name":"stale owner"}],"total":1}`, time.Minute).Err())
-	mock.ExpectQuery("SELECT count.*FROM `comp_directories`.*project_source_college_id = ").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectQuery("SELECT .*FROM `comp_directories`.*project_source_college_id = ").WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery("SELECT count.*FROM `comp_directories`.*college_id = ").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery("SELECT .*FROM `comp_directories`.*college_id = ").WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	GetCompetitionList(c)
 	require.Equal(t, 200, w.Code, w.Body.String())
 	require.NotContains(t, w.Body.String(), "stale owner")
@@ -181,6 +181,8 @@ func TestCollegeAdminCanSaveCompetitionFromManagedSource(t *testing.T) {
 	t.Cleanup(func() { middleware.RedisClient = previousRedis })
 	mock.ExpectQuery("SELECT .* FROM `comp_directories`").WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}).AddRow(1, 11, 2))
 	mock.ExpectQuery("SELECT `id`,`manager_id`,`college_id` FROM `comp_directories`").WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}).AddRow(1, 11, 2))
+	// resolveCollegeIDByName 在事务外先查 colleges（UpdateCompetition Line 299）
+	mock.ExpectQuery("SELECT .* FROM `colleges`").WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(2, "学院甲"))
 
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE `comp_directories`").WillReturnResult(sqlmock.NewResult(0, 1))

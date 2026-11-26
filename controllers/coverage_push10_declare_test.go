@@ -72,7 +72,7 @@ func TestUpdateDeclare_CollegeAdminCannotEditOutsideSource(t *testing.T) {
 	managed := uint(3)
 	mock.ExpectQuery("SELECT .* FROM `comp_declarations`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "declare_status", "college_id"}).AddRow(1, 0, 3))
-	mock.ExpectQuery("SELECT count.*project_source_college_id").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery("SELECT count.*college_id").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 
 	body := map[string]interface{}{"college_id": 5}
 	_, w, c := buildAuthPOSTJSON(body)

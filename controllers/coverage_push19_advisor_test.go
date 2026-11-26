@@ -299,7 +299,7 @@ func TestUpdateAwardTeam_CollegeAdminDeniedOutsideProjectSource(t *testing.T) {
 
 	mock.ExpectQuery("SELECT .* FROM `awards`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_id"}).AddRow(9, 1))
-	mock.ExpectQuery("SELECT .* FROM `comp_directories`.*project_source_college_id").
+	mock.ExpectQuery("SELECT .* FROM `comp_directories`.*college_id").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
 	managed := uint(3)
