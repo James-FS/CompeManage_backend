@@ -147,7 +147,7 @@ func TestValidateAwardImportTeams_ApprovedMatchNoError(t *testing.T) {
 
 // 布置 loadAwardImportLookup 的 5 条查询（无指导教师、单学生单项目）
 func expectImportLookup(mock sqlmock.Sqlmock, userRows *sqlmock.Rows, awardRows *sqlmock.Rows) {
-	mock.ExpectQuery("SELECT users.id, users.username, users.realname, users.college, users.major, requested.lookup_username").
+	mock.ExpectQuery("SELECT users.id, users.username, users.realname, users.college, users.major, users.class_name, requested.lookup_username").
 		WillReturnRows(userRows)
 	mock.ExpectQuery("SELECT .* FROM `awards`").
 		WillReturnRows(awardRows)
@@ -336,7 +336,7 @@ func TestValidateAwardRows_DuplicateWithinFile(t *testing.T) {
 
 	// 两个学生各一行同项目 → 合法；同一学生两行同项目 → 后行标记 Duplicate
 	rows := []AwardImportRow{importRow("S001", "项目A"), importRow("S001", "项目A")}
-	mock.ExpectQuery("SELECT users.id, users.username, users.realname, users.college, users.major, requested.lookup_username").
+	mock.ExpectQuery("SELECT users.id, users.username, users.realname, users.college, users.major, users.class_name, requested.lookup_username").
 		WillReturnRows(userRow(11, "S001", "张三", "计算机学院", "软件工程"))
 	mock.ExpectQuery("SELECT .* FROM `awards`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_id", "project_key", "project_name"}))
@@ -360,7 +360,7 @@ func TestValidateAwardRows_CrossTeamConflictInFile(t *testing.T) {
 
 	// 同一学生出现在两个项目 → 整组标记冲突
 	rows := []AwardImportRow{importRow("S001", "项目A"), importRow("S001", "项目B")}
-	mock.ExpectQuery("SELECT users.id, users.username, users.realname, users.college, users.major, requested.lookup_username").
+	mock.ExpectQuery("SELECT users.id, users.username, users.realname, users.college, users.major, users.class_name, requested.lookup_username").
 		WillReturnRows(userRow(11, "S001", "张三", "计算机学院", "软件工程"))
 	mock.ExpectQuery("SELECT .* FROM `awards`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_id", "project_key", "project_name"}))
@@ -383,7 +383,7 @@ func TestValidateAwardRows_OtherMembershipBlocked(t *testing.T) {
 	defer mock.ExpectationsWereMet()
 
 	// 学生已在其他奖项有成员关系 → 拒绝
-	mock.ExpectQuery("SELECT users.id, users.username, users.realname, users.college, users.major, requested.lookup_username").
+	mock.ExpectQuery("SELECT users.id, users.username, users.realname, users.college, users.major, users.class_name, requested.lookup_username").
 		WillReturnRows(userRow(11, "S001", "张三", "计算机学院", "软件工程"))
 	mock.ExpectQuery("SELECT .* FROM `awards`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_id", "project_key", "project_name"}))

@@ -27,7 +27,7 @@ func TestParseAwardTemplateNotesAndReorderedColumns(t *testing.T) {
 	_, err = parseAwardSheet([][]string{{"奖项等级", "获奖项目名称", "负责人", "学号"}})
 	require.ErrorContains(t, err, "新版模板")
 	// 指导教师两列为可选：旧模板（无这两列）仍可导入，教师为空
-	oldHeaders := []string{"序号", "学号", "学生姓名", "所属学院", "所在专业", "参赛项目名称", "获奖时间（年/月）", "获奖类别", "获奖等级", "备注"}
+	oldHeaders := []string{"序号", "学号", "学生姓名", "所属单位", "所在专业", "参赛项目名称", "获奖时间（年/月）", "获奖类别", "获奖等级", "备注"}
 	oldParsed, err := parseAwardSheet([][]string{oldHeaders, {"1", "0002", "李四", "学院", "专业", "项目", "2026-10", "国家级", "一等奖", "无教师"}})
 	require.NoError(t, err)
 	require.Len(t, oldParsed, 1)

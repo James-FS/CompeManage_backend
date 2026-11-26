@@ -242,7 +242,7 @@ func TestAwardExportProjectsGroupsMembersAndJoinsTeacherRows(t *testing.T) {
 	require.NoError(t, err)
 	defer f.Close()
 	require.Contains(t, exportCell(t, f, "获奖项目", "A2"), "单位名称（公章）：教务处")
-	require.Equal(t, "计算机学院", exportCell(t, f, "获奖项目", "B4")) // 成员未填提交学院，回退赛事所属学院
+	require.Equal(t, "计算机学院", exportCell(t, f, "获奖项目", "B4")) // 成员未填提交学院，回退赛事所属单位
 	require.Equal(t, "张三、李四", exportCell(t, f, "获奖项目", "G4"))
 	require.Equal(t, "学院甲、学院乙", exportCell(t, f, "获奖项目", "H4"))
 	require.Equal(t, "刘老师", exportCell(t, f, "获奖项目", "I4"))

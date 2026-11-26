@@ -1096,6 +1096,16 @@ func UpdateCompetition(c *gin.Context) {
 	}
 
 	_, scoped := c.Get("role_code")
+	collegeID, collegeErr := resolveCollegeIDByName(database.DB.WithContext(c.Request.Context()), req.College)
+	if collegeErr != nil {
+		utils.BadRequest(c, collegeErr.Error())
+		return
+	}
+
+	if !scope.IsSchoolAdmin() && !equalUintPointers(comp.CollegeID, collegeID) {
+		utils.Forbidden(c, "仅校级管理员可以修改赛事所属单位")
+		return
+	}
 	req.CompName = strings.TrimSpace(req.CompName)
 	if req.CompName == "" {
 		utils.BadRequest(c, "赛事名称不能为空")

@@ -19,7 +19,7 @@ type RegMemberInfo struct {
 	StudentID string `json:"student_id" binding:"required"` // 学号 - 前端传student_id，必填（核心匹配前端字段）
 	Phone     string `json:"phone" binding:"required"`      // 手机号 - 前端传phone，必填
 	Email     string `json:"email"`                         // 邮箱 - 前端传email，可选
-	College   string `json:"college" binding:"required"`    // 所属学院 - 前端传college，必填
+	College   string `json:"college" binding:"required"`    // 所属单位 - 前端传college，必填
 	IsLeader  bool   `json:"is_leader"`                     // 是否为队长 - 前端传is_leader，可选（业务层校验有且仅一个）
 	Year      string `json:"year"`                          // 年级 - 前端传year，可选
 }

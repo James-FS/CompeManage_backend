@@ -23,7 +23,7 @@ type UserManageListReq struct {
 	Search       string `form:"search"`
 	RoleID       uint   `form:"role_id"`
 	IdentityType string `form:"identity_type"`
-	// CollegeID 按用户所属学院（users.college）筛选，与院级管理员的授权范围 managed_college_id 无关。
+	// CollegeID 按用户所属单位（users.college）筛选，与院级管理员的授权范围 managed_college_id 无关。
 	CollegeID uint `form:"college_id"`
 }
 

@@ -116,7 +116,7 @@ func TestImportAward_ValidateError(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "require_registration"}).AddRow(1, false))
 	mock.ExpectQuery("SELECT .* FROM `comp_directories`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id", "comp_level"}).AddRow(1, 1, 1, "校级"))
-	mock.ExpectQuery("SELECT users.id, users.username, users.realname, users.college, users.major, requested.lookup_username").
+	mock.ExpectQuery("SELECT users.id, users.username, users.realname, users.college, users.major, users.class_name, requested.lookup_username").
 		WillReturnError(fmt.Errorf("db error"))
 	mock.ExpectRollback()
 
