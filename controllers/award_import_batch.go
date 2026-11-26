@@ -142,7 +142,7 @@ func loadAwardImportUsers(tx *gorm.DB, names []string, teachers bool) (map[strin
 			LookupUsername string
 		}
 		query := tx.Model(&models.User{}).
-			Select("users.id, users.username, users.realname, users.college, users.major, requested.lookup_username").
+			Select("users.id, users.username, users.realname, users.college, users.major, users.class_name, requested.lookup_username").
 			Joins("JOIN ("+strings.Join(selects, " UNION ALL ")+") AS requested ON users.username = requested.lookup_username", args...)
 		if teachers {
 			// 2026-10-29：全校教职工口径（与弹窗一致），不再用 awardAdvisorCandidates

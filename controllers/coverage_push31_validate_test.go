@@ -16,7 +16,7 @@ func TestValidateAwardRows_LookupError(t *testing.T) {
 	mock := setupRegDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mock.ExpectQuery("SELECT users.id, users.username, users.realname, users.college, users.major, requested.lookup_username").
+	mock.ExpectQuery("SELECT users.id, users.username, users.realname, users.college, users.major, users.class_name, requested.lookup_username").
 		WillReturnError(fmt.Errorf("db error"))
 
 	_, _, err := validateAwardRows(database.DB, 1, []AwardImportRow{importRow("S001", "项目A")}, false)
