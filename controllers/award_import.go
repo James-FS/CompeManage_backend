@@ -43,6 +43,7 @@ type AwardImportRow struct {
 	Name             string                   `json:"name"`
 	College          string                   `json:"college"`
 	Major            string                   `json:"major"`
+	Class            string                   `json:"class_name"`
 	ProjectName      string                   `json:"project_name"`
 	AwardMonth       string                   `json:"award_month"`
 	Category         string                   `json:"award_category"`
@@ -418,14 +419,9 @@ func awardCompetitionScope(q *gorm.DB, scope *UserAccessScope) *gorm.DB {
 		if scope.ManagedCollegeID == nil {
 			return q.Where("1 = 0")
 		}
-		// The regular competition directory is strictly college-scoped. Award
-		// filling also includes shared school competitions and competitions that
-		// have not been assigned to a college yet.
-		return q.Where(
-			"(comp_directories.college_id = ? OR comp_directories.college_id IS NULL OR comp_directories.college_id = 0 OR TRIM(comp_directories.comp_level) = ?)",
-			*scope.ManagedCollegeID,
-			"校级",
-		)
+		// 2026-11-26 修复：院级管理员严格按所属单位过滤（用户要求只能看本学院赛事）。
+		// 旧实现包含校级/未分配赛事，导致院级管理员看到 1258 条（含全校赛事），超出权限范围。
+		return q.Where("comp_directories.college_id = ?", *scope.ManagedCollegeID)
 	}
 	return applyCompetitionScope(q, scope, "comp_directories")
 }
@@ -821,22 +817,15 @@ func validateAwardRows(tx *gorm.DB, compID uint, input []AwardImportRow, require
 			fail("学号不存在或不是学生账号")
 			continue
 		}
-		mismatches := []string{}
-		if user.Realname != r.Name {
-			mismatches = append(mismatches, "学生姓名与系统学号不匹配")
-		}
-		if user.College != r.College {
-			mismatches = append(mismatches, "学生学院与系统学号不匹配")
-		}
-		if r.Major != "" && user.Major != r.Major {
-			mismatches = append(mismatches, "学生专业与系统学号不匹配")
-		}
-		if len(mismatches) > 0 {
-			fail(strings.Join(mismatches, "；"))
-			continue
-		}
+		// 2026-11-26 学号一键填充：放弃姓名/学院/专业匹配校验（细微差异导致导入失败）。
+		// 改为仅依据学号，直接从系统用户表填充班级信息，覆盖导入行的对应字段。
 		r.UserID = user.ID
+		r.Name = user.Realname
+		r.College = user.College
 		r.Major = user.Major
+		if user.ClassName != nil {
+			r.Class = *user.ClassName
+		}
 		ids := lookup.registrations[user.ID]
 		if requireReg && len(ids) == 0 {
 			fail("未找到目标赛事审核通过的报名")

@@ -357,7 +357,7 @@ func writeAwardImportRows(tx *gorm.DB, scope *UserAccessScope, compID uint, rows
 			continue
 		}
 		uid := scope.UserID
-		members = append(members, models.AwardMember{AwardID: groupIDs[database.AwardProjectKey(row.ProjectName)], StudentID: row.UserID, RegID: row.RegID, Name: row.Name, StudentNumber: row.StudentNumber, College: row.College, Major: row.Major, Remark: row.Remark, SubmittedCollegeID: scope.ManagedCollegeID, SubmittedBy: &uid})
+		members = append(members, models.AwardMember{AwardID: groupIDs[database.AwardProjectKey(row.ProjectName)], StudentID: row.UserID, RegID: row.RegID, Name: row.Name, StudentNumber: row.StudentNumber, College: row.College, Major: row.Major, Class: row.Class, Remark: row.Remark, SubmittedCollegeID: scope.ManagedCollegeID, SubmittedBy: &uid})
 		if row.RegID != nil && !seenRegs[*row.RegID] {
 			seenRegs[*row.RegID] = true
 			regIDs = append(regIDs, *row.RegID)

@@ -210,7 +210,9 @@ func GetCompetitionList(c *gin.Context) {
 		query = query.Where("comp_directories.year = ?", req.Year)
 	}
 
-	if req.IsMy || role == "college_admin" {
+	// 2026-11-26 修复：赛事负责人只看自己负责的赛事（之前不传 is_my 会看到全部）。
+	// 非校级管理员一律按 scope 过滤：college_admin 看本单位，competition_manager 看自己负责的。
+	if req.IsMy || role == "college_admin" || role == "competition_manager" {
 		scope, ok := requireUserAccessScope(c)
 		if !ok {
 			return
