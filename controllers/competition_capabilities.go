@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"CompeManage_backend/logger"
 	"CompeManage_backend/middleware"
 	"CompeManage_backend/models"
 	"CompeManage_backend/utils"
@@ -35,14 +36,17 @@ func competitionCapabilities(c *gin.Context, comp models.CompDirectory) (map[str
 	if _, scoped := c.Get("role_code"); !scoped {
 		return nil, true
 	}
+	// 2026-11-26 修复：cap 计算失败降级返回空 caps，不阻断列表数据返回。
+	// 旧实现在 requireUserAccessScope 失败（如院级管理员未配管理学院）或权限码加载失败时
+	// 返回 false，导致调用方丢弃整个列表——院级管理员看不到所属学院赛事的根因。
 	scope, ok := requireUserAccessScope(c)
 	if !ok {
-		return nil, false
+		return map[string]bool{}, true
 	}
 	codes, err := middleware.UserPermissionCodes(c)
 	if err != nil {
-		utils.InternalServerError(c, "加载赛事操作权限失败", err)
-		return nil, false
+		logger.Error("加载赛事操作权限失败，降级返回空 caps", "error", err)
+		return map[string]bool{}, true
 	}
 	return map[string]bool{
 		"is_manager":            comp.ManagerID == scope.UserID,
@@ -109,11 +113,16 @@ func respondCompetitionMutationError(c *gin.Context, message string, err error) 
 	utils.InternalServerError(c, message, err)
 }
 
+// 2026-11-26 修复：cap 计算失败（权限码加载失败、scope 异常等）不再丢弃整个列表。
+// 旧实现返回 false 会让调用方提前 return，导致院级管理员看不到任何赛事（数据已查出却被丢弃）。
+// 改为降级：单条 cap 失败时该条 caps 置空，列表照常返回；仅在 scope 完全不可用时才阻断。
 func attachCompetitionCapabilities(c *gin.Context, list []models.CompDirectory) bool {
 	for i := range list {
 		caps, ok := competitionCapabilities(c, list[i])
 		if !ok {
-			return false
+			// 降级：不丢列表，只让该条 caps 为空（前端按无权限处理）
+			list[i].Capabilities = map[string]bool{}
+			continue
 		}
 		list[i].Capabilities = caps
 	}
