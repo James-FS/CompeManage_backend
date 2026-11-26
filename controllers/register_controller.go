@@ -400,6 +400,9 @@ func GetRegConfig(c *gin.Context) {
 		utils.NotFound(c, "赛事不存在")
 		return
 	}
+	if c.GetString("role_code") == "college_admin" && !requireCompetitionAccessIfScoped(c, comp.ID) {
+		return
+	}
 
 	caps, ok := competitionCapabilities(c, comp)
 	if !ok {
@@ -723,6 +726,7 @@ func GetRegList(c *gin.Context) {
 	}
 
 	query := database.DB.WithContext(c.Request.Context()).Model(&models.Register{}).
+		Where("registers.supplement_time IS NULL").
 		Joins("LEFT JOIN comp_directories ON comp_directories.id = registers.comp_id").
 		Joins("LEFT JOIN comp_details ON comp_details.comp_id = registers.comp_id").
 		Preload("Competition").
@@ -883,7 +887,7 @@ func GetRegDetail(c *gin.Context) {
 		return
 	}
 
-	if !canAccessCompetition(scope, reg.Competition) {
+	if !canAccessLoadedCompetition(database.DB.WithContext(c.Request.Context()), scope, reg.Competition) {
 		utils.Forbidden(c, "无权查看此记录")
 		return
 	}
@@ -955,39 +959,28 @@ func GetWorkAuditCompList(c *gin.Context) {
 	}
 	now := time.Now()
 
-	buildBaseQuery := func(withRegisterJoin bool) *gorm.DB {
-		query := database.DB.WithContext(c.Request.Context()).Table("comp_directories").
-			Joins("LEFT JOIN comp_details ON comp_details.comp_id = comp_directories.id AND comp_details.delete_time IS NULL").
-			Joins("LEFT JOIN users ON users.id = comp_directories.manager_id").
-			Joins("LEFT JOIN colleges ON colleges.id = comp_directories.college_id").
-			Where("comp_directories.delete_time IS NULL").
-			Where("YEAR(comp_details.submit_start_time) > 1970").
-			Where("comp_details.submit_start_time <= ?", now)
-
-		if withRegisterJoin {
-			query = query.Joins("LEFT JOIN registers ON registers.comp_id = comp_directories.id AND registers.delete_time IS NULL")
-		}
-
-		query = applyCompetitionScope(query, scope, "comp_directories")
-
-		if strings.TrimSpace(req.CompName) != "" {
-			query = query.Where("comp_directories.comp_name LIKE ?", "%"+strings.TrimSpace(req.CompName)+"%")
-		}
-		if strings.TrimSpace(req.Manager) != "" {
-			query = query.Where("users.realname LIKE ?", "%"+strings.TrimSpace(req.Manager)+"%")
-		}
-		if strings.TrimSpace(req.College) != "" {
-			query = query.Where("colleges.name = ?", strings.TrimSpace(req.College))
-		}
-		if strings.TrimSpace(req.Status) != "" {
-			query = query.Where("comp_directories.status = ?", strings.TrimSpace(req.Status))
-		}
-
-		return query
+	db := database.DB.WithContext(c.Request.Context())
+	query := db.Model(&models.CompDirectory{}).
+		Joins("LEFT JOIN users ON users.id = comp_directories.manager_id AND users.delete_time IS NULL").
+		Where(`EXISTS (SELECT 1 FROM comp_details WHERE comp_details.comp_id = comp_directories.id
+			AND comp_details.delete_time IS NULL AND comp_details.submit_start_time >= ?
+			AND comp_details.submit_start_time <= ?)`, "1971-01-01", now)
+	query = applyCompetitionScope(query, scope, "comp_directories")
+	if name := strings.TrimSpace(req.CompName); name != "" {
+		query = query.Where("comp_directories.comp_name LIKE ?", "%"+name+"%")
+	}
+	if manager := strings.TrimSpace(req.Manager); manager != "" {
+		query = query.Where("users.realname LIKE ?", "%"+manager+"%")
+	}
+	if college := strings.TrimSpace(req.College); college != "" {
+		query = query.Where("users.college = ?", college)
+	}
+	if status := strings.TrimSpace(req.Status); status != "" {
+		query = query.Where("comp_directories.status = ?", status)
 	}
 
 	var total int64
-	if err := buildBaseQuery(false).Distinct("comp_directories.id").Count(&total).Error; err != nil {
+	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
 		utils.InternalServerError(c, "查询作品审核赛事总数失败", err)
 		return
 	}
@@ -1001,24 +994,42 @@ func GetWorkAuditCompList(c *gin.Context) {
 		Status      int8   `json:"status"`
 	}
 
-	var list []WorkAuditCompResp
-	offset := (req.Page - 1) * req.PageSize
-	if err := buildBaseQuery(true).
-		Select(`
+	list := make([]WorkAuditCompResp, 0, req.PageSize)
+	if total > 0 && int64(req.Page-1) <= (total-1)/int64(req.PageSize) {
+		if err := query.Select(`
 			comp_directories.id AS comp_id,
 			comp_directories.comp_name AS comp_name,
 			COALESCE(users.realname, '') AS manager_name,
-			COALESCE(colleges.name, '') AS college_name,
-			COALESCE(SUM(CASE WHEN registers.work_attachment_url IS NOT NULL AND registers.work_attachment_url <> '' THEN 1 ELSE 0 END), 0) AS submit_count,
+			COALESCE(users.college, '') AS college_name,
 			comp_directories.status AS status
 		`).
-		Group("comp_directories.id, comp_directories.comp_name, users.realname, colleges.name, comp_directories.status").
-		Order("comp_directories.create_time DESC").
-		Offset(offset).
-		Limit(req.PageSize).
-		Scan(&list).Error; err != nil {
-		utils.InternalServerError(c, "查询作品审核赛事列表失败", err)
-		return
+			Order("comp_directories.create_time DESC, comp_directories.id DESC").
+			Offset((req.Page - 1) * req.PageSize).Limit(req.PageSize).Scan(&list).Error; err != nil {
+			utils.InternalServerError(c, "查询作品审核赛事列表失败", err)
+			return
+		}
+	}
+	if len(list) > 0 {
+		ids := make([]uint, len(list))
+		for i, comp := range list {
+			ids[i] = comp.CompID
+		}
+		var counts []struct {
+			CompID      uint
+			SubmitCount int64
+		}
+		if err := db.Model(&models.Register{}).Select("comp_id, COUNT(*) AS submit_count").
+			Where("comp_id IN ? AND work_attachment_url <> ''", ids).Group("comp_id").Scan(&counts).Error; err != nil {
+			utils.InternalServerError(c, "统计赛事作品提交数量失败", err)
+			return
+		}
+		countByCompetition := make(map[uint]int64, len(counts))
+		for _, count := range counts {
+			countByCompetition[count.CompID] = count.SubmitCount
+		}
+		for i := range list {
+			list[i].SubmitCount = countByCompetition[list[i].CompID]
+		}
 	}
 
 	utils.Success(c, gin.H{
@@ -1056,7 +1067,7 @@ func GetWorkAuditStudentList(c *gin.Context) {
 		return
 	}
 
-	if !canAccessCompetition(scope, comp) {
+	if !canAccessLoadedCompetition(database.DB.WithContext(c.Request.Context()), scope, comp) {
 		utils.Forbidden(c, "无权查看该赛事提交信息")
 		return
 	}
@@ -1147,10 +1158,26 @@ func AuditRegister(c *gin.Context) {
 		return
 	}
 
+	scope, ok := requireUserAccessScope(c)
+	if !ok {
+		return
+	}
+	db := database.DB.WithContext(c.Request.Context())
+	if !canAccessLoadedCompetition(db, scope, reg.Competition) {
+		utils.Forbidden(c, "您无权审核此条记录")
+		return
+	}
+	if reg.SupplementTime != nil {
+		utils.BadRequest(c, "获奖补录请在填报审核中处理")
+		return
+	}
+	update := applyCollegeRelatedCompetitionScope(db.Model(&models.Register{}).
+		Where("id = ? AND status = ?", reg.ID, 0), db, scope, "registers.comp_id")
+
 	if reg.Competition.Detail.NeedRegAudit == 0 {
 		if reg.Status == 0 {
 			// 裸模型更新，避免 GORM 将 Preload 的 Competition/Detail 关联一起 Upsert 回写
-			_ = database.DB.WithContext(c.Request.Context()).Model(&models.Register{}).Where("id = ?", reg.ID).Updates(map[string]interface{}{"status": 1, "reject_reason": ""}).Error
+			_ = update.Updates(map[string]interface{}{"status": 1, "reject_reason": ""}).Error
 		}
 		utils.BadRequest(c, "该赛事已设置为免审核，报名会自动通过")
 		return
@@ -1158,15 +1185,6 @@ func AuditRegister(c *gin.Context) {
 
 	if reg.Status != 0 {
 		utils.Error(c, 409, 409, "该记录已被审核，请勿重复操作")
-		return
-	}
-
-	scope, ok := requireUserAccessScope(c)
-	if !ok {
-		return
-	}
-	if !canAccessCompetition(scope, reg.Competition) {
-		utils.Forbidden(c, "您无权审核此条记录")
 		return
 	}
 
@@ -1181,8 +1199,13 @@ func AuditRegister(c *gin.Context) {
 	}
 
 	// 裸模型更新，避免 GORM 将 Preload 的 Competition/Detail 关联一起 Upsert 回写
-	if err := database.DB.WithContext(c.Request.Context()).Model(&models.Register{}).Where("id = ?", reg.ID).Updates(updateMap).Error; err != nil {
-		utils.InternalServerError(c, "数据库更新失败", err)
+	result := update.Updates(updateMap)
+	if result.Error != nil {
+		utils.InternalServerError(c, "数据库更新失败", result.Error)
+		return
+	}
+	if result.RowsAffected == 0 {
+		utils.Conflict(c, "报名状态或项目来源已变化，请刷新后重试")
 		return
 	}
 

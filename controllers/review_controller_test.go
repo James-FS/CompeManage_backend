@@ -210,12 +210,10 @@ func TestGetReviewTaskList_CollegeAdminCannotAccessAnotherCollege(t *testing.T) 
 	mock := setupReviewDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	otherCollegeID := uint(3)
-	mock.ExpectQuery("SELECT `id`,`manager_id`,`college_id` FROM `comp_directories`").
-		WithArgs(uint64(5), 1).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}).AddRow(5, 20, otherCollegeID))
-
 	managedCollegeID := uint(2)
+	mock.ExpectQuery("SELECT `id`,`manager_id`,`college_id` FROM `comp_directories`.*project_source_college_id").
+		WithArgs(managedCollegeID, uint64(5), 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}))
 	_, w, c := buildGET("/api/review/task/list?comp_id=5")
 	c.Set("user_id", uint(10))
 	c.Set("role_code", "college_admin")

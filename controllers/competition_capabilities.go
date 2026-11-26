@@ -12,16 +12,17 @@ import (
 	"gorm.io/gorm"
 )
 
-// Competition writes are narrower than college-wide read/audit access.
-func canWriteCompetition(scope *UserAccessScope, comp models.CompDirectory, codes []string, permission string) bool {
-	if !canAccessCompetition(scope, comp) {
-		return false
-	}
-	if scope.IsCollegeAdmin() && comp.ManagerID != scope.UserID {
+// College-admin callers must first authorize the project source. Other roles
+// can also use capabilities on public competition views.
+func canWriteScopedCompetition(scope *UserAccessScope, comp models.CompDirectory, codes []string, permission string) bool {
+	if !scope.IsSchoolAdmin() && !scope.IsCollegeAdmin() && comp.ManagerID != scope.UserID {
 		return false
 	}
 	for _, code := range codes {
 		if code == permission {
+			return true
+		}
+		if code == permission+":source" && scope.IsCollegeAdmin() {
 			return true
 		}
 		if code == permission+":own" && comp.ManagerID == scope.UserID {
@@ -50,11 +51,11 @@ func competitionCapabilities(c *gin.Context, comp models.CompDirectory) (map[str
 	}
 	return map[string]bool{
 		"is_manager":            comp.ManagerID == scope.UserID,
-		"can_edit_competition":  canWriteCompetition(scope, comp, codes, "comp:update"),
-		"can_edit_registration": canWriteCompetition(scope, comp, codes, "reg:config:edit"),
-		"can_edit_summary":      comp.Status == 2 && canWriteCompetition(scope, comp, codes, "summary:edit"),
-		"can_reassign_manager":  scope.IsSchoolAdmin() && canWriteCompetition(scope, comp, codes, "comp:update"),
-		"can_change_college":    scope.IsSchoolAdmin() && canWriteCompetition(scope, comp, codes, "comp:update"),
+		"can_edit_competition":  canWriteScopedCompetition(scope, comp, codes, "comp:update"),
+		"can_edit_registration": canWriteScopedCompetition(scope, comp, codes, "reg:config:edit"),
+		"can_edit_summary":      comp.Status == 2 && canWriteScopedCompetition(scope, comp, codes, "summary:edit"),
+		"can_reassign_manager":  scope.IsSchoolAdmin() && canWriteScopedCompetition(scope, comp, codes, "comp:update"),
+		"can_change_college":    false,
 	}, true
 }
 
@@ -67,8 +68,8 @@ func requireCompetitionWrite(c *gin.Context, scope *UserAccessScope, comp models
 		utils.InternalServerError(c, "加载赛事操作权限失败", err)
 		return false
 	}
-	if !canWriteCompetition(scope, comp, codes, permission) {
-		utils.Forbidden(c, "无权修改该赛事，仅可操作本人负责且在管理范围内的赛事")
+	if !canWriteScopedCompetition(scope, comp, codes, permission) {
+		utils.Forbidden(c, "无权修改该赛事")
 		return false
 	}
 	return true
@@ -85,27 +86,33 @@ func competitionManagerCandidates(tx *gorm.DB) *gorm.DB {
 
 var errInvalidCompetitionManager = errors.New("赛事负责人无效")
 
-func validateCompetitionManager(c *gin.Context, tx *gorm.DB, userID uint, collegeID *uint) error {
+func validateCompetitionManager(c *gin.Context, tx *gorm.DB, userID uint) error {
+	_, err := findCompetitionManager(c, tx, userID)
+	return err
+}
+
+func findCompetitionManager(c *gin.Context, tx *gorm.DB, userID uint) (models.User, error) {
 	if _, scoped := c.Get("role_code"); !scoped {
-		return nil
+		return models.User{}, nil
 	}
 	var user models.User
 	if err := competitionManagerCandidates(tx).Where("users.id = ?", userID).Preload("Roles").First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("%w：用户不存在或不具备负责人资格", errInvalidCompetitionManager)
+			return user, fmt.Errorf("%w：用户不存在或不具备负责人资格", errInvalidCompetitionManager)
 		}
-		return err
+		return user, err
 	}
 	if len(user.Roles) != 1 {
-		return fmt.Errorf("%w：角色配置异常", errInvalidCompetitionManager)
+		return user, fmt.Errorf("%w：角色配置异常", errInvalidCompetitionManager)
 	}
-	if user.Roles[0].RoleCode == "college_admin" && (collegeID == nil || user.ManagedCollegeID == nil || *collegeID != *user.ManagedCollegeID) {
-		return fmt.Errorf("%w：院级管理员只能担任所管理学院赛事的负责人", errInvalidCompetitionManager)
-	}
-	return nil
+	return user, nil
 }
 
 func respondCompetitionMutationError(c *gin.Context, message string, err error) {
+	if errors.Is(err, errInvalidProjectSource) {
+		utils.Forbidden(c, err.Error())
+		return
+	}
 	if errors.Is(err, errInvalidCompetitionManager) {
 		utils.BadRequest(c, err.Error())
 		return

@@ -99,21 +99,33 @@ func GetAllUsers(c *gin.Context) {
 	}
 
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		utils.InternalServerError(c, "统计用户数量失败", err)
+	countQuery := query.Session(&gorm.Session{})
+	var countErr error
+	if req.Search != "" && req.RoleID == 0 && req.IdentityType == "" && req.CollegeID == 0 {
+		// A leading wildcard still scans the active accounts. The covering index
+		// lets MySQL count those matches without fetching each user's full row.
+		countErr = countQuery.Select("/*+ INDEX(users idx_users_admin_search) */ COUNT(*)").Scan(&total).Error
+	} else {
+		countErr = countQuery.Count(&total).Error
+	}
+	if countErr != nil {
+		utils.InternalServerError(c, "统计用户数量失败", countErr)
 		return
 	}
 
 	var users []models.User
-	if err := query.
-		Preload("Roles", func(db *gorm.DB) *gorm.DB { return db.Order("roles.id ASC") }).
-		Preload("ManagedCollege").
-		Order("users.create_time DESC, users.id DESC").
-		Offset((req.Page - 1) * req.PageSize).
-		Limit(req.PageSize).
-		Find(&users).Error; err != nil {
-		utils.InternalServerError(c, "查询用户列表失败", err)
-		return
+	if total > 0 && int64(req.Page-1) <= (total-1)/int64(req.PageSize) {
+		if err := query.
+			Select("id", "username", "realname", "college", "grade", "identity_type", "managed_college_id").
+			Preload("Roles", func(db *gorm.DB) *gorm.DB { return db.Order("roles.id ASC") }).
+			Preload("ManagedCollege").
+			Order("users.create_time DESC, users.id DESC").
+			Offset((req.Page - 1) * req.PageSize).
+			Limit(req.PageSize).
+			Find(&users).Error; err != nil {
+			utils.InternalServerError(c, "查询用户列表失败", err)
+			return
+		}
 	}
 
 	list := make([]UserWithRoleResp, 0, len(users))

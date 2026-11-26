@@ -5,14 +5,12 @@ import (
 	"net/http"
 	"testing"
 
-	"CompeManage_backend/database"
-
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// 覆盖率补充 push41：上报导出错误/成功链路、导入设置写入、Preview 错误分支、canEditAwardTeam。
+// 覆盖率补充 push41：上报导出错误/成功链路、导入设置写入、Preview 错误分支。
 
 var errPush41DB = errors.New("push41 db error")
 
@@ -158,50 +156,4 @@ func TestUpdateAwardImportSetting_LockErrorAndSave(t *testing.T) {
 	UpdateAwardImportSetting(c3)
 	assert.Equal(t, http.StatusInternalServerError, w3.Code)
 	require.NoError(t, mock3.ExpectationsWereMet())
-}
-
-// ---- canEditAwardTeam 分支 ----
-
-func TestCanEditAwardTeam_CollegeLookupError(t *testing.T) {
-	mock := setupReportScopeDBMock(t)
-	defer mock.ExpectationsWereMet()
-	mock.ExpectQuery("SELECT .* FROM `colleges`").WillReturnError(errPush41DB)
-	scope := &UserAccessScope{RoleCode: "college_admin", ManagedCollegeID: uPtr(4)}
-	ok, err := canEditAwardTeam(database.DB, scope, 1)
-	assert.False(t, ok)
-	assert.Error(t, err)
-}
-
-func TestCanEditAwardTeam_NoMembership(t *testing.T) {
-	mock := setupReportScopeDBMock(t)
-	defer mock.ExpectationsWereMet()
-	mock.ExpectQuery("SELECT .* FROM `colleges`").WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(4, "计算机学院"))
-	mock.ExpectQuery("SELECT count\\(\\*\\)").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	scope := &UserAccessScope{RoleCode: "college_admin", ManagedCollegeID: uPtr(4)}
-	ok, err := canEditAwardTeam(database.DB, scope, 1)
-	assert.NoError(t, err)
-	assert.False(t, ok)
-}
-
-func TestCanEditAwardTeam_WithMembership(t *testing.T) {
-	mock := setupReportScopeDBMock(t)
-	defer mock.ExpectationsWereMet()
-	mock.ExpectQuery("SELECT .* FROM `colleges`").WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(4, "计算机学院"))
-	mock.ExpectQuery("SELECT count\\(\\*\\)").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
-	scope := &UserAccessScope{RoleCode: "college_admin", ManagedCollegeID: uPtr(4)}
-	ok, err := canEditAwardTeam(database.DB, scope, 1)
-	assert.NoError(t, err)
-	assert.True(t, ok)
-}
-
-func TestCanEditAwardTeam_OtherRoles(t *testing.T) {
-	// 校管理员直通
-	ok, err := canEditAwardTeam(nil, &UserAccessScope{RoleCode: "school_admin"}, 1)
-	assert.NoError(t, err)
-	assert.True(t, ok)
-	// 非院管理员 / 院管理员无授权范围
-	ok, _ = canEditAwardTeam(nil, &UserAccessScope{RoleCode: "student"}, 1)
-	assert.False(t, ok)
-	ok, _ = canEditAwardTeam(nil, &UserAccessScope{RoleCode: "college_admin"}, 1)
-	assert.False(t, ok)
 }

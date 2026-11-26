@@ -170,7 +170,7 @@ func awardExportScope(c *gin.Context) (*UserAccessScope, bool) {
 		if err := database.DB.WithContext(c.Request.Context()).Table("users").
 			Where("id = ? AND delete_time IS NULL", scope.UserID).
 			Pluck("college", &college).Error; err != nil || college == "" {
-			utils.Forbidden(c, "赛事负责人未配置所属学院，无法导出")
+			utils.Forbidden(c, "赛事负责人未配置所属单位，无法导出")
 			return nil, false
 		}
 		scope.College = college
@@ -288,15 +288,14 @@ func buildAwardProjectRows(ctx context.Context, scope *UserAccessScope, year str
 			awards.award_time, awards.advisor_info, r.advisor_info AS reg_advisor_info, cd.comp_name, cd.organizer,
 			cd.year AS competition_year, CASE awards.participation_type
 				WHEN 'team' THEN 2 WHEN 'individual' THEN 1 ELSE cdp.participant_type
-			END AS participant_type, cn.name AS comp_college`).
+			END AS participant_type, comp_manager.college AS comp_college`).
 		Joins("JOIN comp_directories cd ON cd.id = awards.comp_id AND cd.delete_time IS NULL").
 		Joins("LEFT JOIN comp_details cdp ON cdp.comp_id = awards.comp_id AND cdp.delete_time IS NULL").
 		Joins("LEFT JOIN registers r ON r.id = awards.reg_id AND r.delete_time IS NULL").
-		Joins("LEFT JOIN colleges cn ON cn.id = cd.college_id").
+		Joins("LEFT JOIN users comp_manager ON comp_manager.id = cd.manager_id AND comp_manager.delete_time IS NULL").
 		Where("awards.delete_time IS NULL").Where("awards.status IN ?", awardExportFilterStatus()).
 		Order("cd.year ASC, awards.award_time ASC, cd.comp_name ASC, awards.project_name ASC, awards.id ASC")
 	q = applyAwardExportCompetitionScope(q, scope)
-	q = applyAwardStudentCollegeScope(q, scope, managedCollege)
 	if year != "" {
 		q = q.Where("cd.year = ?", year)
 	}
@@ -325,9 +324,6 @@ func buildAwardProjectRows(ctx context.Context, scope *UserAccessScope, year str
 	var advisorRows []models.AwardAdvisor
 	if len(ids) > 0 {
 		advisorQuery := database.DB.WithContext(ctx).Where("award_id IN ?", ids)
-		if scope.IsCollegeAdmin() {
-			advisorQuery = advisorQuery.Where("college = ?", managedCollege)
-		}
 		if err := advisorQuery.Order("award_id ASC, sort ASC, id ASC").Find(&advisorRows).Error; err != nil {
 			return nil, err
 		}
@@ -343,18 +339,12 @@ func buildAwardProjectRows(ctx context.Context, scope *UserAccessScope, year str
 			Select("am.award_id, am.name, am.college, am.submitted_college_id, sc.name AS submitted_college_name").
 			Joins("LEFT JOIN colleges sc ON sc.id = am.submitted_college_id").
 			Where("am.award_id IN ? AND am.delete_time IS NULL", ids)
-		if scope.IsCollegeAdmin() {
-			memberQuery = memberQuery.Where("am.student_id IN (SELECT id FROM users WHERE college = ? AND delete_time IS NULL)", managedCollege)
-		}
 		if err := memberQuery.Order("am.id ASC").Find(&members).Error; err != nil {
 			return nil, err
 		}
 	}
 	membersByAward := map[uint][]awardExportMember{}
 	for _, m := range members {
-		if scope.IsCollegeAdmin() {
-			m.College = managedCollege
-		}
 		membersByAward[m.AwardID] = append(membersByAward[m.AwardID], m)
 	}
 	rows := map[int][][]interface{}{}
@@ -370,11 +360,7 @@ func buildAwardProjectRows(ctx context.Context, scope *UserAccessScope, year str
 		}
 		advNames, advColleges := awardExportAdvisorsFromRows(advisorsByAward[p.ID])
 		if advNames == "" {
-			if scope.IsCollegeAdmin() {
-				advNames, advColleges = awardExportAdvisors(filterAdvisorInfoForCollege(p.AdvisorInfo, managedCollege), filterAdvisorInfoForCollege(p.RegAdvisorInfo, managedCollege))
-			} else {
-				advNames, advColleges = awardExportAdvisors(p.AdvisorInfo, p.RegAdvisorInfo)
-			}
+			advNames, advColleges = awardExportAdvisors(p.AdvisorInfo, p.RegAdvisorInfo)
 		}
 		// 上报学院：成员提交学院优先，缺省用赛事所属学院
 		reportCollege := strings.TrimSpace(p.CompCollege)
@@ -401,11 +387,11 @@ func buildAwardStudentRows(ctx context.Context, scope *UserAccessScope, year str
 		return nil, err
 	}
 	q := database.DB.WithContext(ctx).Table("award_members am").
-		Select("am.student_number, am.name, am.college, am.major, am.remark, a.project_name, a.award_level, a.award_category, a.award_name, a.award_time, cd.comp_name, cd.year AS competition_year, sc.name AS submitted_college_name, cn.name AS comp_college").
+		Select("am.student_number, am.name, am.college, am.major, am.remark, a.project_name, a.award_level, a.award_category, a.award_name, a.award_time, cd.comp_name, cd.year AS competition_year, sc.name AS submitted_college_name, comp_manager.college AS comp_college").
 		Joins("JOIN awards a ON a.id = am.award_id AND a.delete_time IS NULL").
 		Joins("JOIN comp_directories cd ON cd.id = a.comp_id AND cd.delete_time IS NULL").
 		Joins("LEFT JOIN colleges sc ON sc.id = am.submitted_college_id").
-		Joins("LEFT JOIN colleges cn ON cn.id = cd.college_id").
+		Joins("LEFT JOIN users comp_manager ON comp_manager.id = cd.manager_id AND comp_manager.delete_time IS NULL").
 		Where("am.delete_time IS NULL").Where("a.status IN ?", awardExportFilterStatus()).
 		Order("cd.year ASC, a.award_time ASC, cd.comp_name ASC, a.project_name ASC, am.id ASC")
 	q = applyAwardExportCompetitionScope(q, scope)
@@ -414,8 +400,6 @@ func buildAwardStudentRows(ctx context.Context, scope *UserAccessScope, year str
 	}
 	if scope.RoleCode == "competition_manager" {
 		q = q.Where("am.college = ?", scope.College)
-	} else if scope.IsCollegeAdmin() {
-		q = q.Where("am.student_id IN (SELECT id FROM users WHERE college = ? AND delete_time IS NULL)", managedCollege)
 	}
 	var list []struct {
 		StudentNumber, Name, College, Major, Remark, ProjectName, AwardLevel, AwardCategory, AwardName string
@@ -441,7 +425,6 @@ func buildAwardStudentRows(ctx context.Context, scope *UserAccessScope, year str
 		studentCollege := s.College
 		if scope.IsCollegeAdmin() {
 			reportCollege = managedCollege
-			studentCollege = managedCollege
 		} else if reportCollege == "" {
 			reportCollege = strings.TrimSpace(s.CompCollege)
 		}

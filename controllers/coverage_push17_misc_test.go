@@ -172,8 +172,6 @@ func TestGetAllUsers_AllFilters(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(5, "计算机学院"))
 	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `users`").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectQuery("SELECT .* FROM `users`").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
 	_, w, c := buildGET("/api/perm/member/list?page=0&size=999&search=张&role_id=3&identity_type=student&college_id=5")
 	c.Set("user_id", uint(1))
@@ -199,7 +197,7 @@ func TestGetAllUsers_CountError(t *testing.T) {
 	mock := setupRegDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `users`").
+	mock.ExpectQuery("SELECT /\\*\\+ INDEX\\(users idx_users_admin_search\\) \\*/ COUNT\\(\\*\\) FROM `users`").
 		WillReturnError(fmt.Errorf("db error"))
 
 	_, w, c := buildGET("/api/perm/member/list?page=1&size=10&search=张")

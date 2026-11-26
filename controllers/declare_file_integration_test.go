@@ -99,10 +99,16 @@ func TestDeclareAndFileAccessMySQL(t *testing.T) {
 			declareBody(ca.ID, "甲院申报赛"), CreateDeclare)
 		require.Equal(t, 200, w.Code, w.Body.String())
 
-		// 甲管为他院创建 → 403
+		// 选择外院负责人时仍记录甲管账号的单位。
+		foreign := declareBody(cb.ID, "跨院负责人申报")
+		foreign["manager_id"] = users["DB001"].ID
 		w = invoke("POST", "/api/declare", "college_admin", &ca.ID, users["DA001"].ID,
-			declareBody(cb.ID, "越权申报"), CreateDeclare)
-		require.Equal(t, 403, w.Code)
+			foreign, CreateDeclare)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		var crossCollege models.CompDeclaration
+		require.NoError(t, db.Where("comp_name = ?", "跨院负责人申报").First(&crossCollege).Error)
+		require.Equal(t, ca.Name, crossCollege.ProjectSource)
+		require.Equal(t, &ca.ID, crossCollege.ProjectSourceCollegeID)
 
 		// 参数错误
 		w = invoke("POST", "/api/declare", "college_admin", &ca.ID, users["DA001"].ID,
@@ -220,7 +226,7 @@ func TestDeclareAndFileAccessMySQL(t *testing.T) {
 		require.NoError(t, db.Create(&models.FileRecord{
 			FileHash: hash, OriginalName: name,
 			StoragePath: "static/award_proofs/" + hash + "_" + name,
-			FileSize: 11, FileExt: "txt", BizType: "award_proof",
+			FileSize:    11, FileExt: "txt", BizType: "award_proof",
 			UploaderID: users["DU001"].ID,
 		}).Error)
 
@@ -281,7 +287,8 @@ func TestDeclareAndFileAccessMySQL(t *testing.T) {
 
 		// 未绑定学院的院管（GetUserAccessScope 有 role）走 canAccessFile 后半段
 		// 将证明挂到甲院校赛上，甲管因 managed college 访问
-		comp := models.CompDirectory{CompCode: "FQ1", CompName: "文件校赛", CompLevel: "校级", ManagerID: users["DT001"].ID, CollegeID: &ca.ID, Year: 2026}
+		comp := models.CompDirectory{CompCode: "FQ1", CompName: "文件校赛", CompLevel: "校级", ManagerID: users["DT001"].ID, CollegeID: &ca.ID, Year: 2026,
+			ProjectOrigin: models.ProjectOrigin{ProjectSource: ca.Name, ProjectSourceCollegeID: &ca.ID}}
 		require.NoError(t, db.Create(&comp).Error)
 		proofURL := buildDownloadURL("award_proof", hash, name)
 		a := models.Award{CompID: comp.ID, ProjectName: "文件证明项目", AwardLevel: "省级一等奖", AwardCategory: "省级", AwardName: "一等奖", Status: "approved", Source: "supplement", AdvisorInfo: "[]", ProofUrl: proofURL}
@@ -320,13 +327,14 @@ func TestApplyDeclarationScopeSQL(t *testing.T) {
 	run(&UserAccessScope{RoleCode: "teacher", UserID: 7})
 	require.NoError(t, mock.ExpectationsWereMet())
 
+	scope := &UserAccessScope{RoleCode: "college_admin", ManagedCollegeID: &collegeID}
+	require.True(t, canAccessDeclaration(scope, models.CompDeclaration{CollegeID: 9, ProjectOrigin: models.ProjectOrigin{ProjectSourceCollegeID: &collegeID}}))
+	require.False(t, canAccessDeclaration(scope, models.CompDeclaration{CollegeID: collegeID}))
 	require.True(t, canAccessDeclaration(&UserAccessScope{RoleCode: "school_admin"}, models.CompDeclaration{CollegeID: 1}))
-	require.True(t, canAccessDeclaration(&UserAccessScope{RoleCode: "college_admin", ManagedCollegeID: &collegeID}, models.CompDeclaration{CollegeID: 3}))
-	require.False(t, canAccessDeclaration(&UserAccessScope{RoleCode: "college_admin", ManagedCollegeID: &collegeID}, models.CompDeclaration{CollegeID: 9}))
-	require.False(t, canAccessDeclaration(&UserAccessScope{RoleCode: "college_admin", ManagedCollegeID: nil}, models.CompDeclaration{CollegeID: 3}))
 	require.True(t, canAccessDeclaration(&UserAccessScope{RoleCode: "teacher", UserID: 7}, models.CompDeclaration{CreatedBy: 7}))
 	require.True(t, canAccessDeclaration(&UserAccessScope{RoleCode: "teacher", UserID: 7}, models.CompDeclaration{ManagerID: 7}))
 	require.False(t, canAccessDeclaration(&UserAccessScope{RoleCode: "teacher", UserID: 7}, models.CompDeclaration{CreatedBy: 8}))
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestGetUserAccessScopeSQL(t *testing.T) {

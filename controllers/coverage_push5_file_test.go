@@ -348,9 +348,9 @@ func TestCanAccessFile_CollegeAdminAllowed(t *testing.T) {
 	// findCompIDByStoragePath → 7
 	mock.ExpectQuery("SELECT comp_id FROM `registers`").
 		WillReturnRows(sqlmock.NewRows([]string{"comp_id"}).AddRow(7))
-	// comp 查询：college_id 与 managed 一致
-	mock.ExpectQuery("SELECT `id`,`manager_id`,`college_id` FROM `comp_directories`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}).AddRow(7, 1, 9))
+	// 附件所在赛事的项目来源匹配。
+	mock.ExpectQuery("SELECT count.*FROM `comp_directories`.*project_source_college_id").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
 	_, _, c := buildGET("/x")
 	c.Set("user_id", uint(5))
@@ -368,18 +368,13 @@ func TestCanAccessFile_CollegeAdminDenied(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"role_code", "managed_college_id"}).AddRow("college_admin", 9))
 	mock.ExpectQuery("SELECT comp_id FROM `registers`").
 		WillReturnRows(sqlmock.NewRows([]string{"comp_id"}).AddRow(7))
-	// college_id 不匹配 → canAccessCompetition false，继续走 switch
-	mock.ExpectQuery("SELECT `id`,`manager_id`,`college_id` FROM `comp_directories`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}).AddRow(7, 1, 3))
+	// 附件所在赛事的项目来源不匹配。
+	mock.ExpectQuery("SELECT count.*FROM `comp_directories`.*project_source_college_id").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	// reg_attachment → isTeamMemberForFile
 	hash := "0123456789abcdef0123456789abcdef"
 	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `registers`").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	// → isCompManagerForFile → findCompIDByStoragePath
-	mock.ExpectQuery("SELECT comp_id FROM `registers`").
-		WillReturnRows(sqlmock.NewRows([]string{"comp_id"}).AddRow(7))
-	mock.ExpectQuery("SELECT manager_id FROM `comp_directories`").
-		WillReturnRows(sqlmock.NewRows([]string{"manager_id"}).AddRow(1))
 
 	_, _, c := buildGET("/x")
 	c.Set("user_id", uint(5))

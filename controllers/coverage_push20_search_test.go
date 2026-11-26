@@ -177,6 +177,8 @@ func TestGetCompAwards_CollegesError(t *testing.T) {
 	mock.ExpectQuery("SELECT .* FROM `award_members`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "award_id", "name", "student_number", "college", "major", "remark", "submitted_college_id", "submitted_by", "student_id"}).
 			AddRow(1, 9, "张三", "S001", "计算机学院", "软件", "", &submitted, 1, 11))
+	mock.ExpectQuery("SELECT .* FROM `users`").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "college"}).AddRow(11, "计算机学院"))
 	mock.ExpectQuery("SELECT .* FROM `award_advisors`").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectQuery("SELECT .* FROM `colleges`").

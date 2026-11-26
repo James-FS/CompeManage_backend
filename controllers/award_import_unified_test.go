@@ -403,6 +403,47 @@ func TestUnifiedAwardImportMySQL(t *testing.T) {
 			require.Equal(t, a.ID, *member.SubmittedBy)
 		}
 	})
+	t.Run("teams and members display in import row order", func(t *testing.T) {
+		comp := newComp("测试成员顺序", year, &ca.ID, "省级", a.ID)
+		other := newComp("测试交错赛事", year, &ca.ID, "省级", a.ID)
+		third := models.User{Username: "000103", Realname: "学生丙", College: ca.Name, Major: "专业甲", IdentityType: "student"}
+		require.NoError(t, db.Create(&third).Error)
+		firstTeam, secondTeam := row(comp, b), row(comp, third)
+		firstTeam.ProjectName = "B项目"
+		secondTeam.ProjectName = "A项目"
+		lastMember := row(comp, a)
+		lastMember.ProjectName = firstTeam.ProjectName
+		input := []AwardImportRow{firstTeam, row(other, b), secondTeam, lastMember}
+		status, result := invoke(input, true, "school_admin", a.ID, nil)
+		require.Equal(t, 200, status)
+		require.Equal(t, len(input), result.Success)
+
+		type team struct {
+			ProjectName string               `json:"project_name"`
+			Members     []models.AwardMember `json:"members"`
+		}
+		fetchTeam := func(page int) team {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest("GET", fmt.Sprintf("/api/award/comp-awards?comp_id=%d&page=%d&page_size=1", comp.ID, page), nil)
+			c.Set("role_code", "school_admin")
+			c.Set("user_id", a.ID)
+			GetCompAwards(c)
+			require.Equal(t, 200, w.Code, w.Body.String())
+			var response struct {
+				Data struct{ List []team } `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+			require.Len(t, response.Data.List, 1)
+			return response.Data.List[0]
+		}
+		firstPage := fetchTeam(1)
+		require.Equal(t, firstTeam.ProjectName, firstPage.ProjectName)
+		require.Equal(t, secondTeam.ProjectName, fetchTeam(2).ProjectName)
+		members := firstPage.Members
+		require.Len(t, members, 2)
+		require.Equal(t, []string{b.Realname, a.Realname}, []string{members[0].Name, members[1].Name})
+	})
 	t.Run("ambiguity and inconsistent code do not affect a valid event", func(t *testing.T) {
 		first := newComp("同年同名", year, &ca.ID, "省级", a.ID)
 		second := newComp("同年同名", year, &ca.ID, "省级", a.ID)
@@ -422,10 +463,10 @@ func TestUnifiedAwardImportMySQL(t *testing.T) {
 		require.Zero(t, count(&models.Award{}, "comp_id = ?", first.ID))
 	})
 	t.Run("scope filters candidates and the downloaded directory", func(t *testing.T) {
-		own := newComp("权限同名", year, &ca.ID, "省级", a.ID)
-		hidden := newComp("权限同名", year, &cb.ID, "省级", b.ID)
-		school := newComp("校级可填报", year, &cb.ID, "校级", b.ID)
-		unassigned := newComp("未绑定学院", year, nil, "省级", b.ID)
+		own := newComp("权限同名", year, &cb.ID, "省级", a.ID)
+		hidden := newComp("权限同名", year, &ca.ID, "省级", b.ID)
+		school := newComp("校级可填报", year, &cb.ID, "校级", a.ID)
+		unassigned := newComp("未绑定学院", year, nil, "省级", a.ID)
 		blocked := row(hidden, b)
 		blocked.CompCode = hidden.CompCode
 		blocked.CompID = hidden.ID
@@ -438,7 +479,7 @@ func TestUnifiedAwardImportMySQL(t *testing.T) {
 		require.Empty(t, result.Rows[3].Error)
 		require.Equal(t, own.ID, result.Rows[0].CompID)
 		require.Empty(t, result.Rows[1].Candidates)
-		_, manager := invoke([]AwardImportRow{row(own, a), row(school, a)}, false, "competition_manager", a.ID, nil)
+		_, manager := invoke([]AwardImportRow{row(own, a), blocked}, false, "competition_manager", a.ID, nil)
 		require.Equal(t, 1, manager.Ready)
 		require.Equal(t, 1, manager.Failed)
 		w := httptest.NewRecorder()

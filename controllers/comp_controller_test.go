@@ -239,7 +239,9 @@ func TestResolveCollegeIDByName_Found(t *testing.T) {
 	id, err := resolveCollegeIDByName(database.DB, "计算机学院")
 	assert.NoError(t, err)
 	assert.NotNil(t, id)
-	assert.Equal(t, uint(1), *id)
+	if id != nil {
+		assert.Equal(t, uint(1), *id)
+	}
 }
 
 func TestResolveCollegeIDByName_NotFound(t *testing.T) {
@@ -252,6 +254,125 @@ func TestResolveCollegeIDByName_NotFound(t *testing.T) {
 	_, err := resolveCollegeIDByName(database.DB, "不存在的学院")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "学院不存在")
+}
+
+// ===================== resolveUnitCollegeID =====================
+
+func TestUnitBaseName(t *testing.T) {
+	assert.Equal(t, "教务处", unitBaseName("教务处（含非学历教育办学管理办公室）"))
+	assert.Equal(t, "图书馆", unitBaseName("图书馆(知识产权信息服务中心)"))
+	assert.Equal(t, "计算机学院", unitBaseName("计算机学院"))
+	// 以括号开头时没有主名可截，保持原串避免退化成空值
+	assert.Equal(t, "（无主名）", unitBaseName("（无主名）"))
+}
+
+func TestResolveUnitCollegeID_EmptyUnit(t *testing.T) {
+	mock := setupCompDBMock(t)
+	defer mock.ExpectationsWereMet()
+
+	id, err := resolveUnitCollegeID(database.DB, "   ")
+	assert.NoError(t, err)
+	assert.Nil(t, id)
+}
+
+func TestResolveUnitCollegeID_ExactMatch(t *testing.T) {
+	mock := setupCompDBMock(t)
+	defer mock.ExpectationsWereMet()
+
+	mock.ExpectQuery("SELECT .* FROM `colleges`").
+		WithArgs("计算机学院", true, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(7))
+
+	id, err := resolveUnitCollegeID(database.DB, " 计算机学院 ")
+	assert.NoError(t, err)
+	assert.NotNil(t, id)
+	if id != nil {
+		assert.Equal(t, uint(7), *id)
+	}
+}
+
+// 人事档案写简称、机构表写全称时，应回落到括号前的主名，而不是返回 nil。
+// 这正是「项目来源编号为空、院管理员看不到赛事」的根因。
+func TestResolveUnitCollegeID_ShortNameFallsBackToOfficialName(t *testing.T) {
+	mock := setupCompDBMock(t)
+	defer mock.ExpectationsWereMet()
+
+	mock.ExpectQuery("SELECT .* FROM `colleges`").
+		WithArgs("教务处", true, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery("SELECT .* FROM `colleges`").
+		WithArgs(true, "教务处", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(53))
+
+	id, err := resolveUnitCollegeID(database.DB, "教务处")
+	assert.NoError(t, err)
+	assert.NotNil(t, id)
+	if id != nil {
+		assert.Equal(t, uint(53), *id)
+	}
+}
+
+func TestResolveUnitCollegeID_InputSuffixMatchesPlainName(t *testing.T) {
+	mock := setupCompDBMock(t)
+	defer mock.ExpectationsWereMet()
+
+	mock.ExpectQuery("SELECT .* FROM `colleges`").
+		WithArgs("图书馆（知识产权信息服务中心）", true, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery("SELECT .* FROM `colleges`").
+		WithArgs(true, "图书馆", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(9))
+
+	id, err := resolveUnitCollegeID(database.DB, "图书馆（知识产权信息服务中心）")
+	assert.NoError(t, err)
+	assert.NotNil(t, id)
+	if id != nil {
+		assert.Equal(t, uint(9), *id)
+	}
+}
+
+// 主名相同但存在多个有效机构时不猜，保持无归属，避免把 A 院数据授权给 B 院。
+func TestResolveUnitCollegeID_AmbiguousBaseNameStaysUnresolved(t *testing.T) {
+	mock := setupCompDBMock(t)
+	defer mock.ExpectationsWereMet()
+
+	mock.ExpectQuery("SELECT .* FROM `colleges`").
+		WithArgs("实验教学中心", true, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery("SELECT .* FROM `colleges`").
+		WithArgs(true, "实验教学中心", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(11).AddRow(12))
+
+	id, err := resolveUnitCollegeID(database.DB, "实验教学中心")
+	assert.NoError(t, err)
+	assert.Nil(t, id)
+}
+
+func TestResolveUnitCollegeID_NoCandidateStaysUnresolved(t *testing.T) {
+	mock := setupCompDBMock(t)
+	defer mock.ExpectationsWereMet()
+
+	mock.ExpectQuery("SELECT .* FROM `colleges`").
+		WithArgs("科研处", true, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery("SELECT .* FROM `colleges`").
+		WithArgs(true, "科研处", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	id, err := resolveUnitCollegeID(database.DB, "科研处")
+	assert.NoError(t, err)
+	assert.Nil(t, id)
+}
+
+func TestResolveUnitCollegeID_ExactQueryErrorPropagates(t *testing.T) {
+	mock := setupCompDBMock(t)
+	defer mock.ExpectationsWereMet()
+
+	mock.ExpectQuery("SELECT .* FROM `colleges`").
+		WillReturnError(gorm.ErrInvalidDB)
+
+	_, err := resolveUnitCollegeID(database.DB, "计算机学院")
+	assert.Error(t, err)
 }
 
 // ===================== GetCompetitionList =====================

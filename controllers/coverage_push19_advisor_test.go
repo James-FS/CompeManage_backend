@@ -293,23 +293,14 @@ func TestUpdateAwardTeam_AwardNotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestUpdateAwardTeam_ForbiddenForCollegeAdmin(t *testing.T) {
+func TestUpdateAwardTeam_CollegeAdminDeniedOutsideProjectSource(t *testing.T) {
 	mock := setupRegDBMock(t)
 	defer mock.ExpectationsWereMet()
 
 	mock.ExpectQuery("SELECT .* FROM `awards`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_id"}).AddRow(9, 1))
-	mock.ExpectQuery("SELECT .* FROM `comp_directories`").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
-	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT .* FROM `comp_directories`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}).AddRow(1, 1, 1))
-	// canEditAwardTeam：学院存在但无本院成员
-	mock.ExpectQuery("SELECT .* FROM `colleges`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(3, "数学学院"))
-	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `award_members`").
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectRollback()
+	mock.ExpectQuery("SELECT .* FROM `comp_directories`.*project_source_college_id").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
 	managed := uint(3)
 	_, w, c := buildAuthPOSTJSON(teamBody())
@@ -320,7 +311,7 @@ func TestUpdateAwardTeam_ForbiddenForCollegeAdmin(t *testing.T) {
 	UpdateAwardTeam(c)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "仅团队成员所在学院的管理员或校级管理员可修改团队奖项")
+	assert.Contains(t, w.Body.String(), "赛事不存在或不在可访问范围")
 }
 
 func TestUpdateAwardTeam_DupCountError(t *testing.T) {

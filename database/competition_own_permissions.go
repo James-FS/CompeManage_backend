@@ -16,10 +16,14 @@ func ensureCollegeManagerPermissions() {
 			return err
 		}
 		changed := false
-		for _, item := range []struct{ Code, Name, Parent string }{
-			{"comp:update:own", "编辑本人负责的赛事", "comp"},
-			{"reg:config:edit:own", "配置本人负责的赛事报名", "reg:config"},
-			{"summary:edit:own", "填写本人负责的赛事总结", "summary"},
+		for _, item := range []struct{ Code, Name, Parent, Description string }{
+			{"comp:update:own", "编辑本人负责的赛事", "comp", "限本人负责且处于授权范围内的赛事"},
+			{"reg:config:edit:own", "配置本人负责的赛事报名", "reg:config", "限本人负责且处于授权范围内的赛事"},
+			{"summary:edit:own", "填写本人负责的赛事总结", "summary", "限本人负责且处于授权范围内的赛事"},
+			{"comp:update:source", "编辑本院来源的赛事", "comp", "限项目来源为管理学院的赛事"},
+			{"reg:config:edit:source", "配置本院来源赛事的报名", "reg:config", "限项目来源为管理学院的赛事"},
+			{"summary:edit:source", "填写本院来源赛事的总结", "summary", "限项目来源为管理学院的赛事"},
+			{"declare:audit:source", "审核本院来源的赛事申报", "declare", "限项目来源为管理学院的赛事申报"},
 		} {
 			var permission models.Permission
 			err := tx.Where("code = ?", item.Code).First(&permission).Error
@@ -33,7 +37,7 @@ func ensureCollegeManagerPermissions() {
 			if err := tx.Where("code = ?", item.Parent).First(&parent).Error; err != nil {
 				return err
 			}
-			permission = models.Permission{Name: item.Name, Code: item.Code, Type: 3, ParentID: parent.ID, Description: "仅限本人负责且属于管理学院的赛事"}
+			permission = models.Permission{Name: item.Name, Code: item.Code, Type: 3, ParentID: parent.ID, Description: item.Description}
 			if err := tx.Create(&permission).Error; err != nil {
 				return err
 			}

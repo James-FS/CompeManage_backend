@@ -412,9 +412,7 @@ func canAccessFile(ctx context.Context, c *gin.Context, fileType string, record 
 		if scope.IsCollegeAdmin() && scope.ManagedCollegeID != nil {
 			compID := findCompIDByStoragePath(ctx, record.StoragePath)
 			if compID != 0 {
-				var comp models.CompDirectory
-				if database.DB.WithContext(ctx).Select("id", "manager_id", "college_id").First(&comp, compID).Error == nil &&
-					canAccessCompetition(scope, comp) {
+				if allowed, err := competitionScopeContains(database.DB.WithContext(ctx), scope, compID); err == nil && allowed {
 					return true
 				}
 			}
@@ -432,12 +430,12 @@ func canAccessFile(ctx context.Context, c *gin.Context, fileType string, record 
 		if isTeamMemberForFile(ctx, uid, record.StoragePath) {
 			return true
 		}
-		return isCompManagerForFile(ctx, uid, record.StoragePath)
+		return !scope.IsCollegeAdmin() && isCompManagerForFile(ctx, uid, record.StoragePath)
 	case "competition_work":
 		if isTeamMemberForFile(ctx, uid, record.StoragePath) {
 			return true
 		}
-		if isCompManagerForFile(ctx, uid, record.StoragePath) {
+		if !scope.IsCollegeAdmin() && isCompManagerForFile(ctx, uid, record.StoragePath) {
 			return true
 		}
 		return isExpertForFile(ctx, uid, record.StoragePath)
@@ -491,7 +489,7 @@ func canAccessSummaryFile(ctx context.Context, scope *UserAccessScope, record mo
 		var comp models.CompDirectory
 		if err := database.DB.WithContext(ctx).
 			Select("id", "manager_id", "college_id").
-			First(&comp, summary.CompID).Error; err == nil && canAccessCompetition(scope, comp) {
+			First(&comp, summary.CompID).Error; err == nil && canAccessLoadedCompetition(database.DB.WithContext(ctx), scope, comp) {
 			return true
 		}
 	}
@@ -502,8 +500,8 @@ func canAccessAwardProof(ctx context.Context, uid uint, scope *UserAccessScope, 
 	q := database.DB.WithContext(ctx).Model(&models.Award{}).
 		Joins("JOIN comp_directories cd ON cd.id = awards.comp_id AND cd.delete_time IS NULL").
 		Where("awards.proof_url IN ?", []string{buildDownloadURL(record.BizType, record.FileHash, record.OriginalName), record.StoragePath})
-	if scope != nil && scope.IsCollegeAdmin() && scope.ManagedCollegeID != nil {
-		q = q.Where("cd.college_id = ? OR cd.college_id IS NULL OR cd.college_id = 0 OR cd.comp_level IN ?", *scope.ManagedCollegeID, []string{"校级", "校赛"})
+	if scope.IsCollegeAdmin() {
+		q = applyCompetitionScope(q, scope, "cd")
 	} else {
 		advisorRole := scope != nil && (scope.RoleCode == "teacher" || scope.RoleCode == "competition_manager")
 		q = q.Where(`cd.manager_id = ? OR EXISTS (SELECT 1 FROM award_members am WHERE am.award_id = awards.id AND am.student_id = ? AND am.delete_time IS NULL) OR EXISTS (SELECT 1 FROM registers r WHERE r.id = awards.reg_id AND r.leader_id = ? AND r.delete_time IS NULL) OR (? AND EXISTS (SELECT 1 FROM award_advisors aa JOIN users u ON u.username = aa.username AND u.delete_time IS NULL AND u.identity_type = 'staff' WHERE aa.award_id = awards.id AND aa.delete_time IS NULL AND u.id = ?))`, uid, uid, uid, advisorRole, uid)

@@ -370,8 +370,6 @@ func TestGetAllUsers_EmptyPage(t *testing.T) {
 	defer func() { assert.NoError(t, mock.ExpectationsWereMet()) }()
 	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `users`").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectQuery("SELECT .* FROM `users`.*ORDER BY users.create_time DESC, users.id DESC").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "username"}))
 
 	_, w, c := buildGET("/api/perm/member/list?page=1&page_size=20")
 	GetAllUsers(c)

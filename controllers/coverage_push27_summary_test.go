@@ -38,8 +38,6 @@ func TestGetSummaryDetail2_ScopeInvalid(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectQuery("SELECT .* FROM `users`").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
-	mock.ExpectQuery("SELECT .* FROM `colleges`").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 
 	_, w, c := buildGET("/api/summary/1")
 	c.Params = []gin.Param{{Key: "id", Value: "1"}}
@@ -60,8 +58,6 @@ func TestGetSummaryDetail2_SummaryQueryError(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectQuery("SELECT .* FROM `users`").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
-	mock.ExpectQuery("SELECT .* FROM `colleges`").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectQuery("SELECT .* FROM `summaries`").WillReturnError(fmt.Errorf("db error"))
 
 	_, w, c := buildGET("/api/summary/1")
@@ -80,14 +76,12 @@ func TestGetSummaryDetail2_WithExpenses(t *testing.T) {
 
 	mock.ExpectQuery("SELECT .* FROM `comp_directories`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}).AddRow(1, 1, 1))
-	// Preload：Detail / Manager / CollegeInfo
+	// Preload Detail and Manager, whose profile supplies the unit.
 	mock.ExpectQuery("SELECT .* FROM `comp_details`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_id", "comp_start_time", "comp_end_time"}).
 			AddRow(1, 1, nil, time.Date(2026, 5, 1, 0, 0, 0, 0, time.Local)))
 	mock.ExpectQuery("SELECT .* FROM `users`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "realname"}).AddRow(1, "张负责"))
-	mock.ExpectQuery("SELECT .* FROM `colleges`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(1, "计算机学院"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "realname", "college"}).AddRow(1, "张负责", "计算机学院"))
 	mock.ExpectQuery("SELECT .* FROM `summaries`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_id", "status", "summary_content", "expenses", "attachments"}).
 			AddRow(1, 1, 1, "圆满举办",
