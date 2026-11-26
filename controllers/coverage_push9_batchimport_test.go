@@ -57,6 +57,8 @@ func TestBatchImportCompetition_InvalidManager(t *testing.T) {
 	defer mock.ExpectationsWereMet()
 
 	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT .*college.* FROM .*users").WithArgs(uint(1), 1).
+		WillReturnRows(sqlmock.NewRows([]string{"college"}).AddRow(""))
 	// validateCompetitionManager：候选存在但无角色 → "角色配置异常"
 	mock.ExpectQuery("SELECT \\* FROM `users`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "identity_type"}).AddRow(1, "T001", "staff"))
@@ -123,8 +125,11 @@ func TestBatchImportCompetition_Success(t *testing.T) {
 
 	mock.ExpectBegin()
 	// 学院解析
-	mock.ExpectQuery("SELECT .* FROM `colleges`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(9, "计算机学院"))
+
+	mock.ExpectQuery("SELECT .*college.* FROM .*users").WithArgs(uint(1), 1).WillReturnRows(sqlmock.NewRows([]string{"college"}).AddRow("科研处"))
+	mock.ExpectQuery("SELECT .* FROM .*colleges").WillReturnError(gorm.ErrRecordNotFound)
+	// 精确匹配落空后会按括号前主名兜底再查一次（科研处不在机构表，仍解析为空）
+	mock.ExpectQuery("SELECT .* FROM .*colleges").WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	// 负责人候选校验（先于编号生成）
 	mock.ExpectQuery("SELECT \\* FROM `users`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "identity_type"}).AddRow(1, "T001", "staff"))
@@ -162,15 +167,18 @@ func TestBatchImportCompetition_Success(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "批量导入成功")
 }
 
-// 同一学院只解析一次（缓存命中）；promote 仅在第一条后执行一次
-func TestBatchImportCompetition_CollegeResolvedOnce(t *testing.T) {
+// 两条记录共用录入账号单位，只检查一次负责人角色提升。
+func TestBatchImportCompetition_OriginResolvedOnce(t *testing.T) {
 	mock := setupCompDBMock(t)
 	defer mock.ExpectationsWereMet()
 
 	mock.ExpectBegin()
-	// 学院仅查询一次（第二次命中缓存）
-	mock.ExpectQuery("SELECT .* FROM `colleges`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).AddRow(9, "计算机学院"))
+	// 批量导入只解析一次录入账号单位
+
+	mock.ExpectQuery("SELECT .*college.* FROM .*users").WithArgs(uint(1), 1).WillReturnRows(sqlmock.NewRows([]string{"college"}).AddRow("科研处"))
+	mock.ExpectQuery("SELECT .* FROM .*colleges").WillReturnError(gorm.ErrRecordNotFound)
+	// 精确匹配落空后会按括号前主名兜底再查一次（科研处不在机构表，仍解析为空）
+	mock.ExpectQuery("SELECT .* FROM .*colleges").WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	// 两条赛事共用一次负责人校验与编号查询，再批量创建。
 	mock.ExpectQuery("SELECT \\* FROM `users`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "username", "identity_type"}).AddRow(1, "T001", "staff"))

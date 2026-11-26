@@ -212,7 +212,7 @@ func TestUpdateAwardMember_TransferDenied(t *testing.T) {
 	UpdateAwardMember(c)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "只能修改本院填报成员，历史归属须由校管理员确认")
+	assert.Contains(t, w.Body.String(), "仅校管理员可确认填报归属")
 }
 
 func TestUpdateAwardMember_CollegeNotFound(t *testing.T) {

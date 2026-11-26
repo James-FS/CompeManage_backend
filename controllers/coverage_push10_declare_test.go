@@ -65,13 +65,14 @@ func TestUpdateDeclare_AccessDenied(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "无权编辑该申报")
 }
 
-func TestUpdateDeclare_CollegeAdminCannotTransfer(t *testing.T) {
+func TestUpdateDeclare_CollegeAdminCannotEditOutsideSource(t *testing.T) {
 	mock := setupDeclareDBMock(t)
 	defer mock.ExpectationsWereMet()
 
 	managed := uint(3)
 	mock.ExpectQuery("SELECT .* FROM `comp_declarations`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "declare_status", "college_id"}).AddRow(1, 0, 3))
+	mock.ExpectQuery("SELECT count.*project_source_college_id").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 
 	body := map[string]interface{}{"college_id": 5}
 	_, w, c := buildAuthPOSTJSON(body)
@@ -82,7 +83,7 @@ func TestUpdateDeclare_CollegeAdminCannotTransfer(t *testing.T) {
 	UpdateDeclare(c)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "不能将申报转移到其他学院")
+	assert.Contains(t, w.Body.String(), "无权编辑该申报")
 }
 
 // 全字段更新：覆盖 updates 各字段分支

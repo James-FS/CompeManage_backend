@@ -254,37 +254,18 @@ func awardSummaryBucket(compLevel, awardText string) int {
 // buildAwardSummaryRows 汇总表数据：按赛事聚合省级以上获奖等级分布。
 // 列：序号, 承办学院, 竞赛名称, 10个等级列, 合计, 备注(团体/个人)。
 func buildAwardSummaryRows(ctx context.Context, scope *UserAccessScope, year string) ([][]interface{}, error) {
-	managedCollege, err := collegeNameForAwardScope(database.DB.WithContext(ctx), scope)
-	if err != nil {
-		return nil, err
-	}
 	q := database.DB.WithContext(ctx).Table("awards a").
-		Select("cd.comp_name, cd.comp_level, cn.name AS college_name, cdp.participant_type, a.award_name, a.award_level, a.award_category").
+		Select("cd.comp_name, cd.comp_level, comp_manager.college AS college_name, cdp.participant_type, a.award_name, a.award_level, a.award_category").
 		Joins("JOIN comp_directories cd ON cd.id = a.comp_id AND cd.delete_time IS NULL").
-		Joins("LEFT JOIN colleges cn ON cn.id = cd.college_id").
+		Joins("LEFT JOIN users comp_manager ON comp_manager.id = cd.manager_id AND comp_manager.delete_time IS NULL").
 		Joins("LEFT JOIN comp_details cdp ON cdp.comp_id = a.comp_id AND cdp.delete_time IS NULL").
 		Where("a.delete_time IS NULL").Where("a.status IN ?", awardExportFilterStatus()).
 		Where("cd.comp_level IN ?", []string{"国际级", "国家级", "省部级", "省级", "校级", "校赛"}).
-		Order("cn.name ASC, cd.comp_name ASC, a.id ASC")
+		Order("comp_manager.college ASC, cd.comp_name ASC, a.id ASC")
 	if year != "" {
 		q = q.Where("cd.year = ?", year)
 	}
-	// 2026-10-31 合并说明：本查询赛事表别名是 cd（Join "comp_directories cd"），而
-	// awardCompetitionScope 内部固定拼 comp_directories.* 前缀——别名不一致时 WHERE
-	// 指向不存在的表名，MySQL 按零长别名处理导致恒过滤为空（汇总 sheet 无数据根因）。
-	// 因此此处不走 awardCompetitionScope，按 cd 别名手工套用同一可见性规则。
-	if scope.IsCollegeAdmin() {
-		if scope.ManagedCollegeID == nil {
-			q = q.Where("1 = 0")
-		} else {
-			q = q.Where("(cd.college_id = ? OR cd.college_id IS NULL OR cd.college_id = 0 OR cd.comp_level IN ?)",
-				*scope.ManagedCollegeID, []string{"校级", "校赛"})
-		}
-	} else if !scope.IsSchoolAdmin() {
-		q = q.Where("cd.manager_id = ?", scope.UserID)
-	}
-	// develop 新增的学生学院过滤（与赛事可见性正交，别名 "a" 正确）一并保留
-	q = applyAwardStudentCollegeScope(q, scope, managedCollege, "a")
+	q = applyAwardExportCompetitionScope(q, scope)
 
 	var list []struct {
 		CompName, CompLevel, CollegeName     string

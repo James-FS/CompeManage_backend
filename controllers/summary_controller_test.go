@@ -172,13 +172,9 @@ func TestGetSummaryDetail_Success_NoSummary(t *testing.T) {
 	mock := setupSummaryDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	// college_id=1 时 GORM 查询 colleges，顺序：comp_directories → colleges → comp_details → users
 	mock.ExpectQuery("SELECT \\* FROM `comp_directories` .+ `comp_directories`.`delete_time`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id", "comp_name", "organizer", "undertaker"}).
 			AddRow(1, 1, 1, "测试赛事", "主办方", "承办方"))
-	mock.ExpectQuery("SELECT \\* FROM `colleges` .+ `colleges`.`id`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name"}).
-			AddRow(1, "计算机学院"))
 	mock.ExpectQuery("SELECT \\* FROM `comp_details` .+ `comp_details`.`comp_id`").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "comp_id", "comp_start_time", "comp_end_time"}).
 			AddRow(1, 1, time.Date(2026, 1, 1, 0, 0, 0, 0, time.Local), time.Date(2026, 6, 1, 0, 0, 0, 0, time.Local)))

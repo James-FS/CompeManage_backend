@@ -101,6 +101,9 @@ func SetupRoutes(r *gin.Engine) {
 		comp.GET("/list",
 			middleware.RequirePermission("comp:list"),
 			controllers.GetCompetitionList)
+		comp.GET("/export",
+			middleware.RequirePermission("comp:list"),
+			controllers.ExportCompetitionDirectory)
 		comp.POST("/create",
 			middleware.RequirePermission("comp:create"),
 			controllers.CreateCompetition)
@@ -132,7 +135,7 @@ func SetupRoutes(r *gin.Engine) {
 			middleware.RequirePermission("comp:detail"),
 			controllers.GetCompetitionDetail)
 		comp.PUT("/:id",
-			middleware.RequireAnyPermission("comp:update", "comp:update:own"),
+			middleware.RequireAnyPermission("comp:update", "comp:update:own", "comp:update:source"),
 			controllers.UpdateCompetition)
 	}
 
@@ -176,7 +179,7 @@ func SetupRoutes(r *gin.Engine) {
 			middleware.RequirePermission("declare:audited-list"),
 			controllers.GetAuditedDeclares) // 获取已审核申报
 		declare.POST("/audit",
-			middleware.RequirePermission("declare:audit"),
+			middleware.RequireAnyPermission("declare:audit", "declare:audit:source"),
 			controllers.AuditDeclare) // 审核申报
 		declare.GET("/all",
 			middleware.RequirePermission("declare:all-declares"),
@@ -186,7 +189,7 @@ func SetupRoutes(r *gin.Engine) {
 	reg := r.Group("/api/reg", middleware.AuthRequired())
 	{
 		reg.POST("/config",
-			middleware.RequireAnyPermission("reg:config:edit", "reg:config:edit:own"),
+			middleware.RequireAnyPermission("reg:config:edit", "reg:config:edit:own", "reg:config:edit:source"),
 			controllers.SaveRegConfig)
 		reg.GET("/config/get",
 			middleware.RequirePermission("reg:config:view"),
@@ -300,7 +303,7 @@ func SetupRoutes(r *gin.Engine) {
 			controllers.GetSummaryDetail,
 		)
 		summary.POST("/:id",
-			middleware.RequireAnyPermission("summary:edit", "summary:edit:own"),
+			middleware.RequireAnyPermission("summary:edit", "summary:edit:own", "summary:edit:source"),
 			controllers.SaveSummary,
 		)
 	}
@@ -308,6 +311,7 @@ func SetupRoutes(r *gin.Engine) {
 	statistics := r.Group("/api/statistics", middleware.AuthRequired())
 	{
 		statistics.GET("/dashboard", controllers.GetStatisticsDashboard)
+		statistics.GET("/dashboard/competitions", controllers.GetDashboardCompetitionStats)
 	}
 
 	review := r.Group("/api/review", middleware.AuthRequired())

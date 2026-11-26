@@ -22,6 +22,7 @@ func Init() {
 	if err := EnsureUserRoleUniqueIndex(); err != nil {
 		log.Printf("创建 user_roles 唯一索引失败（如存在多角色脏数据请先运行 user_role_migrate 清理）: %v", err)
 	}
+	go prepareUserListIndexes(DB)
 }
 
 // InitWithoutMigrate 仅建立数据库连接，供 dry-run/verify 等迁移工具使用，
@@ -117,6 +118,9 @@ func autoMigrate() {
 		log.Fatalf("数据库自动迁移失败：%v", err)
 	}
 	log.Println("数据库自动迁移成功")
+	if err := BackfillCompetitionProjectSources(DB); err != nil {
+		log.Fatalf("赛事项目来源兼容迁移失败: %v", err)
+	}
 	// 包括可恢复的软删除赛事；重复启动不会重复创建目录。
 	if err := DB.Exec(`INSERT IGNORE INTO competition_years (year)
 		SELECT DISTINCT year FROM comp_directories WHERE year > 0`).Error; err != nil {

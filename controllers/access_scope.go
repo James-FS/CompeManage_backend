@@ -6,6 +6,7 @@ import (
 	"CompeManage_backend/utils"
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -140,27 +141,45 @@ func applyCompetitionScope(query *gorm.DB, scope *UserAccessScope, alias string)
 	case "school_admin":
 		return query
 	case "college_admin":
-		if scope.ManagedCollegeID == nil {
-			return query.Where("1 = 0")
-		}
-		return query.Where(alias+".college_id = ?", *scope.ManagedCollegeID)
+		return applyProjectSourceScope(query.Where(alias+".delete_time IS NULL"), scope, alias)
 	default:
 		return query.Where(alias+".manager_id = ?", scope.UserID)
 	}
 }
 
-func canAccessCompetition(scope *UserAccessScope, comp models.CompDirectory) bool {
-	if scope == nil {
-		return false
+func applyProjectSourceScope(query *gorm.DB, scope *UserAccessScope, alias string) *gorm.DB {
+	if scope.ManagedCollegeID == nil || *scope.ManagedCollegeID == 0 {
+		return query.Where("1 = 0")
 	}
-	switch scope.RoleCode {
-	case "school_admin":
-		return true
-	case "college_admin":
-		return scope.ManagedCollegeID != nil && comp.CollegeID != nil && *scope.ManagedCollegeID == *comp.CollegeID
-	default:
-		return comp.ManagerID == scope.UserID
+	return query.Where(alias+".project_source_college_id = ?", *scope.ManagedCollegeID)
+}
+
+var errInvalidProjectSource = errors.New("当前账号未配置有效的项目来源")
+
+func projectOriginForRequest(c *gin.Context, tx *gorm.DB) (models.ProjectOrigin, uint, error) {
+	uid, _ := c.Get("user_id")
+	userID, _ := uid.(uint)
+	role := c.GetString("role_code")
+	if role == "" {
+		// Controller tests can call handlers without AuthRequired.
+		return models.ProjectOrigin{}, userID, nil
 	}
+	if userID == 0 || (role != "school_admin" && role != "college_admin") {
+		return models.ProjectOrigin{}, userID, errInvalidProjectSource
+	}
+	var user models.User
+	if err := tx.Select("college").First(&user, userID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			err = errInvalidProjectSource
+		}
+		return models.ProjectOrigin{}, userID, err
+	}
+	unit := strings.TrimSpace(user.College)
+	collegeID, err := resolveUnitCollegeID(tx, unit)
+	if err != nil {
+		return models.ProjectOrigin{}, userID, err
+	}
+	return models.ProjectOrigin{ProjectSource: unit, ProjectSourceCollegeID: collegeID}, userID, nil
 }
 
 func requireCompetitionAccess(c *gin.Context, compID uint) (*UserAccessScope, *models.CompDirectory, bool) {
@@ -172,20 +191,56 @@ func requireCompetitionAccess(c *gin.Context, compID uint) (*UserAccessScope, *m
 		return scope, nil, true
 	}
 	var comp models.CompDirectory
-	if err := database.DB.WithContext(c.Request.Context()).
+	query := database.DB.WithContext(c.Request.Context()).Model(&models.CompDirectory{})
+	if scope.IsCollegeAdmin() {
+		query = applyCompetitionScope(query, scope, "comp_directories")
+	}
+	if err := query.
 		Select("id", "manager_id", "college_id").First(&comp, compID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			utils.NotFound(c, "赛事不存在")
+			if scope.IsCollegeAdmin() {
+				utils.Forbidden(c, "无权访问该赛事")
+			} else {
+				utils.NotFound(c, "赛事不存在")
+			}
 		} else {
 			utils.InternalServerError(c, "查询赛事失败", err)
 		}
 		return nil, nil, false
 	}
-	if !canAccessCompetition(scope, comp) {
+	if !scope.IsCollegeAdmin() && comp.ManagerID != scope.UserID {
 		utils.Forbidden(c, "无权访问该赛事")
 		return nil, nil, false
 	}
 	return scope, &comp, true
+}
+
+// Point checks, including attachments and writes, use the same scope as list queries.
+func competitionScopeContains(db *gorm.DB, scope *UserAccessScope, compID uint) (bool, error) {
+	var count int64
+	err := applyCompetitionScope(db.Model(&models.CompDirectory{}), scope, "comp_directories").
+		Where("comp_directories.id = ?", compID).Count(&count).Error
+	return count > 0, err
+}
+
+func applyCollegeRelatedCompetitionScope(query, db *gorm.DB, scope *UserAccessScope, compColumn string) *gorm.DB {
+	if !scope.IsCollegeAdmin() {
+		return query
+	}
+	competitions := applyCompetitionScope(db.Session(&gorm.Session{NewDB: true}).Model(&models.CompDirectory{}).
+		Select("comp_directories.id"), scope, "comp_directories")
+	return query.Where(compColumn+" IN (?)", competitions)
+}
+
+func canAccessLoadedCompetition(db *gorm.DB, scope *UserAccessScope, comp models.CompDirectory) bool {
+	if scope == nil || comp.ID == 0 {
+		return false
+	}
+	if scope.IsCollegeAdmin() {
+		allowed, err := competitionScopeContains(db, scope, comp.ID)
+		return err == nil && allowed
+	}
+	return scope.IsSchoolAdmin() || comp.ManagerID == scope.UserID
 }
 
 func applyDeclarationScope(query *gorm.DB, scope *UserAccessScope, alias string) *gorm.DB {
@@ -199,10 +254,7 @@ func applyDeclarationScope(query *gorm.DB, scope *UserAccessScope, alias string)
 	case "school_admin":
 		return query
 	case "college_admin":
-		if scope.ManagedCollegeID == nil {
-			return query.Where("1 = 0")
-		}
-		return query.Where(alias+".college_id = ?", *scope.ManagedCollegeID)
+		return applyProjectSourceScope(query, scope, alias)
 	default:
 		return query.Where("("+alias+".created_by = ? OR "+alias+".manager_id = ?)", scope.UserID, scope.UserID)
 	}
@@ -216,7 +268,8 @@ func canAccessDeclaration(scope *UserAccessScope, declaration models.CompDeclara
 	case "school_admin":
 		return true
 	case "college_admin":
-		return scope.ManagedCollegeID != nil && declaration.CollegeID == *scope.ManagedCollegeID
+		return scope.ManagedCollegeID != nil && declaration.ProjectSourceCollegeID != nil &&
+			*scope.ManagedCollegeID == *declaration.ProjectSourceCollegeID
 	default:
 		return declaration.CreatedBy == scope.UserID || declaration.ManagerID == scope.UserID
 	}

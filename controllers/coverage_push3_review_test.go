@@ -258,9 +258,9 @@ func TestInitReviewTasks_CollegeAdminForbiddenForOtherCollege(t *testing.T) {
 	mock := setupReviewDBMock(t)
 	defer mock.ExpectationsWereMet()
 
-	// requireUserAccessScope 从 role_code 读；comp 查询后判定无权
+	// requireUserAccessScope 从 role_code 读；查询按项目来源过滤。
 	mock.ExpectQuery("SELECT `id`,`manager_id`,`college_id` FROM `comp_directories`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}).AddRow(1, 99, 7))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}))
 
 	body := map[string]interface{}{"comp_id": 1}
 	_, w, c := buildReviewPOSTJSON(body)
@@ -530,6 +530,7 @@ func TestConfirmReviewResult_AwardCountsExceedWorks(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "\"total_awards\":1")
 
 }
+
 // 无已完成评审记录：不生成任何获奖
 func TestConfirmReviewResult_NoReviewedRecords(t *testing.T) {
 	mock := setupReviewDBMock(t)
@@ -617,7 +618,7 @@ func TestConfirmReviewResult_CollegeAdminForbidden(t *testing.T) {
 	defer mock.ExpectationsWereMet()
 
 	mock.ExpectQuery("SELECT `id`,`manager_id`,`college_id` FROM `comp_directories`").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}).AddRow(1, 99, 7))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "manager_id", "college_id"}))
 
 	body := map[string]interface{}{
 		"comp_id": 1,
@@ -766,7 +767,3 @@ func TestReviewCacheClearHelpers_NoRedis(t *testing.T) {
 	clearReviewResultCache(t.Context(), 1)
 	clearMyTasksCache(t.Context(), 1)
 }
-
-
-
-

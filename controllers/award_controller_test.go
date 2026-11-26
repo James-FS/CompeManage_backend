@@ -552,3 +552,34 @@ func TestGetAwardCompList_InvalidYear(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+func TestGetAwardCompList_UpcomingAndOngoingAreDistinct(t *testing.T) {
+	for _, tc := range []struct {
+		filter string
+		status int
+	}{
+		{filter: "upcoming", status: 0},
+		{filter: "ongoing", status: 1},
+	} {
+		t.Run(tc.filter, func(t *testing.T) {
+			mock := setupAwardDBMock(t)
+			mock.ExpectQuery("SELECT count\\(\\*\\) FROM `user_roles`").
+				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+			mock.ExpectQuery("SELECT count\\(\\*\\) FROM `comp_directories` WHERE status = \\?").
+				WithArgs(tc.status).
+				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+			mock.ExpectQuery("SELECT .* FROM `comp_directories` WHERE status = \\?").
+				WithArgs(tc.status, 10).
+				WillReturnRows(sqlmock.NewRows([]string{"id"}))
+			mock.ExpectQuery("SELECT DISTINCT `year` FROM `comp_directories`").
+				WillReturnRows(sqlmock.NewRows([]string{"year"}))
+
+			_, w, c := buildGET("/api/award/list?status=" + tc.filter)
+			c.Set("user_id", uint(1))
+			GetAwardCompList(c)
+
+			assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			assert.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}

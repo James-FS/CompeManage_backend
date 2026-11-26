@@ -1,5 +1,10 @@
 package models
 
+type ProjectOrigin struct {
+	ProjectSource          string `gorm:"type:varchar(255)" json:"project_source"`
+	ProjectSourceCollegeID *uint  `gorm:"index" json:"project_source_college_id,omitempty"`
+}
+
 // CompDirectory 竞赛目录表 (主表)
 type CompDirectory struct {
 	Capabilities map[string]bool `gorm:"-" json:"capabilities,omitempty"`
@@ -19,6 +24,7 @@ type CompDirectory struct {
 	Source       int8            `gorm:"column:source;type:tinyint;default:1;comment:来源(1:校级直接创建 2:申报通过创建)" json:"source"`
 	DeclareID    *uint           `gorm:"column:declare_id;index;comment:关联的申报ID(source=2时有值);constraint:false" json:"declare_id"`
 
+	ProjectOrigin
 	BaseModel
 
 	// 关联关系：一对一 (目录拥有一个详情)

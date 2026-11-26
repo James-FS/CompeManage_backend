@@ -270,8 +270,8 @@ func fillAwardAdvisorsIfEmpty(tx *gorm.DB, awardID uint, pairs []models.AdvisorI
 		Update("advisor_info", advisorsMirrorJSON(pairs)).Error
 }
 
-// replaceAwardAdvisors 用系统资料替换操作者可编辑的指导教师，保留其他学院的教师。
-func replaceAwardAdvisors(tx *gorm.DB, awardID uint, edits []AwardAdvisorEditReq, managedCollege string) error {
+// replaceAwardAdvisors 用系统资料替换该奖项的指导教师。
+func replaceAwardAdvisors(tx *gorm.DB, awardID uint, edits []AwardAdvisorEditReq) error {
 	pairs := make([]models.AdvisorInfo, 0, len(edits))
 	seen := map[string]bool{}
 	for _, e := range edits {
@@ -284,51 +284,23 @@ func replaceAwardAdvisors(tx *gorm.DB, awardID uint, edits []AwardAdvisorEditReq
 		if err != nil {
 			return err
 		}
-		if managedCollege != "" && user.College != managedCollege {
-			return fmt.Errorf("指导教师工号 %s 不属于本院", username)
-		}
 		pairs = append(pairs, models.AdvisorInfo{Username: user.Username, Name: user.Realname, College: user.College})
 	}
-	deleteQuery := tx.Unscoped().Where("award_id = ?", awardID)
-	var preserved []models.AdvisorInfo
-	nextSort := 0
-	if managedCollege != "" {
-		var current []models.AwardAdvisor
-		if err := tx.Where("award_id = ?", awardID).Order("sort, id").Find(&current).Error; err != nil {
-			return err
-		}
-		currentUsernames := make(map[string]bool, len(current))
-		for _, advisor := range current {
-			currentUsernames[advisor.Username] = true
-			if advisor.College == managedCollege {
-				continue
-			}
-			preserved = append(preserved, models.AdvisorInfo{Username: advisor.Username, Name: advisor.Name, College: advisor.College})
-			nextSort = max(nextSort, advisor.Sort+1)
-		}
-		var award models.Award
-		if err := tx.Select("advisor_info").First(&award, awardID).Error; err != nil {
-			return err
-		}
-		for _, advisor := range decodeAwardAdvisors(award.AdvisorInfo) {
-			if advisor.College != managedCollege && !currentUsernames[advisor.Username] && !seen[advisor.Username] {
-				preserved = append(preserved, advisor)
-			}
-		}
-		deleteQuery = deleteQuery.Where("college = ?", managedCollege)
-	}
 	// 物理删除可编辑的快照，以释放 award_id 和 username 的唯一约束。
-	if err := deleteQuery.Delete(&models.AwardAdvisor{}).Error; err != nil {
+	if err := tx.Unscoped().Where("award_id = ?", awardID).Delete(&models.AwardAdvisor{}).Error; err != nil {
 		return err
 	}
 	for i, pair := range pairs {
-		row := models.AwardAdvisor{AwardID: awardID, Username: pair.Username, Name: pair.Name, College: pair.College, Sort: nextSort + i}
+		row := models.AwardAdvisor{AwardID: awardID, Username: pair.Username, Name: pair.Name, College: pair.College, Sort: i}
 		if err := tx.Create(&row).Error; err != nil {
 			return err
 		}
 	}
-	return tx.Model(&models.Award{}).Where("id = ?", awardID).
-		Update("advisor_info", advisorsMirrorJSON(append(preserved, pairs...))).Error
+	advisorInfo := advisorsMirrorJSON(pairs)
+	if advisorInfo == "" {
+		advisorInfo = "[]"
+	}
+	return tx.Model(&models.Award{}).Where("id = ?", awardID).Update("advisor_info", advisorInfo).Error
 }
 
 // AwardAdvisorEditReq 弹窗提交的指导教师条目（仅 username 参与校验）。
@@ -424,22 +396,6 @@ func awardCompetitionScope(q *gorm.DB, scope *UserAccessScope) *gorm.DB {
 		return q.Where("comp_directories.college_id = ?", *scope.ManagedCollegeID)
 	}
 	return applyCompetitionScope(q, scope, "comp_directories")
-}
-
-func canAccessAwardCompetition(scope *UserAccessScope, comp models.CompDirectory) bool {
-	if scope == nil {
-		return false
-	}
-	if !scope.IsCollegeAdmin() {
-		return canAccessCompetition(scope, comp)
-	}
-	if scope.ManagedCollegeID == nil {
-		return false
-	}
-	if comp.CollegeID == nil || *comp.CollegeID == 0 {
-		return true
-	}
-	return *scope.ManagedCollegeID == *comp.CollegeID || strings.TrimSpace(comp.CompLevel) == "校级"
 }
 
 func requireAwardCompetition(c *gin.Context, compID uint) (*UserAccessScope, *models.CompDirectory, bool) {
@@ -637,6 +593,11 @@ func parseAwardSheet(rows [][]string) ([]AwardImportRow, error) {
 	columns := map[string]int{}
 	for i, h := range rows[0] {
 		columns[strings.TrimSpace(h)] = i
+	}
+	if _, ok := columns["所属单位"]; !ok {
+		if legacy, exists := columns["所属学院"]; exists {
+			columns["所属单位"] = legacy
+		}
 	}
 	for _, h := range awardImportHeaders[1:9] {
 		if h == "获奖时间（年/月）" {
@@ -1021,14 +982,10 @@ func ImportAward(c *gin.Context) {
 		}
 		var comp models.CompDirectory
 		stageStarted = time.Now()
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&comp, compID).Error; err != nil {
+		if err := awardCompetitionScope(tx, scope).Clauses(clause.Locking{Strength: "UPDATE"}).First(&comp, compID).Error; err != nil {
 			return err
 		}
 		competitionLockWait = time.Since(stageStarted)
-		// 提交时再次检查，不能使用预览阶段的权限或报名结果。
-		if !canAccessAwardCompetition(scope, comp) {
-			return errors.New("赛事权限已变化")
-		}
 		stageStarted = time.Now()
 		rows, bad, err = validateAwardRows(tx, compID, input, setting.RequireRegistration)
 		validationDuration = time.Since(stageStarted)
@@ -1117,23 +1074,8 @@ func UpdateAwardImportSetting(c *gin.Context) {
 	utils.Success(c, setting)
 }
 
-func canEditAwardMember(scope *UserAccessScope, m models.AwardMember) bool {
-	return scope.IsSchoolAdmin() || (scope.IsCollegeAdmin() && scope.ManagedCollegeID != nil && m.SubmittedCollegeID != nil && *scope.ManagedCollegeID == *m.SubmittedCollegeID)
-}
-func canEditAwardTeam(tx *gorm.DB, scope *UserAccessScope, awardID uint) (bool, error) {
-	if scope.IsSchoolAdmin() {
-		return true, nil
-	}
-	if !scope.IsCollegeAdmin() || scope.ManagedCollegeID == nil {
-		return false, nil
-	}
-	var college models.College
-	if err := tx.First(&college, *scope.ManagedCollegeID).Error; err != nil {
-		return false, err
-	}
-	var count int64
-	err := tx.Model(&models.AwardMember{}).Joins("JOIN users ON users.id = award_members.student_id AND users.delete_time IS NULL").Where("award_id = ? AND users.college = ?", awardID, college.Name).Count(&count).Error
-	return count > 0, err
+func canEditScopedAward(scope *UserAccessScope) bool {
+	return scope.IsSchoolAdmin() || scope.IsCollegeAdmin()
 }
 
 func UpdateAwardMember(c *gin.Context) {
@@ -1157,6 +1099,10 @@ func UpdateAwardMember(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !canEditScopedAward(scope) {
+		utils.Forbidden(c, "无权修改获奖记录")
+		return
+	}
 	var req struct {
 		StudentNumber      string `json:"student_id"`
 		Remark             string `json:"remark"`
@@ -1170,29 +1116,11 @@ func UpdateAwardMember(c *gin.Context) {
 	invalid := ""
 	err := db.Transaction(func(tx *gorm.DB) error {
 		var comp models.CompDirectory
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&comp, a.CompID).Error; err != nil {
+		if err := awardCompetitionScope(tx, scope).Clauses(clause.Locking{Strength: "UPDATE"}).First(&comp, a.CompID).Error; err != nil {
 			return err
 		}
 		if err := tx.First(&m, id).Error; err != nil {
 			return err
-		}
-		if !canEditAwardMember(scope, m) {
-			denied = true
-			return errors.New("仅能修改本院填报成员")
-		}
-		if scope.IsCollegeAdmin() {
-			collegeName, err := collegeNameForAwardScope(tx, scope)
-			if err != nil {
-				return err
-			}
-			var currentStudent models.User
-			if err := tx.Select("id", "college").First(&currentStudent, m.StudentID).Error; err != nil {
-				return err
-			}
-			if currentStudent.College != collegeName {
-				denied = true
-				return errors.New("只能修改本院学生记录")
-			}
 		}
 		updates := map[string]interface{}{"remark": req.Remark}
 		if req.SubmittedCollegeID != nil {
@@ -1219,16 +1147,6 @@ func UpdateAwardMember(c *gin.Context) {
 				}
 				return err
 			}
-			if scope.IsCollegeAdmin() {
-				collegeName, err := collegeNameForAwardScope(tx, scope)
-				if err != nil {
-					return err
-				}
-				if user.College != collegeName {
-					invalid = "只能将成员修改为本院学生"
-					return errors.New(invalid)
-				}
-			}
 			count, err := countOtherAwardMemberships(tx, a.CompID, user.ID, m.ID, 0)
 			if err != nil {
 				return err
@@ -1247,7 +1165,7 @@ func UpdateAwardMember(c *gin.Context) {
 		return tx.Model(&m).Updates(updates).Error
 	})
 	if denied {
-		utils.Forbidden(c, "只能修改本院填报成员，历史归属须由校管理员确认")
+		utils.Forbidden(c, "仅校管理员可确认填报归属")
 		return
 	}
 	if invalid != "" {
@@ -1274,6 +1192,10 @@ func UpdateAwardTeam(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !canEditScopedAward(scope) {
+		utils.Forbidden(c, "无权修改获奖记录")
+		return
+	}
 	var req struct {
 		ProjectName string                 `json:"project_name"`
 		Category    string                 `json:"award_category"`
@@ -1293,21 +1215,12 @@ func UpdateAwardTeam(c *gin.Context) {
 		utils.BadRequest(c, "项目、类别、等级或年月无效")
 		return
 	}
-	forbidden := false
 	conflict := false
 	advisorInvalid := false
 	err = db.Transaction(func(tx *gorm.DB) error {
 		var comp models.CompDirectory
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&comp, a.CompID).Error; err != nil {
+		if err := awardCompetitionScope(tx, scope).Clauses(clause.Locking{Strength: "UPDATE"}).First(&comp, a.CompID).Error; err != nil {
 			return err
-		}
-		allowed, err := canEditAwardTeam(tx, scope, a.ID)
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			forbidden = true
-			return errors.New("无权限")
 		}
 		key := database.AwardProjectKey(req.ProjectName)
 		var count int64
@@ -1322,21 +1235,13 @@ func UpdateAwardTeam(c *gin.Context) {
 			return err
 		}
 		if req.Advisors != nil {
-			managedCollege, err := collegeNameForAwardScope(tx, scope)
-			if err != nil {
-				return err
-			}
-			if err := replaceAwardAdvisors(tx, a.ID, *req.Advisors, managedCollege); err != nil {
+			if err := replaceAwardAdvisors(tx, a.ID, *req.Advisors); err != nil {
 				advisorInvalid = true
 				return err
 			}
 		}
 		return nil
 	})
-	if forbidden {
-		utils.Forbidden(c, "仅团队成员所在学院的管理员或校级管理员可修改团队奖项")
-		return
-	}
 	if conflict {
 		utils.BadRequest(c, "该赛事已存在同名项目，请勿合并覆盖")
 		return

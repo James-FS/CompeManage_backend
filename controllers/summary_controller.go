@@ -57,8 +57,7 @@ func GetSummaryList(c *gin.Context) {
 
 	query := database.DB.WithContext(c.Request.Context()).Table("comp_directories").
 		Joins("LEFT JOIN comp_details ON comp_details.comp_id = comp_directories.id AND comp_details.delete_time IS NULL").
-		Joins("LEFT JOIN users ON users.id = comp_directories.manager_id").
-		Joins("LEFT JOIN colleges ON colleges.id = comp_directories.college_id").
+		Joins("LEFT JOIN users ON users.id = comp_directories.manager_id AND users.delete_time IS NULL").
 		Joins("LEFT JOIN summaries ON summaries.comp_id = comp_directories.id AND summaries.delete_time IS NULL").
 		Where("comp_directories.delete_time IS NULL").
 		Where("comp_directories.status = ?", 2)
@@ -117,7 +116,7 @@ func GetSummaryList(c *gin.Context) {
 		comp_directories.comp_name,
 		comp_directories.organizer,
 		comp_directories.undertaker,
-		colleges.name as college_name,
+		users.college as college_name,
 		users.realname as manager_name,
 		comp_details.comp_end_time as end_time,
 		COALESCE(summaries.status, 0) as summary_status
@@ -203,7 +202,7 @@ func GetSummaryDetail(c *gin.Context) {
 
 	// 1. 查询赛事基本信息
 	var comp models.CompDirectory
-	if err := database.DB.WithContext(c.Request.Context()).Preload("Detail").Preload("Manager").Preload("CollegeInfo").First(&comp, compID).Error; err != nil {
+	if err := database.DB.WithContext(c.Request.Context()).Preload("Detail").Preload("Manager").First(&comp, compID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			utils.NotFound(c, "赛事不存在")
 			return
@@ -217,7 +216,7 @@ func GetSummaryDetail(c *gin.Context) {
 	}
 
 	// 权限检查
-	if !canAccessCompetition(scope, comp) {
+	if !canAccessLoadedCompetition(database.DB.WithContext(c.Request.Context()), scope, comp) {
 		utils.Forbidden(c, "无权查看该赛事总结")
 		return
 	}
@@ -294,12 +293,10 @@ func GetSummaryDetail(c *gin.Context) {
 	}
 
 	managerName := ""
-	if comp.Manager.ID != 0 {
-		managerName = comp.Manager.Realname
-	}
 	collegeName := ""
-	if comp.CollegeInfo != nil {
-		collegeName = comp.CollegeInfo.Name
+	if comp.Manager != nil {
+		managerName = comp.Manager.Realname
+		collegeName = comp.Manager.College
 	}
 
 	status := int8(0)
@@ -379,7 +376,7 @@ func SaveSummary(c *gin.Context) {
 		return
 	}
 
-	if !canAccessCompetition(scope, comp) {
+	if !canAccessLoadedCompetition(database.DB.WithContext(c.Request.Context()), scope, comp) {
 		utils.Forbidden(c, "无权操作该赛事总结")
 		return
 	}
