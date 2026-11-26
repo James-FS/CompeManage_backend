@@ -814,9 +814,14 @@ func SubmitStudentAwardSupplement(c *gin.Context) {
 		if user.ID == leaderID {
 			includesApplicant = true
 		}
+		// 2026-11-26 学号一键填充：班级信息从系统用户表取
+		memberClass := ""
+		if user.ClassName != nil {
+			memberClass = *user.ClassName
+		}
 		submittedMembers = append(submittedMembers, models.AwardMember{
 			StudentID: user.ID, Name: user.Realname, StudentNumber: user.Username,
-			College: user.College, Major: user.Major, Phone: member.Phone,
+			College: user.College, Major: user.Major, Class: memberClass, Phone: member.Phone,
 			Email: member.Email, IsLeader: member.IsLeader, Remark: req.Remark,
 		})
 	}

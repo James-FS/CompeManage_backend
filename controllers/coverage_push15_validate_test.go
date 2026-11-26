@@ -248,31 +248,42 @@ func TestValidateAwardRows_StudentNotFound(t *testing.T) {
 	assert.Contains(t, result[0].Error, "学号不存在")
 }
 
-func TestValidateAwardRows_NameMismatch(t *testing.T) {
+func TestValidateAwardRows_NameAutoFilled(t *testing.T) {
+	// 2026-11-26 学号一键填充：姓名不一致时用系统姓名覆盖（不再报错）。
 	mock := setupRegDBMock(t)
 	defer mock.ExpectationsWereMet()
 
 	expectImportLookup(mock, userRow(11, "S001", "李四", "计算机学院", "软件工程"),
 		sqlmock.NewRows([]string{"id", "comp_id", "project_key", "project_name"}))
 
-	result, bad, err := validateAwardRows(database.DB, 1, []AwardImportRow{importRow("S001", "项目A")}, false)
+	row := importRow("S001", "项目A")
+	row.Name = "张三" // 与系统不一致，应被覆盖
+	result, bad, err := validateAwardRows(database.DB, 1, []AwardImportRow{row}, false)
 	assert.NoError(t, err)
-	assert.Equal(t, 1, bad)
-	assert.Contains(t, result[0].Error, "学生姓名与系统学号不匹配")
+	assert.Equal(t, 0, bad) // 一键填充后不报错
+	assert.Empty(t, result[0].Error)
+	assert.Equal(t, "李四", result[0].Name) // 系统姓名覆盖
 }
 
-func TestValidateAwardRows_CollegeAndMajorMismatch(t *testing.T) {
+func TestValidateAwardRows_AutoFillByStudentNumber(t *testing.T) {
+	// 2026-11-26 学号一键填充：放弃姓名/学院/专业匹配校验，改为仅依据学号填充系统数据。
 	mock := setupRegDBMock(t)
 	defer mock.ExpectationsWereMet()
 
 	expectImportLookup(mock, userRow(11, "S001", "张三", "数学学院", "统计学"),
 		sqlmock.NewRows([]string{"id", "comp_id", "project_key", "project_name"}))
 
-	result, bad, err := validateAwardRows(database.DB, 1, []AwardImportRow{importRow("S001", "项目A")}, false)
+	row := importRow("S001", "项目A")
+	row.Name = "张三"       // 与系统一致
+	row.College = "计算机学院" // 与系统不一致，应被覆盖
+	row.Major = "软件工程"    // 与系统不一致，应被覆盖
+	result, bad, err := validateAwardRows(database.DB, 1, []AwardImportRow{row}, false)
 	assert.NoError(t, err)
-	assert.Equal(t, 1, bad)
-	assert.Contains(t, result[0].Error, "学生学院与系统学号不匹配")
-	assert.Contains(t, result[0].Error, "学生专业与系统学号不匹配")
+	assert.Equal(t, 0, bad) // 一键填充后不报错
+	assert.Empty(t, result[0].Error)
+	// 系统数据覆盖导入行
+	assert.Equal(t, "数学学院", result[0].College)
+	assert.Equal(t, "统计学", result[0].Major)
 }
 
 func TestValidateAwardRows_RegistrationMissing(t *testing.T) {

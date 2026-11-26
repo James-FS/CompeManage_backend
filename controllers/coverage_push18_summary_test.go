@@ -356,5 +356,6 @@ func TestGetSummaryList_CapsQueryError(t *testing.T) {
 	c.Set("permission_version", 1)
 	GetSummaryList(c)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// 2026-11-26 capabilities 降级修复：cap 计算失败不再丢弃列表，降级返回空 caps（200）。
+	assert.Equal(t, http.StatusOK, w.Code)
 }
