@@ -664,7 +664,7 @@ func TestAuditDeclare_CollegeAdminDeniedOutsideSource(t *testing.T) {
 	mock := setupDeclareDBMock(t)
 	defer mock.ExpectationsWereMet()
 	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT .* FROM `comp_declarations`.*project_source_college_id").WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery("SELECT .* FROM `comp_declarations`.*college_id").WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectRollback()
 	managedCollegeID := uint(2)
 	body := map[string]interface{}{"declare_id": 1, "audit_status": 2}

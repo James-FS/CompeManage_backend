@@ -349,7 +349,7 @@ func TestCanAccessFile_CollegeAdminAllowed(t *testing.T) {
 	mock.ExpectQuery("SELECT comp_id FROM `registers`").
 		WillReturnRows(sqlmock.NewRows([]string{"comp_id"}).AddRow(7))
 	// 附件所在赛事的项目来源匹配。
-	mock.ExpectQuery("SELECT count.*FROM `comp_directories`.*project_source_college_id").
+	mock.ExpectQuery("SELECT count.*FROM `comp_directories`.*college_id").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
 	_, _, c := buildGET("/x")
@@ -369,7 +369,7 @@ func TestCanAccessFile_CollegeAdminDenied(t *testing.T) {
 	mock.ExpectQuery("SELECT comp_id FROM `registers`").
 		WillReturnRows(sqlmock.NewRows([]string{"comp_id"}).AddRow(7))
 	// 附件所在赛事的项目来源不匹配。
-	mock.ExpectQuery("SELECT count.*FROM `comp_directories`.*project_source_college_id").
+	mock.ExpectQuery("SELECT count.*FROM `comp_directories`.*college_id").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	// reg_attachment → isTeamMemberForFile
 	hash := "0123456789abcdef0123456789abcdef"
